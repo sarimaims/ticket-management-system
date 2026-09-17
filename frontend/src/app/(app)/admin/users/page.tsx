@@ -1,0 +1,24 @@
+import type { Metadata } from "next";
+
+import { PageHeader } from "@/components/layout/page-header";
+import { PeopleWorkspace } from "@/components/admin/people-workspace";
+
+export const metadata: Metadata = {
+  title: "Users — AIVIN",
+};
+
+export default function AdminUsersPage() {
+  return (
+    <>
+      <PageHeader
+        title="Users"
+        crumbs={[
+          { label: "Home", href: "/dashboard" },
+          { label: "Administration" },
+          { label: "Users" },
+        ]}
+      />
+      <PeopleWorkspace scope="all" />
+    </>
+  );
+}

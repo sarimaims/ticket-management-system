@@ -1,0 +1,148 @@
+"use client";
+
+import * as React from "react";
+import { ChevronDown } from "lucide-react";
+
+import { cn } from "@/lib/utils";
+
+const CONTROL =
+  "h-12 w-full rounded-field border border-line-strong bg-surface text-sm font-medium text-ink-900 " +
+  "transition-colors placeholder:font-normal placeholder:text-ink-400 " +
+  "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10";
+
+export function Label({
+  children,
+  required,
+  hint,
+  htmlFor,
+  className,
+}: {
+  children: React.ReactNode;
+  required?: boolean;
+  hint?: string;
+  htmlFor?: string;
+  className?: string;
+}) {
+  return (
+    <label
+      htmlFor={htmlFor}
+      className={cn("mb-2 block text-sm font-semibold text-ink-800", className)}
+    >
+      {children}
+      {required && <span className="ml-1 text-brand-600">*</span>}
+      {hint && <span className="ml-1 font-normal text-ink-400">{hint}</span>}
+    </label>
+  );
+}
+
+export function Field({
+  label,
+  required,
+  hint,
+  help,
+  htmlFor,
+  error,
+  children,
+  className,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  /** One short line telling the reader what belongs in this box. */
+  help?: string;
+  htmlFor?: string;
+  error?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <Label required={required} hint={hint} htmlFor={htmlFor} className={help ? "mb-1" : undefined}>
+        {label}
+      </Label>
+      {help && <p className="mb-2 text-xs text-ink-400">{help}</p>}
+      {children}
+      {error && (
+        <p role="alert" className="mt-1.5 text-xs font-medium text-brand-600">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Leading icon slot shared by every control. */
+function LeadingIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-ink-400 [&_svg]:size-4.5">
+      {children}
+    </span>
+  );
+}
+
+export function Input({
+  icon,
+  className,
+  trailing,
+  ...props
+}: React.ComponentProps<"input"> & { icon?: React.ReactNode; trailing?: React.ReactNode }) {
+  return (
+    <div className="relative">
+      {icon && <LeadingIcon>{icon}</LeadingIcon>}
+      <input
+        className={cn(CONTROL, icon ? "pl-12" : "pl-4", trailing ? "pr-12" : "pr-4", className)}
+        {...props}
+      />
+      {trailing && (
+        <span className="absolute top-1/2 right-3 -translate-y-1/2">{trailing}</span>
+      )}
+    </div>
+  );
+}
+
+export function Select({
+  icon,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"select"> & { icon?: React.ReactNode }) {
+  return (
+    <div className="relative">
+      {icon && <LeadingIcon>{icon}</LeadingIcon>}
+      <select className={cn(CONTROL, icon ? "pl-12" : "pl-4", "pr-10", className)} {...props}>
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute top-1/2 right-3.5 size-4.5 -translate-y-1/2 text-ink-400" />
+    </div>
+  );
+}
+
+export function Textarea({
+  className,
+  maxLength,
+  value,
+  ...props
+}: React.ComponentProps<"textarea">) {
+  const count = typeof value === "string" ? value.length : 0;
+  return (
+    <div className="relative">
+      <textarea
+        className={cn(
+          "min-h-[116px] w-full resize-y rounded-field border border-line-strong bg-surface px-4 py-3.5 text-sm text-ink-900",
+          "transition-colors placeholder:text-ink-400",
+          "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10",
+          maxLength ? "pb-9" : "",
+          className,
+        )}
+        maxLength={maxLength}
+        value={value}
+        {...props}
+      />
+      {maxLength && (
+        <span className="pointer-events-none absolute right-4 bottom-3 text-xs text-ink-400">
+          {count}/{maxLength}
+        </span>
+      )}
+    </div>
+  );
+}

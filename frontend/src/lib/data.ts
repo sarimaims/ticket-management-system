@@ -1,0 +1,242 @@
+import type { Stat, Ticket } from "./types";
+
+export const CURRENT_USER = {
+  name: "Intizar Shah",
+  role: "Digital Marketing",
+  initials: "IS",
+};
+
+export const DEPARTMENTS = [
+  "Digital Marketing",
+  "Human Resources",
+  "Graphics & Design",
+  "Development",
+  "Finance",
+  "IT Support",
+  "Marketing",
+  "Operations",
+];
+
+export const REQUEST_TYPES = [
+  "Recruitment",
+  "Design Request",
+  "IT Support",
+  "Purchase Request",
+  "Onboarding",
+  "Access Request",
+  "Asset Request",
+  "Content Update",
+];
+
+export const PROJECTS = [
+  "AIVIN CRM",
+  "AIVIN Website",
+  "Internal Tooling",
+  "Mobile App",
+];
+
+/* ---------------------------------------------------------------- Requests */
+
+export const MY_REQUEST_STATS: Stat[] = [
+  { label: "Open Requests", value: 8, caption: "Newly submitted", tone: "new" },
+  { label: "In Progress", value: 5, caption: "Currently being worked on", tone: "progress" },
+  { label: "Waiting", value: 2, caption: "Waiting for response", tone: "waiting" },
+  { label: "Completed", value: 12, caption: "Successfully resolved", tone: "completed" },
+  { label: "Overdue", value: 1, caption: "Past the deadline", tone: "overdue" },
+];
+
+export const MY_REQUESTS: Ticket[] = [
+  {
+    id: "TK-0018",
+    subject: "Web Developer Required",
+    department: "Human Resources",
+    requestType: "Recruitment",
+    priority: "High",
+    status: "New",
+    createdOn: "2025-09-20",
+    deadline: "2025-09-30",
+  },
+  {
+    id: "TK-0017",
+    subject: "Social Media Creatives for Product Launch",
+    department: "Graphics & Design",
+    requestType: "Design Request",
+    priority: "Medium",
+    status: "Accepted",
+    createdOn: "2025-09-18",
+    deadline: "2025-09-25",
+  },
+  {
+    id: "TK-0016",
+    subject: "Website Homepage Update",
+    department: "Development",
+    requestType: "IT Support",
+    priority: "Critical",
+    status: "In Progress",
+    createdOn: "2025-09-16",
+    deadline: "2025-09-26",
+  },
+  {
+    id: "TK-0015",
+    subject: "Office Stationeries Purchase",
+    department: "Finance",
+    requestType: "Purchase Request",
+    priority: "Low",
+    status: "Waiting",
+    createdOn: "2025-09-15",
+    deadline: "2025-09-22",
+  },
+  {
+    id: "TK-0014",
+    subject: "New Employee Onboarding Request",
+    department: "Human Resources",
+    requestType: "Onboarding",
+    priority: "Medium",
+    status: "Completed",
+    createdOn: "2025-09-10",
+    deadline: "2025-09-17",
+  },
+  {
+    id: "TK-0013",
+    subject: "CRM Access for Team Member",
+    department: "IT Support",
+    requestType: "Access Request",
+    priority: "High",
+    status: "Overdue",
+    createdOn: "2025-09-08",
+    deadline: "2025-09-12",
+  },
+  {
+    id: "TK-0012",
+    subject: "Laptop Replacement Request",
+    department: "IT Support",
+    requestType: "Asset Request",
+    priority: "Low",
+    status: "Completed",
+    createdOn: "2025-09-05",
+    deadline: "2025-09-10",
+  },
+  {
+    id: "TK-0011",
+    subject: "Google Workspace Access",
+    department: "IT Support",
+    requestType: "Access Request",
+    priority: "Medium",
+    status: "In Progress",
+    createdOn: "2025-09-02",
+    deadline: "2025-09-09",
+  },
+];
+
+/* ---------------------------------------------------------------- Assigned */
+
+export const ASSIGNED_STATS: Stat[] = [
+  { label: "New", value: 6, caption: "Recently assigned", tone: "new" },
+  { label: "In Progress", value: 8, caption: "You're working on", tone: "progress" },
+  { label: "Waiting", value: 3, caption: "Waiting for others", tone: "waiting" },
+  { label: "Due Today", value: 4, caption: "Due by end of day", tone: "due" },
+  { label: "Overdue", value: 2, caption: "Past the deadline", tone: "overdue" },
+];
+
+export const ASSIGNED_TICKETS: Ticket[] = [
+  {
+    id: "TK-0024",
+    subject: "Website Contact Form Update",
+    department: "Marketing",
+    requestType: "IT Support",
+    priority: "High",
+    status: "New",
+    createdOn: "2025-09-22",
+    deadline: "2025-09-25",
+  },
+  {
+    id: "TK-0023",
+    subject: "Social Media Creative - Q4",
+    department: "Marketing",
+    requestType: "Design Request",
+    priority: "Medium",
+    status: "In Progress",
+    createdOn: "2025-09-21",
+    deadline: "2025-09-28",
+  },
+  {
+    id: "TK-0022",
+    subject: "Recruitment Request - Product Designer",
+    department: "Human Resources",
+    requestType: "Recruitment",
+    priority: "Medium",
+    status: "New",
+    createdOn: "2025-09-21",
+    deadline: "2025-09-27",
+  },
+  {
+    id: "TK-0021",
+    subject: "Employee Onboarding Support",
+    department: "Human Resources",
+    requestType: "Onboarding",
+    priority: "Low",
+    status: "Waiting",
+    createdOn: "2025-09-20",
+    deadline: "2025-09-24",
+  },
+  {
+    id: "TK-0020",
+    subject: "Finance Approval for Vendor",
+    department: "Finance",
+    requestType: "Purchase Request",
+    priority: "High",
+    status: "In Progress",
+    createdOn: "2025-09-19",
+    deadline: "2025-09-26",
+  },
+  {
+    id: "TK-0019",
+    subject: "CRM Access for New Team Member",
+    department: "IT Support",
+    requestType: "Access Request",
+    priority: "Low",
+    status: "Completed",
+    createdOn: "2025-09-18",
+    deadline: "2025-09-20",
+  },
+  {
+    id: "TK-0018",
+    subject: "Update Careers Page Content",
+    department: "Marketing",
+    requestType: "Content Update",
+    priority: "Medium",
+    status: "In Progress",
+    createdOn: "2025-09-17",
+    deadline: "2025-09-23",
+  },
+  {
+    id: "TK-0017",
+    subject: "Google Workspace License Request",
+    department: "IT Support",
+    requestType: "Access Request",
+    priority: "High",
+    status: "Waiting",
+    createdOn: "2025-09-16",
+    deadline: "2025-09-22",
+  },
+  {
+    id: "TK-0016",
+    subject: "Office Stationery Purchase",
+    department: "Finance",
+    requestType: "Purchase Request",
+    priority: "Low",
+    status: "New",
+    createdOn: "2025-09-15",
+    deadline: "2025-09-21",
+  },
+  {
+    id: "TK-0015",
+    subject: "Laptop Replacement",
+    department: "IT Support",
+    requestType: "Asset Request",
+    priority: "Medium",
+    status: "Overdue",
+    createdOn: "2025-09-14",
+    deadline: "2025-09-18",
+  },
+];

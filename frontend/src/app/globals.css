@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   GLOBAL COLOUR SYSTEM  —  single source of truth for the whole app.
+   Every colour used anywhere in the UI is declared here and nowhere else.
+   Tailwind v4 turns each `--color-x` token below into a real utility class
+   (`bg-brand-600`, `text-ink-500`, `border-line`, ...) AND a CSS variable
+   (`var(--color-brand-600)`) that charts and inline SVG can read directly.
+
+   BRAND      = red. Used for logo, active nav, primary buttons, links,
+                focus rings, chart accents.
+   INK        = neutral text + surfaces.
+   STATUS     = semantic badge colours (ticket lifecycle).
+   PRIORITY   = semantic badge colours (urgency).
+   CHART      = ordered palette for data visualisation, red-forward.
+   ============================================================================ */
+
+@theme {
+  /* --- Brand: red ------------------------------------------------------- */
+  --color-brand-50: #fef2f2;
+  --color-brand-100: #fee2e2;
+  --color-brand-200: #fecaca;
+  --color-brand-300: #fca5a5;
+  --color-brand-400: #f87171;
+  --color-brand-500: #ef4444;
+  --color-brand-600: #dc2626; /* primary action */
+  --color-brand-700: #b91c1c; /* hover / pressed */
+  --color-brand-800: #991b1b;
+  --color-brand-900: #7f1d1d;
+  --color-brand-950: #450a0a;
+
+  /* --- Ink: neutral text, surfaces, borders ----------------------------- */
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b; /* muted body text */
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a; /* headings */
+
+  /* --- Semantic surfaces ------------------------------------------------ */
+  --color-canvas: #f6f8fb; /* page background */
+  --color-surface: #ffffff; /* cards, sidebar, topbar */
+  --color-line: #e8edf3; /* hairline borders */
+  --color-line-strong: #dbe3ec; /* input borders */
+
+  /* --- Status: ticket lifecycle ---------------------------------------- */
+  --color-status-new-bg: #f1f5f9;
+  --color-status-new-fg: #475569;
+  --color-status-accepted-bg: #ecfdf5;
+  --color-status-accepted-fg: #047857;
+  --color-status-progress-bg: #eef2ff;
+  --color-status-progress-fg: #4338ca;
+  --color-status-waiting-bg: #fef3c7;
+  --color-status-waiting-fg: #b45309;
+  --color-status-completed-bg: #dcfce7;
+  --color-status-completed-fg: #15803d;
+  --color-status-overdue-bg: #fee2e2;
+  --color-status-overdue-fg: #b91c1c;
+
+  /* --- Department role tags -------------------------------------------- *
+   * Who someone is inside a department: head or team. Kept apart from the
+   * ticket STATUS scale so a role tag is never mistaken for a ticket state.
+   * --------------------------------------------------------------------- */
+  --color-role-head-bg: #fef2f2;
+  --color-role-head-fg: #b91c1c;
+  --color-role-team-bg: #f1f5f9;
+  --color-role-team-fg: #475569;
+
+  /* --- Priority: urgency ------------------------------------------------ */
+  --color-priority-low-bg: #dcfce7;
+  --color-priority-low-fg: #15803d;
+  --color-priority-low-dot: #22c55e;
+  --color-priority-medium-bg: #fef3c7;
+  --color-priority-medium-fg: #b45309;
+  --color-priority-medium-dot: #f59e0b;
+  --color-priority-high-bg: #fee2e2;
+  --color-priority-high-fg: #b91c1c;
+  --color-priority-high-dot: #ef4444;
+  --color-priority-critical-bg: #fecaca;
+  --color-priority-critical-fg: #7f1d1d;
+  --color-priority-critical-dot: #dc2626;
+
+  /* --- Profile avatars -------------------------------------------------- *
+   * The initials circle is tinted by what the person is: a head reads in the
+   * brand red, a team member in slate. Same two families as the role tags and
+   * the count pills, one step darker so white initials clear contrast.
+   * --------------------------------------------------------------------- */
+  --color-avatar-head-bg: #dc2626;
+  --color-avatar-head-fg: #ffffff;
+  --color-avatar-team-bg: #475569;
+  --color-avatar-team-fg: #ffffff;
+
+  /* --- Count pills ------------------------------------------------------ *
+   * The headline tallies on a department. Heads and Team deliberately reuse
+   * the role-tag colours above, so a pill and a member's tag read as the same
+   * thing; Members is the total and gets its own hue so it never looks like a
+   * third role.
+   * --------------------------------------------------------------------- */
+  --color-pill-members-bg: #eef2ff;
+  --color-pill-members-fg: #4338ca;
+  --color-pill-heads-bg: #fef2f2;
+  --color-pill-heads-fg: #b91c1c;
+  --color-pill-team-bg: #f1f5f9;
+  --color-pill-team-fg: #475569;
+
+  /* --- Summary tiles ---------------------------------------------------- *
+   * The little tinted counters above a table. Every tone but this one is
+   * already defined (status + role): violet exists only so "Super Admins"
+   * never reads as another red alert next to Suspended.
+   * --------------------------------------------------------------------- */
+  --color-tile-admin-bg: #f5f3ff;
+  --color-tile-admin-fg: #6d28d9;
+
+  /* --- Charting --------------------------------------------------------- *
+   * VALIDATED categorical theme. `node scripts/validate_palette.js
+   * "#dc2626,#7c3aed,#0891b2" --mode light --pairs all` passes all six checks:
+   * lightness band, chroma floor, CVD separation (worst all-pairs dE 15.0
+   * deutan), normal-vision floor (24.5) and contrast vs surface. Do not add a
+   * 4th categorical hue - a generated hue fails CVD. Past 3 series: fold the
+   * tail into "Other", facet into small multiples, or switch to a table.
+   *
+   * Consume IN ORDER: two series use chart-1 + chart-2, never chart-1 +
+   * chart-3.
+   *
+   * chart-muted is NOT a categorical slot. It is the de-emphasis grey for the
+   * emphasis form (one series in brand, the rest recessive) and for reference
+   * lines. It deliberately sits below the chroma floor.
+   *
+   * SEQUENTIAL (magnitude, one hue, more = darker): step through
+   * seq-1 -> seq-6 below. Never a rainbow, never two hues.
+   *
+   * STATUS is not in this ramp. A status chart reuses the STATUS tokens above
+   * so a stacked segment is the same colour as that status's badge in the
+   * ticket tables, and it always ships a legend plus a printed value per
+   * status - state is never carried by colour alone.
+   *
+   * MARKS: lines 2px round-cap; area fills ~10% opacity; bars <= 24px thick
+   * with a 4px rounded data-end, square at the baseline; 2px surface-coloured
+   * gap between touching segments; gridlines solid 1px, never dashed; no
+   * second y-axis, ever.
+   * --------------------------------------------------------------------- */
+  --color-chart-1: #dc2626;
+  --color-chart-2: #7c3aed;
+  --color-chart-3: #0891b2;
+  --color-chart-muted: #94a3b8;
+
+  --color-chart-seq-1: #fecaca;
+  --color-chart-seq-2: #fca5a5;
+  --color-chart-seq-3: #f87171;
+  --color-chart-seq-4: #ef4444;
+  --color-chart-seq-5: #dc2626;
+  --color-chart-seq-6: #b91c1c;
+
+  --color-chart-grid: #eef2f7;
+  --color-chart-axis: #94a3b8;
+
+  /* --- Type -------------------------------------------------------------- */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* --- Shape ------------------------------------------------------------ */
+  --radius-card: 0.875rem;
+  --radius-field: 0.625rem;
+}
+
+/* Light-only product surface: the design has no dark variant, so the
+   colour scheme is pinned rather than following the OS. */
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink-900);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native select: strip the OS arrow, every select renders our own chevron. */
+select {
+  appearance: none;
+}
+
+/* Firefox hides the calendar picker; Chrome's default icon is replaced by
+   our own leading icon, so drop the built-in one. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-200);
+  border-radius: 9999px;
+  border: 3px solid var(--color-canvas);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-300);
+}
