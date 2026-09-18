@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
+import { record } from '../services/activity.js';
 
 function present(ticket) {
   const department = ticket.department;
@@ -125,6 +126,17 @@ export async function createTicket(req, res) {
 
   const tickets = populated.map(present);
 
+  for (const ticket of populated) {
+    // eslint-disable-next-line no-await-in-loop
+    await record({
+      actor: req.user,
+      department: ticket.department,
+      action: 'ticket.created',
+      summary: `raised ${ticket.number} "${ticket.subject}"`,
+      ticketNumber: ticket.number,
+    });
+  }
+
   res.status(201).json({ success: true, tickets, ticket: tickets[0] });
 }
 
@@ -200,6 +212,14 @@ export async function updateTicket(req, res) {
 
   const { status, deadline, assignee, priority } = req.body ?? {};
 
+  // Remember what it looked like, so the log can say what actually changed.
+  const before = {
+    status: ticket.status,
+    priority: ticket.priority,
+    deadline: ticket.deadline ? ticket.deadline.toISOString().slice(0, 10) : null,
+    assignee: ticket.assignee ? String(ticket.assignee) : null,
+  };
+
   if (status !== undefined) {
     if (!TICKET_STATUSES.includes(status)) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
@@ -242,6 +262,36 @@ export async function updateTicket(req, res) {
     .populate('raisedBy', 'name email')
     .populate('fromDepartments', 'name code')
     .populate('assignee', 'name email');
+
+  const changes = [];
+  if (before.status !== populated.status) {
+    changes.push(`status ${before.status} -> ${populated.status}`);
+  }
+  if (before.priority !== populated.priority) {
+    changes.push(`priority ${before.priority} -> ${populated.priority}`);
+  }
+  const nowDeadline = populated.deadline
+    ? populated.deadline.toISOString().slice(0, 10)
+    : null;
+  if (before.deadline !== nowDeadline) {
+    changes.push(nowDeadline ? `deadline set to ${nowDeadline}` : 'deadline cleared');
+  }
+  const nowAssignee = populated.assignee ? String(populated.assignee._id) : null;
+  if (before.assignee !== nowAssignee) {
+    changes.push(
+      populated.assignee ? `assigned to ${populated.assignee.name}` : 'unassigned',
+    );
+  }
+
+  if (changes.length > 0) {
+    await record({
+      actor: req.user,
+      department: populated.department,
+      action: 'ticket.updated',
+      summary: `updated ${populated.number}: ${changes.join(', ')}`,
+      ticketNumber: populated.number,
+    });
+  }
 
   res.json({ success: true, ticket: present(populated) });
 }

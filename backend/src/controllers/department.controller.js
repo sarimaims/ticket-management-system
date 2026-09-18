@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES } from '../models/User.js';
 import { presentUser } from './auth.controller.js';
+import { record } from '../services/activity.js';
 
 function assertObjectId(id, label = 'id') {
   if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest(`Invalid ${label}.`);
@@ -145,6 +146,13 @@ export async function createDepartment(req, res) {
     createdBy: req.user._id,
   });
 
+  await record({
+    actor: req.user,
+    department,
+    action: 'department.created',
+    summary: `created the department ${department.name}`,
+  });
+
   res.status(201).json({ success: true, department: present(department) });
 }
 
@@ -207,11 +215,6 @@ export async function addMember(req, res) {
   if (!DEPARTMENT_ROLES.includes(role)) {
     throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
   }
-  // Appointing another head is an admin decision, not a head's.
-  if (role === 'head' && !isManager(req.user)) {
-    throw ApiError.forbidden('Only an admin can appoint a department head.');
-  }
-
   const normalisedEmail = email.trim().toLowerCase();
   let user = await User.findOne({ email: normalisedEmail });
 
@@ -244,6 +247,13 @@ export async function addMember(req, res) {
 
   const populated = await User.findById(user._id).populate('memberships.department', 'name code');
 
+  await record({
+    actor: req.user,
+    department,
+    action: 'member.added',
+    summary: `added ${user.name} to ${department.name} as ${role}`,
+  });
+
   res.status(201).json({
     success: true,
     member: { ...presentUser(populated), departmentRole: role },
@@ -274,6 +284,13 @@ export async function updateMemberRole(req, res) {
   membership.role = role;
   await user.save({ validateBeforeSave: false });
 
+  await record({
+    actor: req.user,
+    department: req.params.id,
+    action: 'member.role_changed',
+    summary: `changed ${user.name}'s role to ${role}`,
+  });
+
   const populated = await User.findById(user._id).populate('memberships.department', 'name code');
   res.json({ success: true, member: { ...presentUser(populated), departmentRole: role } });
 }
@@ -301,6 +318,14 @@ export async function removeMember(req, res) {
   );
 
   if (result.matchedCount === 0) throw ApiError.notFound('User not found.');
+
+  const removed = await User.findById(req.params.userId).select('name');
+  await record({
+    actor: req.user,
+    department: req.params.id,
+    action: 'member.removed',
+    summary: `removed ${removed?.name ?? 'a member'} from the department`,
+  });
 
   res.json({ success: true });
 }

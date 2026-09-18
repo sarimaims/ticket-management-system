@@ -1,0 +1,183 @@
+// FlowDesk data model, as it already exists in MongoDB.
+//
+// MongoDB has no migration history: `prisma migrate` is a SQL-only feature, so
+// this schema is applied with `npm run prisma:push`, which only creates
+// collections and indexes and never rewrites documents.
+//
+// It mirrors the Mongoose models in src/models one for one - the field names,
+// the `_id` keys and the collection names are the ones Mongoose already writes,
+// so both can read the same database. Change a model here, change it there.
+
+generator client {
+  // Prisma 7 has no MongoDB support yet, so this project stays on v6 and on
+  // the classic generator, whose client is imported from '@prisma/client'.
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  // Same connection string the Mongoose app uses; there is one database.
+  url      = env("MONGODB_URI")
+}
+
+/// What a user can do across the whole workspace.
+enum SystemRole {
+  superadmin
+  admin
+  user
+}
+
+/// What a user is inside one department.
+enum DepartmentRole {
+  head
+  team
+}
+
+enum UserStatus {
+  active
+  invited
+  suspended
+}
+
+enum TicketStatus {
+  New
+  Accepted
+  InProgress @map("In Progress")
+  Waiting
+  Completed
+  Overdue
+}
+
+enum TicketPriority {
+  Low
+  Medium
+  High
+  Critical
+}
+
+/// One line of a user's `memberships` array. Embedded, exactly as Mongoose
+/// stores it. Composite types cannot hold relations, so the department is a
+/// plain id - read the department separately when you need its name.
+type Membership {
+  departmentId String         @map("department") @db.ObjectId
+  role         DepartmentRole @default(team)
+}
+
+model User {
+  id           String       @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  email        String       @unique
+  /// bcrypt hash. Mongoose marks this `select: false`; Prisma has no such
+  /// flag, so never hand a raw user object to a response.
+  password     String
+  role         SystemRole   @default(user)
+  status       UserStatus   @default(active)
+  memberships  Membership[]
+  lastActiveAt DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  departmentsCreated Department[] @relation("DepartmentCreatedBy")
+  ticketsRaised      Ticket[]     @relation("TicketRaisedBy")
+  ticketsAssigned    Ticket[]     @relation("TicketAssignee")
+  activities         Activity[]
+
+  @@index([memberships.departmentId])
+  @@map("users")
+}
+
+model Department {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String   @unique
+  /// Short handle shown next to the name, e.g. "HR", "ITS".
+  code        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true)
+  createdById String?  @map("createdBy") @db.ObjectId
+  createdBy   User?    @relation("DepartmentCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tickets    Ticket[]
+  activities Activity[]
+
+  @@map("departments")
+}
+
+model Ticket {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  /// Human-readable and stable: TK-0001. Assigned from the `counters`
+  /// collection; `id` stays the real key.
+  number      String         @unique
+  subject     String
+  description String
+  requestType String
+  priority    TicketPriority @default(Medium)
+  status      TicketStatus   @default(New)
+
+  /// Who handles it. Everyone in this department can see the ticket.
+  departmentId String     @map("department") @db.ObjectId
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  raisedById String @map("raisedBy") @db.ObjectId
+  raisedBy   User   @relation("TicketRaisedBy", fields: [raisedById], references: [id])
+
+  /// Which of the raiser's own departments this is asked on behalf of.
+  /// Deliberately a plain id list, not a Prisma relation: a MongoDB
+  /// many-to-many would need a matching array on Department, which the
+  /// documents Mongoose writes do not have.
+  fromDepartmentIds String[] @map("fromDepartments") @db.ObjectId
+
+  /// Snapshot of the raiser's standing at the time, so the receiving
+  /// department still sees "raised by an admin" after a demotion.
+  raisedByRole SystemRole @default(user)
+
+  assigneeId String? @map("assignee") @db.ObjectId
+  assignee   User?   @relation("TicketAssignee", fields: [assigneeId], references: [id])
+
+  deadline  DateTime?
+  project   String    @default("")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([departmentId])
+  @@index([raisedById])
+  @@map("tickets")
+}
+
+/// A line in a department's activity log. Written once, never updated: the
+/// actor's name and role are snapshots that survive a rename or a deletion.
+model Activity {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  /// null means workspace-level, visible to managers only.
+  departmentId   String?     @map("department") @db.ObjectId
+  department     Department? @relation(fields: [departmentId], references: [id])
+  departmentName String      @default("")
+
+  actorId   String?    @map("actor") @db.ObjectId
+  actor     User?      @relation(fields: [actorId], references: [id])
+  actorName String
+  actorRole SystemRole @default(user)
+
+  /// Machine-readable: ticket.created, member.added, ...
+  action String
+  /// One line, already written for a human to read.
+  summary      String
+  ticketNumber String @default("")
+
+  /// No updatedAt: an entry is never edited.
+  createdAt DateTime @default(now())
+
+  @@index([departmentId])
+  @@index([createdAt(sort: Desc)])
+  @@map("activities")
+}
+
+/// One sequence per name, bumped atomically to hand out ticket numbers.
+model Counter {
+  id  String @id @map("_id")
+  seq Int    @default(0)
+
+  @@map("counters")
+}

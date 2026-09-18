@@ -9,12 +9,19 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/scripts/seed.js",
-    "reset": "node src/scripts/reset.js"
+    "reset": "node src/scripts/reset.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:pull": "prisma db pull",
+    "prisma:studio": "prisma studio",
+    "postinstall": "prisma generate",
+    "prisma:seed": "prisma db seed"
   },
   "engines": {
     "node": ">=18.18.0"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -26,6 +33,10 @@
     "morgan": "^1.12.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "prisma": "^6.19.3"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }
