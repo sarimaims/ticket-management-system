@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { TicketForm } from "@/components/tickets/ticket-form";
 
 export const metadata: Metadata = {
-  title: "Create Ticket — AIVIN",
+  title: "Create Ticket — FlowDesk",
 };
 
 export default function CreateTicketPage() {

@@ -44,7 +44,7 @@ export const STATUS_SHARE: { status: TicketStatus; count: number }[] = [
 export const RECENT_ACTIVITY = [
   { id: "TK-0024", text: "Website Contact Form Update assigned to you", time: "12 min ago", tone: "new" as const },
   { id: "TK-0021", text: "Employee Onboarding Support is waiting on HR", time: "1 hr ago", tone: "waiting" as const },
-  { id: "TK-0019", text: "CRM Access for New Team Member completed", time: "3 hrs ago", tone: "completed" as const },
+  { id: "TK-0019", text: "Mailbox Access for New Team Member completed", time: "3 hrs ago", tone: "completed" as const },
   { id: "TK-0015", text: "Laptop Replacement passed its deadline", time: "Yesterday", tone: "overdue" as const },
-  { id: "TK-0013", text: "CRM Access for Team Member passed its deadline", time: "2 days ago", tone: "overdue" as const },
+  { id: "TK-0013", text: "Mailbox Access for Team Member passed its deadline", time: "2 days ago", tone: "overdue" as const },
 ];

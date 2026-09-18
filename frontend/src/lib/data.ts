@@ -29,8 +29,8 @@ export const REQUEST_TYPES = [
 ];
 
 export const PROJECTS = [
-  "AIVIN CRM",
-  "AIVIN Website",
+  "FlowDesk Portal",
+  "FlowDesk Website",
   "Internal Tooling",
   "Mobile App",
 ];
@@ -98,7 +98,7 @@ export const MY_REQUESTS: Ticket[] = [
   },
   {
     id: "TK-0013",
-    subject: "CRM Access for Team Member",
+    subject: "Mailbox Access for Team Member",
     department: "IT Support",
     requestType: "Access Request",
     priority: "High",
@@ -191,7 +191,7 @@ export const ASSIGNED_TICKETS: Ticket[] = [
   },
   {
     id: "TK-0019",
-    subject: "CRM Access for New Team Member",
+    subject: "Mailbox Access for New Team Member",
     department: "IT Support",
     requestType: "Access Request",
     priority: "Low",

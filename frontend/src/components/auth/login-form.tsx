@@ -59,7 +59,7 @@ export function LoginForm() {
           type="email"
           autoComplete="email"
           icon={<Mail className="text-ink-500" />}
-          placeholder="you@aivin.com"
+          placeholder="you@flowdesk.com"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
@@ -108,12 +108,12 @@ export function LoginForm() {
       <div className="rounded-field border border-line bg-ink-50 px-4 py-3 text-xs text-ink-500">
         <p className="font-semibold text-ink-700">Demo accounts</p>
         <p className="mt-1">
-          Super admin: <span className="font-medium text-ink-700">admin@aivin.com</span> /
+          Super admin: <span className="font-medium text-ink-700">admin@flowdesk.com</span> /
           admin1234
         </p>
         <p>
-          Member: <span className="font-medium text-ink-700">intizar.shah@aivin.com</span> /
-          aivin1234
+          Member: <span className="font-medium text-ink-700">intizar.shah@flowdesk.com</span> /
+          flowdesk1234
         </p>
       </div>
     </form>

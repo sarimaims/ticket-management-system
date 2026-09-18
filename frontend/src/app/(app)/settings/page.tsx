@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { SettingsForm } from "@/components/settings/settings-form";
 
 export const metadata: Metadata = {
-  title: "Settings — AIVIN",
+  title: "Settings — FlowDesk",
 };
 
 export default function SettingsPage() {

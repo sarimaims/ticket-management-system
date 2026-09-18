@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { TicketsWorkspace } from "@/components/tickets/tickets-workspace";
 
 export const metadata: Metadata = {
-  title: "Assigned to Me — AIVIN",
+  title: "Assigned to Me — FlowDesk",
 };
 
 export default function AssignedToMePage() {

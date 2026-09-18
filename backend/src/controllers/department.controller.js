@@ -9,6 +9,19 @@ function assertObjectId(id, label = 'id') {
   if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest(`Invalid ${label}.`);
 }
 
+const isManager = (user) => MANAGER_ROLES.includes(user.role);
+
+/** The departments a non-manager is allowed to look at: their own. */
+function myDepartmentIds(user) {
+  return (user.memberships ?? []).map((membership) => membership.department);
+}
+
+/** A head runs its own department; a manager runs all of them. */
+function canManageMembers(user, departmentId) {
+  if (isManager(user)) return true;
+  return user.roleInDepartment(departmentId) === 'head';
+}
+
 /** One aggregate for every department's head/team counts, so the list is a single round trip. */
 async function countsByDepartment() {
   const rows = await User.aggregate([
@@ -46,8 +59,12 @@ function present(department, counts) {
 }
 
 export async function listDepartments(req, res) {
+  // A head or team member sees the departments they belong to, nothing else.
+  // Managers see the whole org chart.
+  const filter = isManager(req.user) ? {} : { _id: { $in: myDepartmentIds(req.user) } };
+
   const [departments, counts] = await Promise.all([
-    Department.find().sort({ name: 1 }),
+    Department.find(filter).sort({ name: 1 }),
     countsByDepartment(),
   ]);
 
@@ -57,11 +74,35 @@ export async function listDepartments(req, res) {
   });
 }
 
+/**
+ * Names only, for choosing where to send a ticket. You may raise a request to
+ * any department; that is different from being able to inspect its members,
+ * which `listDepartments` above restricts.
+ */
+export async function listDepartmentOptions(req, res) {
+  const departments = await Department.find({ isActive: true })
+    .select('name code')
+    .sort({ name: 1 });
+
+  res.json({
+    success: true,
+    departments: departments.map((department) => ({
+      id: String(department._id),
+      name: department.name,
+      code: department.code,
+    })),
+  });
+}
+
 export async function getDepartment(req, res) {
   assertObjectId(req.params.id, 'department id');
 
   const department = await Department.findById(req.params.id);
   if (!department) throw ApiError.notFound('Department not found.');
+
+  if (!isManager(req.user) && !req.user.roleInDepartment(department._id)) {
+    throw ApiError.forbidden('You can only view a department you belong to.');
+  }
 
   const members = await User.find({ 'memberships.department': department._id })
     .sort({ name: 1 })
@@ -159,9 +200,16 @@ export async function addMember(req, res) {
 
   const { name, email, password, role } = req.body ?? {};
 
+  if (!canManageMembers(req.user, department._id)) {
+    throw ApiError.forbidden('Only a head of this department, or an admin, can add members.');
+  }
   if (!email?.trim()) throw ApiError.badRequest('Email is required.');
   if (!DEPARTMENT_ROLES.includes(role)) {
     throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
+  }
+  // Appointing another head is an admin decision, not a head's.
+  if (role === 'head' && !isManager(req.user)) {
+    throw ApiError.forbidden('Only an admin can appoint a department head.');
   }
 
   const normalisedEmail = email.trim().toLowerCase();
@@ -207,6 +255,9 @@ export async function updateMemberRole(req, res) {
   assertObjectId(req.params.userId, 'user id');
 
   const { role } = req.body ?? {};
+  if (!isManager(req.user)) {
+    throw ApiError.forbidden('Only an admin can change a member\'s role.');
+  }
   if (!DEPARTMENT_ROLES.includes(role)) {
     throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
   }
@@ -230,6 +281,19 @@ export async function updateMemberRole(req, res) {
 export async function removeMember(req, res) {
   assertObjectId(req.params.id, 'department id');
   assertObjectId(req.params.userId, 'user id');
+
+  if (!canManageMembers(req.user, req.params.id)) {
+    throw ApiError.forbidden('Only a head of this department, or an admin, can remove members.');
+  }
+
+  // A head runs the team, but cannot remove a fellow head - including itself.
+  if (!isManager(req.user)) {
+    const target = await User.findById(req.params.userId);
+    if (!target) throw ApiError.notFound('User not found.');
+    if (target.roleInDepartment(req.params.id) === 'head') {
+      throw ApiError.forbidden('Only an admin can remove a department head.');
+    }
+  }
 
   const result = await User.updateOne(
     { _id: req.params.userId },

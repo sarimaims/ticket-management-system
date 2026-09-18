@@ -82,7 +82,12 @@ function CountPill({
 
 export function DepartmentDetail({ departmentId }: { departmentId: string }) {
   const { session } = useAuth();
-  const canManage = isAdmin(session);
+
+  /** An admin runs every department; a head runs the one it leads. */
+  const myRole = session?.departments.find((item) => item.id === departmentId)?.role;
+  const isHere = isAdmin(session);
+  const isHead = myRole === "head";
+  const canManage = isHere || isHead;
 
   const [department, setDepartment] = useState<Department | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -258,25 +263,32 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                   {canManage && (
                     <TableCell>
                       <span className="flex items-center gap-2">
-                        <Select
-                          className="h-8 w-24 pr-7 pl-2.5 text-xs"
-                          value={member.departmentRole}
-                          onChange={(event) =>
-                            changeRole(member, event.target.value as DepartmentRole)
-                          }
-                          aria-label={`Role for ${member.name}`}
-                        >
-                          <option value="head">Head</option>
-                          <option value="team">Team</option>
-                        </Select>
-                        <button
-                          type="button"
-                          onClick={() => remove(member)}
-                          className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-brand-600"
-                          aria-label={`Remove ${member.name}`}
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
+                        {isHere ? (
+                          <Select
+                            className="h-8 w-24 pr-7 pl-2.5 text-xs"
+                            value={member.departmentRole}
+                            onChange={(event) =>
+                              changeRole(member, event.target.value as DepartmentRole)
+                            }
+                            aria-label={`Role for ${member.name}`}
+                          >
+                            <option value="head">Head</option>
+                            <option value="team">Team</option>
+                          </Select>
+                        ) : (
+                          <RoleTag role={member.departmentRole} />
+                        )}
+
+                        {(isHere || member.departmentRole === "team") && (
+                          <button
+                            type="button"
+                            onClick={() => remove(member)}
+                            className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-brand-600"
+                            aria-label={`Remove ${member.name}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
                       </span>
                     </TableCell>
                   )}
@@ -291,6 +303,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
         open={addOpen}
         departmentId={departmentId}
         departmentName={department.name}
+        canAppointHead={isHere}
         onClose={() => setAddOpen(false)}
         onAdded={() => {
           setAddOpen(false);
@@ -305,12 +318,15 @@ function AddMemberModal({
   open,
   departmentId,
   departmentName,
+  canAppointHead,
   onClose,
   onAdded,
 }: {
   open: boolean;
   departmentId: string;
   departmentName: string;
+  /** Appointing a head is an admin decision, so a head only adds team members. */
+  canAppointHead: boolean;
   onClose: () => void;
   onAdded: () => void;
 }) {
@@ -404,7 +420,7 @@ function AddMemberModal({
             type="email"
             className="h-11"
             icon={<Mail className="text-ink-500" />}
-            placeholder="name@aivin.com"
+            placeholder="name@flowdesk.com"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             autoFocus
@@ -432,15 +448,21 @@ function AddMemberModal({
           </Field>
 
           <Field label="Role" required htmlFor="member-role">
-            <Select
-              id="member-role"
-              className="h-11"
-              value={role}
-              onChange={(event) => setRole(event.target.value as DepartmentRole)}
-            >
-              <option value="head">Head</option>
-              <option value="team">Team</option>
-            </Select>
+            {canAppointHead ? (
+              <Select
+                id="member-role"
+                className="h-11"
+                value={role}
+                onChange={(event) => setRole(event.target.value as DepartmentRole)}
+              >
+                <option value="head">Head</option>
+                <option value="team">Team</option>
+              </Select>
+            ) : (
+              <div className="flex h-11 items-center rounded-field border border-line-strong bg-ink-50 px-3 text-sm font-medium text-ink-500">
+                Team
+              </div>
+            )}
           </Field>
         </div>
 

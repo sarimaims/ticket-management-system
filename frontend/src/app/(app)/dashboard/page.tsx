@@ -11,7 +11,7 @@ import { StatusShare } from "@/components/dashboard/status-share";
 import { DASHBOARD_STATS, RECENT_ACTIVITY } from "@/lib/dashboard-data";
 
 export const metadata: Metadata = {
-  title: "Dashboard — AIVIN",
+  title: "Dashboard — FlowDesk",
 };
 
 const ACTIVITY_DOT: Record<string, string> = {

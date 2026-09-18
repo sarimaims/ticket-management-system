@@ -21,6 +21,11 @@ const PRIORITY_STYLES: Record<TicketPriority, { chip: string; dot: string }> = {
   Critical: { chip: "bg-priority-critical-bg text-priority-critical-fg", dot: "bg-priority-critical-dot" },
 };
 
+/** The same status colours, for a control the user can change. */
+export function statusToneClasses(status: TicketStatus) {
+  return STATUS_STYLES[status];
+}
+
 export function StatusBadge({ status, className }: { status: TicketStatus; className?: string }) {
   return (
     <span

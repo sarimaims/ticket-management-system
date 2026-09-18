@@ -23,6 +23,11 @@ function present(ticket) {
     department: populated(department)
       ? { id: String(department._id), name: department.name, code: department.code }
       : { id: String(department) },
+    fromDepartments: (ticket.fromDepartments ?? []).map((item) =>
+      populated(item)
+        ? { id: String(item._id), name: item.name, code: item.code }
+        : { id: String(item) },
+    ),
     raisedBy: populated(raisedBy)
       ? { id: String(raisedBy._id), name: raisedBy.name, email: raisedBy.email }
       : { id: String(raisedBy) },
@@ -52,10 +57,25 @@ function visibilityFilter(user) {
 }
 
 export async function createTicket(req, res) {
-  const { department, subject, description, requestType, priority, deadline, project } =
-    req.body ?? {};
+  const {
+    department,
+    departments,
+    fromDepartments,
+    subject,
+    description,
+    requestType,
+    priority,
+    deadline,
+    project,
+  } = req.body ?? {};
 
-  if (!mongoose.isValidObjectId(department)) throw ApiError.badRequest('Pick a department.');
+  // Accepts one department or several; a single id stays valid.
+  const targetIds = [...new Set((departments ?? [department]).filter(Boolean).map(String))];
+
+  if (targetIds.length === 0) throw ApiError.badRequest('Pick at least one department.');
+  if (targetIds.some((id) => !mongoose.isValidObjectId(id))) {
+    throw ApiError.badRequest('One or more departments are invalid.');
+  }
   if (!subject?.trim()) throw ApiError.badRequest('Subject is required.');
   if (!description?.trim()) throw ApiError.badRequest('Description is required.');
   if (!requestType?.trim()) throw ApiError.badRequest('Request type is required.');
@@ -63,27 +83,49 @@ export async function createTicket(req, res) {
     throw ApiError.badRequest(`Priority must be one of: ${TICKET_PRIORITIES.join(', ')}.`);
   }
 
-  const target = await Department.findOne({ _id: department, isActive: true });
-  if (!target) throw ApiError.badRequest('That department does not exist.');
+  const targets = await Department.find({ _id: { $in: targetIds }, isActive: true });
+  if (targets.length !== targetIds.length) {
+    throw ApiError.badRequest('One or more departments do not exist.');
+  }
 
-  const ticket = await Ticket.create({
+  // You may only raise on behalf of a department you actually belong to.
+  const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
+  const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
+  const stranger = fromIds.find((id) => !mine.has(id));
+  if (stranger) throw ApiError.badRequest('You can only raise on behalf of your own departments.');
+
+  const shared = {
     subject: subject.trim(),
     description: description.trim(),
     requestType: requestType.trim(),
     priority: priority || 'Medium',
-    department: target._id,
     raisedBy: req.user._id,
     raisedByRole: req.user.role,
+    fromDepartments: fromIds,
     deadline: deadline ? new Date(deadline) : null,
     project: project?.trim() ?? '',
-  });
+  };
 
-  const populated = await Ticket.findById(ticket._id)
+  // One ticket per receiving department: each owns its own number, status and
+  // assignee, so one department resolving does not close it for the others.
+  const created = [];
+  for (const target of targets) {
+    // Sequential rather than Promise.all: the ticket number comes from a
+    // shared counter, and this keeps the numbering in a predictable order.
+    // eslint-disable-next-line no-await-in-loop
+    created.push(await Ticket.create({ ...shared, department: target._id }));
+  }
+
+  const populated = await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
+    .sort({ number: 1 })
     .populate('department', 'name code')
     .populate('raisedBy', 'name email')
+    .populate('fromDepartments', 'name code')
     .populate('assignee', 'name email');
 
-  res.status(201).json({ success: true, ticket: present(populated) });
+  const tickets = populated.map(present);
+
+  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
 }
 
 /** `scope=mine` for what I raised, `scope=assigned` for my departments' queue. */
@@ -107,6 +149,7 @@ export async function listTickets(req, res) {
     .sort({ createdAt: -1 })
     .populate('department', 'name code')
     .populate('raisedBy', 'name email')
+    .populate('fromDepartments', 'name code')
     .populate('assignee', 'name email');
 
   res.json({ success: true, tickets: tickets.map(present) });
@@ -121,6 +164,7 @@ export async function getTicket(req, res) {
   })
     .populate('department', 'name code')
     .populate('raisedBy', 'name email')
+    .populate('fromDepartments', 'name code')
     .populate('assignee', 'name email');
 
   // Not found and not allowed answer the same, so the endpoint cannot be used
@@ -196,6 +240,7 @@ export async function updateTicket(req, res) {
   const populated = await Ticket.findById(ticket._id)
     .populate('department', 'name code')
     .populate('raisedBy', 'name email')
+    .populate('fromDepartments', 'name code')
     .populate('assignee', 'name email');
 
   res.json({ success: true, ticket: present(populated) });

@@ -73,6 +73,14 @@ const ticketSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // Which of the raiser's own departments this is asked on behalf of. A
+    // manager belongs to none, so this is simply empty for them.
+    fromDepartments: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Department',
+      },
+    ],
     // Snapshot of the raiser's standing at the time. Stored rather than read
     // from the user, so the receiving department still sees "raised by an
     // admin" even if that person is demoted later.

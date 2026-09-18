@@ -499,7 +499,7 @@ function CreateAdminModal({
             id="admin-email"
             type="email"
             className="h-11"
-            placeholder="name@aivin.com"
+            placeholder="name@flowdesk.com"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             name="admin-email"

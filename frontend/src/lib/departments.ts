@@ -25,6 +25,16 @@ export type Member = {
   lastActiveAt: string;
 };
 
+export type DepartmentOption = Pick<Department, "id" | "name" | "code">;
+
+/** Every department, names only - what you may send a ticket to. */
+export function listDepartmentOptions(signal?: AbortSignal) {
+  return api<{ departments: DepartmentOption[] }>("/departments/options", { signal }).then(
+    (data) => data.departments,
+  );
+}
+
+/** The departments you may manage or inspect: yours, or all if you are an admin. */
 export function listDepartments(signal?: AbortSignal) {
   return api<{ departments: Department[] }>("/departments", { signal }).then(
     (data) => data.departments,

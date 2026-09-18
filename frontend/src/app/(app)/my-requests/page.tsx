@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { TicketsWorkspace } from "@/components/tickets/tickets-workspace";
 
 export const metadata: Metadata = {
-  title: "My Requests — AIVIN",
+  title: "My Requests — FlowDesk",
 };
 
 export default function MyRequestsPage() {

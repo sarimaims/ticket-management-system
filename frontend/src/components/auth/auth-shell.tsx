@@ -54,7 +54,7 @@ export function AuthShell({
         </div>
 
         <p className="relative text-sm text-brand-200">
-          © {new Date().getFullYear()} AIVIN. Internal ticket management.
+          © {new Date().getFullYear()} FlowDesk. Internal ticket management.
         </p>
       </aside>
 

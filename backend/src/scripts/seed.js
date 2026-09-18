@@ -11,7 +11,7 @@ import User, { MANAGER_ROLES } from '../models/User.js';
 
 const SUPER_ADMIN = {
   name: process.env.SEED_ADMIN_NAME || 'Super Admin',
-  email: (process.env.SEED_ADMIN_EMAIL || 'admin@aivin.com').toLowerCase(),
+  email: (process.env.SEED_ADMIN_EMAIL || 'admin@flowdesk.com').toLowerCase(),
   password: process.env.SEED_ADMIN_PASSWORD || 'admin1234',
 };
 
@@ -25,15 +25,15 @@ const DEPARTMENTS = [
 ];
 
 const MEMBERS = [
-  { name: 'Ayesha Khan', email: 'ayesha.khan@aivin.com', department: 'Human Resources', role: 'head' },
-  { name: 'Intizar Shah', email: 'intizar.shah@aivin.com', department: 'Digital Marketing', role: 'head' },
-  { name: 'Bilal Ahmed', email: 'bilal.ahmed@aivin.com', department: 'IT Support', role: 'head' },
-  { name: 'Sana Yousaf', email: 'sana.yousaf@aivin.com', department: 'IT Support', role: 'team' },
-  { name: 'Hamza Tariq', email: 'hamza.tariq@aivin.com', department: 'Development', role: 'team' },
-  { name: 'Mehwish Ali', email: 'mehwish.ali@aivin.com', department: 'Graphics & Design', role: 'team' },
+  { name: 'Ayesha Khan', email: 'ayesha.khan@flowdesk.com', department: 'Human Resources', role: 'head' },
+  { name: 'Intizar Shah', email: 'intizar.shah@flowdesk.com', department: 'Digital Marketing', role: 'head' },
+  { name: 'Bilal Ahmed', email: 'bilal.ahmed@flowdesk.com', department: 'IT Support', role: 'head' },
+  { name: 'Sana Yousaf', email: 'sana.yousaf@flowdesk.com', department: 'IT Support', role: 'team' },
+  { name: 'Hamza Tariq', email: 'hamza.tariq@flowdesk.com', department: 'Development', role: 'team' },
+  { name: 'Mehwish Ali', email: 'mehwish.ali@flowdesk.com', department: 'Graphics & Design', role: 'team' },
 ];
 
-const MEMBER_PASSWORD = process.env.SEED_MEMBER_PASSWORD || 'aivin1234';
+const MEMBER_PASSWORD = process.env.SEED_MEMBER_PASSWORD || 'flowdesk1234';
 
 async function uniqueCode(name) {
   const base = Department.codeFrom(name);

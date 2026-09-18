@@ -8,9 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { DateField } from "@/components/tickets/date-field";
-import { listDepartments, type Department } from "@/lib/departments";
+import { listDepartmentOptions, type DepartmentOption } from "@/lib/departments";
 import { createTicket, type TicketRecord } from "@/lib/tickets";
+import { useAuth } from "@/components/auth/auth-provider";
+import { useActiveDepartment } from "@/components/layout/active-department";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { TicketPriority } from "@/lib/types";
@@ -55,8 +58,11 @@ function Step({
 }
 
 export function TicketForm() {
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [targetDept, setTargetDept] = useState("");
+  const { session } = useAuth();
+  const { active } = useActiveDepartment();
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [targetDepts, setTargetDepts] = useState<string[]>([]);
+  const [fromDepts, setFromDepts] = useState<string[]>([]);
   const [priority, setPriority] = useState<TicketPriority>("Medium");
   const [requestType, setRequestType] = useState("");
   const [subject, setSubject] = useState("");
@@ -67,12 +73,17 @@ export function TicketForm() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
-  const [raised, setRaised] = useState<TicketRecord | null>(null);
+  const [raised, setRaised] = useState<TicketRecord[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // Whatever department they are working in is the obvious default.
+  useEffect(() => {
+    if (active) setFromDepts([active.id]);
+  }, [active]);
 
   useEffect(() => {
     const controller = new AbortController();
-    listDepartments(controller.signal)
+    listDepartmentOptions(controller.signal)
       .then(setDepartments)
       .catch(() => setDepartments([]));
     return () => controller.abort();
@@ -82,10 +93,22 @@ export function TicketForm() {
     if (list) setFiles((current) => [...current, ...Array.from(list)]);
   };
 
-  const selected = departments.find((department) => department.id === targetDept);
+  const selected = departments.filter((department) => targetDepts.includes(department.id));
+
+  // You can only ask on behalf of a department you are actually in.
+  const myDepartments = (session?.departments ?? []).map((membership) => ({
+    value: membership.id,
+    label: membership.name ?? "Department",
+  }));
+
+  const allDepartments = departments.map((department) => ({
+    value: department.id,
+    label: department.name,
+  }));
 
   const reset = () => {
-    setTargetDept("");
+    setTargetDepts([]);
+    setFromDepts([]);
     setPriority("Medium");
     setRequestType("");
     setSubject("");
@@ -99,15 +122,16 @@ export function TicketForm() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!targetDept) return setError("Pick the department this should go to.");
+    if (targetDepts.length === 0) return setError("Pick at least one department to send this to.");
     if (!requestType.trim()) return setError("Request type is required.");
     if (!subject.trim()) return setError("Subject is required.");
     if (!description.trim()) return setError("Description is required.");
 
     setPending(true);
     try {
-      const ticket = await createTicket({
-        department: targetDept,
+      const tickets = await createTicket({
+        departments: targetDepts,
+        fromDepartments: fromDepts,
         subject: subject.trim(),
         description: description.trim(),
         requestType: requestType.trim(),
@@ -115,7 +139,7 @@ export function TicketForm() {
         deadline: completionDate || undefined,
         project: project.trim() || undefined,
       });
-      setRaised(ticket);
+      setRaised(tickets);
       reset();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -137,22 +161,34 @@ export function TicketForm() {
       )}
       <Step title="Where it goes">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Request To Department" required htmlFor="target-department">
-            <Select
-              id="target-department"
-              value={targetDept}
-              onChange={(event) => setTargetDept(event.target.value)}
-            >
-              <option value="">Select a department</option>
-              {departments.map((department) => (
-                <option key={department.id} value={department.id}>
-                  {department.name}
-                </option>
-              ))}
-            </Select>
+          <Field
+            label="Request From Department"
+            hint="(your departments)"
+            htmlFor="from-departments"
+          >
+            <MultiSelect
+              id="from-departments"
+              options={myDepartments}
+              value={fromDepts}
+              onChange={setFromDepts}
+              placeholder="Select one or more"
+              emptyMessage="You are not in a department"
+            />
           </Field>
 
-          <Field label="Priority" required htmlFor="priority">
+          <Field label="Request To Department" required htmlFor="target-departments">
+            <MultiSelect
+              id="target-departments"
+              options={allDepartments}
+              value={targetDepts}
+              onChange={setTargetDepts}
+              placeholder="Select one or more"
+              emptyMessage="No departments yet"
+              invalid={Boolean(error) && targetDepts.length === 0}
+            />
+          </Field>
+
+          <Field label="Priority" required htmlFor="priority" className="sm:col-span-2 sm:max-w-[50%]">
             <div className="relative">
               <span
                 className={cn(
@@ -175,13 +211,23 @@ export function TicketForm() {
         </div>
 
         {/* Who can see it is a property of the department, so say so up front. */}
-        {selected && (
-          <p className="mt-3 flex items-center gap-2 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
-            <Users className="size-4 shrink-0 text-ink-400" />
-            Visible to the {selected.headCount === 1 ? "head" : "heads"} and{" "}
-            {selected.teamCount} team {selected.teamCount === 1 ? "member" : "members"} of{" "}
-            <span className="font-semibold text-ink-700">{selected.name}</span> only.
-          </p>
+        {selected.length > 0 && (
+          <div className="mt-3 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
+            <p className="flex items-center gap-2">
+              <Users className="size-4 shrink-0 text-ink-400" />
+              {selected.length === 1
+                ? "One ticket will be raised, visible only to:"
+                : `${selected.length} separate tickets will be raised, each visible only to:`}
+            </p>
+            <ul className="mt-1.5 space-y-0.5 pl-6">
+              {selected.map((department) => (
+                <li key={department.id}>
+                  <span className="font-semibold text-ink-700">{department.name}</span> · its head
+                  and team
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </Step>
 
@@ -212,7 +258,7 @@ export function TicketForm() {
               id="description"
               maxLength={1000}
               className="min-h-32"
-              placeholder="We need a Node.js developer for the CRM project. Please start the hiring process and share a timeline for candidate availability."
+              placeholder="We need a Node.js developer for the customer portal. Please start the hiring process and share a timeline for candidate availability."
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
@@ -235,7 +281,7 @@ export function TicketForm() {
             <Field label="Related project" htmlFor="project">
               <Input
                 id="project"
-                placeholder="e.g. AIVIN CRM"
+                placeholder="e.g. FlowDesk Portal"
                 value={project}
                 onChange={(event) => setProject(event.target.value)}
               />
@@ -316,53 +362,63 @@ export function TicketForm() {
         </Button>
       </div>
 
-      <TicketRaisedModal ticket={raised} onClose={() => setRaised(null)} />
+      <TicketRaisedModal tickets={raised} onClose={() => setRaised(null)} />
     </form>
   );
 }
 
 /** Confirms the ticket exists and says who now has it. */
 function TicketRaisedModal({
-  ticket,
+  tickets,
   onClose,
 }: {
-  ticket: TicketRecord | null;
+  tickets: TicketRecord[] | null;
   onClose: () => void;
 }) {
+  const many = (tickets?.length ?? 0) > 1;
+
   return (
     <Modal
-      open={ticket !== null}
+      open={tickets !== null && tickets.length > 0}
       onClose={onClose}
-      title="Ticket raised"
-      description="It is now in that department's queue."
+      title={many ? "Tickets raised" : "Ticket raised"}
+      description={
+        many
+          ? "Each department got its own ticket and can resolve it independently."
+          : "It is now in that department's queue."
+      }
       className="max-w-md"
     >
-      {ticket && (
+      {tickets && tickets.length > 0 && (
         <>
           <div className="flex items-start gap-3 rounded-field bg-status-completed-bg px-3.5 py-3">
             <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-status-completed-fg" />
             <div className="min-w-0">
-              <p className="text-sm font-bold text-status-completed-fg">{ticket.number} created</p>
-              <p className="mt-0.5 text-sm text-ink-600">{ticket.subject}</p>
+              <p className="text-sm font-bold text-status-completed-fg">
+                {tickets.map((ticket) => ticket.number).join(", ")} created
+              </p>
+              <p className="mt-0.5 text-sm text-ink-600">{tickets[0].subject}</p>
             </div>
           </div>
 
           <dl className="mt-4 divide-y divide-line text-sm">
-            <div className="flex justify-between gap-4 py-2">
-              <dt className="text-ink-500">Department</dt>
-              <dd className="font-semibold text-ink-900">{ticket.department.name}</dd>
-            </div>
-            <div className="flex justify-between gap-4 py-2">
-              <dt className="text-ink-500">Request type</dt>
-              <dd className="font-semibold text-ink-900">{ticket.requestType}</dd>
-            </div>
+            {tickets.map((ticket) => (
+              <div key={ticket.id} className="flex justify-between gap-4 py-2">
+                <dt className="text-ink-500">{ticket.number}</dt>
+                <dd className="font-semibold text-ink-900">{ticket.department.name}</dd>
+              </div>
+            ))}
+            {tickets[0].fromDepartments.length > 0 && (
+              <div className="flex justify-between gap-4 py-2">
+                <dt className="text-ink-500">Raised on behalf of</dt>
+                <dd className="text-right font-semibold text-ink-900">
+                  {tickets[0].fromDepartments.map((item) => item.name).join(", ")}
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between gap-4 py-2">
               <dt className="text-ink-500">Priority</dt>
-              <dd className="font-semibold text-ink-900">{ticket.priority}</dd>
-            </div>
-            <div className="flex justify-between gap-4 py-2">
-              <dt className="text-ink-500">Status</dt>
-              <dd className="font-semibold text-ink-900">{ticket.status}</dd>
+              <dd className="font-semibold text-ink-900">{tickets[0].priority}</dd>
             </div>
           </dl>
 

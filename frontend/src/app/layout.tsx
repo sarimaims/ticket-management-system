@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AIVIN — Ticket Management",
+  title: "FlowDesk — Ticket Management",
   description: "Raise a request to any department and get things done.",
 };
 

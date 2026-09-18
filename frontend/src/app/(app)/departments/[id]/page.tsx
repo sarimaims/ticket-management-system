@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { DepartmentDetail } from "@/components/departments/department-detail";
 
 export const metadata: Metadata = {
-  title: "Department — AIVIN",
+  title: "Department — FlowDesk",
 };
 
 export default async function DepartmentPage({

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AlertCircle, Inbox, Plus, Search, SlidersHorizontal } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
-import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
+import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
@@ -15,8 +15,9 @@ import { StatTiles } from "@/components/ui/stat-tiles";
 import { listTickets, updateTicket, type TicketRecord } from "@/lib/tickets";
 import { getDepartment, type Member } from "@/lib/departments";
 import { errorMessage } from "@/lib/api";
-import { formatDate } from "@/lib/utils";
-import type { Stat, TicketPriority, TicketStatus } from "@/lib/types";
+import { useActiveDepartment } from "@/components/layout/active-department";
+import { cn, formatDate } from "@/lib/utils";
+import type { Stat, TicketStatus } from "@/lib/types";
 
 const STATUSES: TicketStatus[] = [
   "New",
@@ -93,6 +94,7 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
   const [managing, setManaging] = useState<TicketRecord | null>(null);
+  const { active } = useActiveDepartment();
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -115,7 +117,15 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
     return () => controller.abort();
   }, [load]);
 
-  const stats = useMemo(() => statsFor(tickets, scope), [tickets, scope]);
+  const visible = useMemo(
+    () =>
+      scope === "assigned" && active
+        ? tickets.filter((ticket) => ticket.department.id === active.id)
+        : tickets,
+    [tickets, scope, active],
+  );
+
+  const stats = useMemo(() => statsFor(visible, scope), [visible, scope]);
 
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -124,9 +134,11 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
         return false;
       if (status && ticket.status !== status) return false;
       if (priority && ticket.priority !== priority) return false;
+      // Switching department in the topbar narrows this queue to that one.
+      if (scope === "assigned" && active && ticket.department.id !== active.id) return false;
       return true;
     });
-  }, [tickets, query, status, priority]);
+  }, [tickets, query, status, priority, scope, active]);
 
   const columns = scope === "mine" ? 8 : 10;
 
@@ -281,7 +293,10 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                     <TableCell>
                       {scope === "assigned" ? (
                         <Select
-                          className="h-8 w-32 pr-7 pl-2.5 text-xs"
+                          className={cn(
+                            "h-8 w-32 border-transparent pr-7 pl-2.5 text-xs font-semibold",
+                            statusToneClasses(ticket.status),
+                          )}
                           value={ticket.status}
                           onChange={(event) =>
                             applyStatus(ticket, event.target.value as TicketStatus)
@@ -371,7 +386,6 @@ function ManageTicketForm({
   onSaved: (ticket: TicketRecord) => void;
 }) {
   const [status, setStatus] = useState<TicketStatus>(ticket.status);
-  const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
   const [deadline, setDeadline] = useState(ticket.deadline ? ticket.deadline.slice(0, 10) : "");
   const [assignee, setAssignee] = useState(ticket.assignee?.id ?? "");
   const [members, setMembers] = useState<Member[]>([]);
@@ -394,7 +408,6 @@ function ManageTicketForm({
       onSaved(
         await updateTicket(ticket.id, {
           status,
-          priority,
           deadline: deadline || null,
           assignee: assignee || null,
         }),
@@ -431,24 +444,11 @@ function ManageTicketForm({
         <Field label="Status" htmlFor="manage-status">
           <Select
             id="manage-status"
-            className="h-11"
+            className={cn("h-11 border-transparent font-semibold", statusToneClasses(status))}
             value={status}
             onChange={(event) => setStatus(event.target.value as TicketStatus)}
           >
             {STATUSES.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </Select>
-        </Field>
-
-        <Field label="Priority" htmlFor="manage-priority">
-          <Select
-            id="manage-priority"
-            className="h-11"
-            value={priority}
-            onChange={(event) => setPriority(event.target.value as TicketPriority)}
-          >
-            {PRIORITIES.map((item) => (
               <option key={item}>{item}</option>
             ))}
           </Select>

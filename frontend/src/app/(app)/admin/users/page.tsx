@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PeopleWorkspace } from "@/components/admin/people-workspace";
 
 export const metadata: Metadata = {
-  title: "Users — AIVIN",
+  title: "Users — FlowDesk",
 };
 
 export default function AdminUsersPage() {

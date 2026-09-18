@@ -12,6 +12,7 @@ export type TicketRecord = {
   project: string;
   deadline: string | null;
   department: { id: string; name?: string; code?: string };
+  fromDepartments: { id: string; name?: string; code?: string }[];
   raisedBy: { id: string; name?: string; email?: string };
   /** The raiser's standing when the ticket was raised, not their standing now. */
   raisedByRole: "superadmin" | "admin" | "user";
@@ -20,8 +21,10 @@ export type TicketRecord = {
   updatedAt: string;
 };
 
+/** One submit can target several departments; each gets its own ticket. */
 export function createTicket(input: {
-  department: string;
+  departments: string[];
+  fromDepartments?: string[];
   subject: string;
   description: string;
   requestType: string;
@@ -29,8 +32,8 @@ export function createTicket(input: {
   deadline?: string;
   project?: string;
 }) {
-  return api<{ ticket: TicketRecord }>("/tickets", { method: "POST", body: input }).then(
-    (data) => data.ticket,
+  return api<{ tickets: TicketRecord[] }>("/tickets", { method: "POST", body: input }).then(
+    (data) => data.tickets,
   );
 }
 
