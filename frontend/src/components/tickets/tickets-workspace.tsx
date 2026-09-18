@@ -140,7 +140,7 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
     });
   }, [tickets, query, status, priority, scope, active]);
 
-  const columns = scope === "mine" ? 8 : 10;
+  const columns = scope === "mine" ? 9 : 11;
 
   /** Optimistic: the row moves now, and snaps back if the API refuses. */
   const applyStatus = async (ticket: TicketRecord, next: TicketStatus) => {
@@ -221,7 +221,7 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] border-collapse">
+          <table className="w-full min-w-[1120px] border-collapse">
             <thead className="border-b border-line bg-ink-50/60">
               <tr>
                 <TableHead sortable>Ticket ID</TableHead>
@@ -229,7 +229,8 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                   Subject
                 </TableHead>
                 {scope === "assigned" && <TableHead sortable>Raised By</TableHead>}
-                <TableHead sortable>{scope === "mine" ? "To Department" : "Department"}</TableHead>
+                <TableHead sortable>From Department</TableHead>
+                <TableHead sortable>To Department</TableHead>
                 <TableHead sortable>Request Type</TableHead>
                 <TableHead sortable>Priority</TableHead>
                 <TableHead sortable>Status</TableHead>
@@ -285,7 +286,30 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                       </TableCell>
                     )}
 
-                    <TableCell>{ticket.department.name}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      {ticket.fromDepartments.length === 0 ? (
+                        // Empty for a manager: they sit above the departments,
+                        // so the Raised By tag carries the origin instead.
+                        <span className="text-ink-400">—</span>
+                      ) : (
+                        <span className="flex flex-wrap gap-1">
+                          {ticket.fromDepartments.map((item) => (
+                            <span
+                              key={item.id}
+                              className="rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600"
+                            >
+                              {item.name}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </TableCell>
+
+                    <TableCell>
+                      <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
+                        {ticket.department.name}
+                      </span>
+                    </TableCell>
                     <TableCell>{ticket.requestType}</TableCell>
                     <TableCell>
                       <PriorityBadge priority={ticket.priority} />
