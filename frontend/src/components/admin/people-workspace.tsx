@@ -22,6 +22,7 @@ import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
@@ -109,6 +110,7 @@ function effectiveRole(user: DirectoryUser) {
 
 export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const { session } = useAuth();
+  const toast = useToast();
 
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -169,8 +171,9 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
       const updated = await updateUser(user.id, { status: next });
       setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setError("");
+      toast.success(`${updated.name} is now ${next}`);
     } catch (caught) {
-      setError(errorMessage(caught));
+      toast.error(`Could not update ${user.name}`, errorMessage(caught));
     }
   };
 
@@ -397,6 +400,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
           setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
           setEditing(null);
           load();
+          toast.success(`${updated.name} updated`);
         }}
       />
 
@@ -413,8 +417,10 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         user={removing}
         onClose={() => setRemoving(null)}
         onDeleted={(id) => {
+          const gone = users.find((item) => item.id === id);
           setUsers((current) => current.filter((item) => item.id !== id));
           setRemoving(null);
+          toast.success(`${gone?.name ?? "Account"} deleted`, gone?.email);
         }}
       />
     </>
@@ -439,6 +445,7 @@ function CreateAdminModal({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const toast = useToast();
 
   const close = () => {
     setName("");
@@ -460,7 +467,13 @@ function CreateAdminModal({
 
     setPending(true);
     try {
-      await createUser({ name: name.trim(), email: email.trim(), password, role: "admin" });
+      const created = await createUser({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        role: "admin",
+      });
+      toast.success(`${created.name} added as an admin`, created.email);
       close();
       onCreated();
     } catch (caught) {

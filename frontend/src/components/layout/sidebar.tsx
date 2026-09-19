@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   FileText,
+  History,
   LayoutDashboard,
   Plus,
   Settings,
@@ -28,6 +29,7 @@ const NAV: NavItem[] = [
   { href: "/departments", label: "Departments", icon: Users },
   { href: "/assigned-to-me", label: "Assigned to Me", icon: UserRound },
   { href: "/my-requests", label: "My Requests", icon: FileText },
+  { href: "/activity", label: "Activity", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

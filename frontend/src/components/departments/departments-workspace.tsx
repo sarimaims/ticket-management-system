@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
@@ -37,6 +38,7 @@ export function DepartmentsWorkspace() {
   const router = useRouter();
   const { session } = useAuth();
   const canManage = isAdmin(session);
+  const toast = useToast();
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -207,6 +209,7 @@ export function DepartmentsWorkspace() {
         onCreated={(department) => {
           setDepartments((current) => [...current, department].sort((a, b) => a.name.localeCompare(b.name)));
           setCreateOpen(false);
+          toast.success(`${department.name} created`, `Short code ${department.code}`);
         }}
       />
 
@@ -214,8 +217,15 @@ export function DepartmentsWorkspace() {
         department={pendingDelete}
         onClose={() => setPendingDelete(null)}
         onDeleted={(id) => {
+          const gone = departments.find((department) => department.id === id);
           setDepartments((current) => current.filter((department) => department.id !== id));
           setPendingDelete(null);
+          toast.success(
+            `${gone?.name ?? "Department"} deleted`,
+            gone && gone.memberCount > 0
+              ? `${gone.memberCount} member(s) detached.`
+              : undefined,
+          );
         }}
       />
     </>

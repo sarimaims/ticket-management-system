@@ -2,17 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, CheckCircle2, Paperclip, Users, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, Paperclip, ShieldCheck, Users, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Field, Input, Label, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { useToast } from "@/components/ui/toast";
 import { DateField } from "@/components/tickets/date-field";
 import { listDepartmentOptions, type DepartmentOption } from "@/lib/departments";
 import { createTicket, type TicketRecord } from "@/lib/tickets";
 import { useAuth } from "@/components/auth/auth-provider";
+import { isAdmin, ROLE_LABEL } from "@/lib/auth";
 import { useActiveDepartment } from "@/components/layout/active-department";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -20,12 +22,68 @@ import type { TicketPriority } from "@/lib/types";
 
 const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High", "Critical"];
 
-const PRIORITY_DOT: Record<TicketPriority, string> = {
-  Low: "bg-priority-low-dot",
-  Medium: "bg-priority-medium-dot",
-  High: "bg-priority-high-dot",
-  Critical: "bg-priority-critical-dot",
+/** The boxes that must be filled, in the order they appear on the page. */
+const REQUIRED = [
+  { key: "target", label: "Request To Department", id: "target-departments" },
+  { key: "requestType", label: "Request Type", id: "request-type" },
+  { key: "subject", label: "Subject", id: "subject" },
+  { key: "description", label: "Description", id: "description" },
+] as const;
+
+type RequiredKey = (typeof REQUIRED)[number]["key"];
+
+const PRIORITY_TONE: Record<TicketPriority, { dot: string; selected: string }> = {
+  Low: { dot: "bg-priority-low-dot", selected: "bg-priority-low-bg text-priority-low-fg" },
+  Medium: {
+    dot: "bg-priority-medium-dot",
+    selected: "bg-priority-medium-bg text-priority-medium-fg",
+  },
+  High: { dot: "bg-priority-high-dot", selected: "bg-priority-high-bg text-priority-high-fg" },
+  Critical: {
+    dot: "bg-priority-critical-dot",
+    selected: "bg-priority-critical-bg text-priority-critical-fg",
+  },
 };
+
+/**
+ * Four choices, so they are all on show: one click instead of open-read-pick,
+ * and the colour of the answer is visible before it is given.
+ */
+function PriorityPicker({
+  value,
+  onChange,
+}: {
+  value: TicketPriority;
+  onChange: (value: TicketPriority) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Priority"
+      className="flex w-full gap-1 rounded-field border border-line-strong bg-surface p-1 sm:w-auto"
+    >
+      {PRIORITIES.map((level) => {
+        const selected = value === level;
+        return (
+          <button
+            key={level}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(level)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors sm:flex-none sm:px-3.5",
+              selected ? PRIORITY_TONE[level].selected : "text-ink-500 hover:bg-ink-50",
+            )}
+          >
+            <span className={cn("size-2 shrink-0 rounded-full", PRIORITY_TONE[level].dot)} />
+            {level}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Each step of the form is its own box, so the page reads as three decisions. */
 function Step({
@@ -58,6 +116,7 @@ function Step({
 }
 
 export function TicketForm() {
+  const toast = useToast();
   const { session } = useAuth();
   const { active } = useActiveDepartment();
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
@@ -71,7 +130,7 @@ export function TicketForm() {
   const [project, setProject] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState("");
+  const [missing, setMissing] = useState<RequiredKey[]>([]);
   const [pending, setPending] = useState(false);
   const [raised, setRaised] = useState<TicketRecord[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -88,6 +147,9 @@ export function TicketForm() {
       .catch(() => setDepartments([]));
     return () => controller.abort();
   }, []);
+
+  const clear = (key: RequiredKey) =>
+    setMissing((current) => current.filter((item) => item !== key));
 
   const addFiles = (list: FileList | null) => {
     if (list) setFiles((current) => [...current, ...Array.from(list)]);
@@ -106,6 +168,9 @@ export function TicketForm() {
     label: department.name,
   }));
 
+  const manager = isAdmin(session);
+  const hasOwnDepartments = myDepartments.length > 0;
+
   const reset = () => {
     setTargetDepts([]);
     setFromDepts([]);
@@ -116,17 +181,37 @@ export function TicketForm() {
     setCompletionDate("");
     setProject("");
     setFiles([]);
-    setError("");
+    setMissing([]);
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (targetDepts.length === 0) return setError("Pick at least one department to send this to.");
-    if (!requestType.trim()) return setError("Request type is required.");
-    if (!subject.trim()) return setError("Subject is required.");
-    if (!description.trim()) return setError("Description is required.");
+    const filled: Record<RequiredKey, boolean> = {
+      target: targetDepts.length > 0,
+      requestType: Boolean(requestType.trim()),
+      subject: Boolean(subject.trim()),
+      description: Boolean(description.trim()),
+    };
+    const gaps = REQUIRED.filter((field) => !filled[field.key]);
 
+    if (gaps.length > 0) {
+      setMissing(gaps.map((field) => field.key));
+      toast.error(
+        gaps.length === 1
+          ? `${gaps[0].label} is required`
+          : `${gaps.length} required fields are missing`,
+        // Naming them only helps when there is more than one.
+        gaps.length === 1 ? undefined : gaps.map((field) => field.label).join(", "),
+      );
+      // Put the reader in front of the first empty box.
+      const first = document.getElementById(gaps[0].id);
+      first?.scrollIntoView({ behavior: "smooth", block: "center" });
+      first?.focus({ preventScroll: true });
+      return;
+    }
+
+    setMissing([]);
     setPending(true);
     try {
       const tickets = await createTicket({
@@ -141,8 +226,14 @@ export function TicketForm() {
       });
       setRaised(tickets);
       reset();
+      toast.success(
+        tickets.length === 1
+          ? `Ticket #${tickets[0].number} created`
+          : `${tickets.length} tickets created`,
+        tickets.map((item) => item.department.name).join(", "),
+      );
     } catch (caught) {
-      setError(errorMessage(caught));
+      toast.error("Could not create the ticket", errorMessage(caught));
     } finally {
       setPending(false);
     }
@@ -150,69 +241,95 @@ export function TicketForm() {
 
   return (
     <form className="mx-auto max-w-3xl space-y-4" onSubmit={submit} noValidate>
-      {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-field border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-sm font-medium text-brand-700"
-        >
-          <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          {error}
-        </div>
-      )}
       <Step title="Where it goes">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Request From Department"
-            hint="(your departments)"
-            htmlFor="from-departments"
-          >
-            <MultiSelect
-              id="from-departments"
-              options={myDepartments}
-              value={fromDepts}
-              onChange={setFromDepts}
-              placeholder="Select one or more"
-              emptyMessage="You are not in a department"
-            />
-          </Field>
+        {/* From -> To reads as one sentence, so the two sit on one line with
+            the direction drawn between them. A manager belongs to no
+            department, so there is nothing to ask from and the field is not
+            rendered at all. */}
+        <div
+          className={cn(
+            "grid gap-4",
+            hasOwnDepartments && "sm:grid-cols-[1fr_auto_1fr] sm:items-end sm:gap-3",
+          )}
+        >
+          {hasOwnDepartments && (
+            <>
+              <Field
+                label="Request From Department"
+                hint="(your departments)"
+                htmlFor="from-departments"
+              >
+                <MultiSelect
+                  id="from-departments"
+                  options={myDepartments}
+                  value={fromDepts}
+                  onChange={setFromDepts}
+                  placeholder="Select one or more"
+                />
+              </Field>
+
+              <div className="hidden h-12 items-center justify-center sm:flex">
+                <ArrowRight className="size-4 text-ink-300" />
+              </div>
+            </>
+          )}
 
           <Field label="Request To Department" required htmlFor="target-departments">
             <MultiSelect
               id="target-departments"
               options={allDepartments}
               value={targetDepts}
-              onChange={setTargetDepts}
+              onChange={(value) => {
+                setTargetDepts(value);
+                if (value.length > 0) clear("target");
+              }}
               placeholder="Select one or more"
               emptyMessage="No departments yet"
-              invalid={Boolean(error) && targetDepts.length === 0}
+              invalid={missing.includes("target")}
             />
-          </Field>
-
-          <Field label="Priority" required htmlFor="priority" className="sm:col-span-2 sm:max-w-[50%]">
-            <div className="relative">
-              <span
-                className={cn(
-                  "pointer-events-none absolute top-1/2 left-4 z-10 size-2.5 -translate-y-1/2 rounded-full",
-                  PRIORITY_DOT[priority],
+            {allDepartments.length === 0 && (
+              <p className="mt-1.5 text-xs text-ink-400">
+                No departments exist yet.{" "}
+                {manager ? (
+                  <Link
+                    href="/departments"
+                    className="font-semibold text-brand-600 underline underline-offset-2"
+                  >
+                    Create one first
+                  </Link>
+                ) : (
+                  "Ask an admin to create one."
                 )}
-              />
-              <Select
-                id="priority"
-                className="pl-9"
-                value={priority}
-                onChange={(event) => setPriority(event.target.value as TicketPriority)}
-              >
-                {PRIORITIES.map((level) => (
-                  <option key={level}>{level}</option>
-                ))}
-              </Select>
-            </div>
+              </p>
+            )}
           </Field>
+        </div>
+
+        {!hasOwnDepartments && (
+          <p className="mt-3 flex items-start gap-2 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
+            <ShieldCheck className="mt-px size-4 shrink-0 text-ink-400" />
+            {manager ? (
+              <span>
+                Raised at{" "}
+                <span className="font-semibold text-ink-700">
+                  {ROLE_LABEL[session?.role ?? "admin"]}
+                </span>{" "}
+                level. The department you pick sees where it came from.
+              </span>
+            ) : (
+              <span>You are not in a department yet, so this goes out in your name only.</span>
+            )}
+          </p>
+        )}
+
+        <div className="mt-4">
+          <Label required>Priority</Label>
+          <PriorityPicker value={priority} onChange={setPriority} />
         </div>
 
         {/* Who can see it is a property of the department, so say so up front. */}
         {selected.length > 0 && (
-          <div className="mt-3 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
+          <div className="mt-4 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
             <p className="flex items-center gap-2">
               <Users className="size-4 shrink-0 text-ink-400" />
               {selected.length === 1
@@ -238,8 +355,12 @@ export function TicketForm() {
               <Input
                 id="request-type"
                 placeholder="e.g. Recruitment"
+                invalid={missing.includes("requestType")}
                 value={requestType}
-                onChange={(event) => setRequestType(event.target.value)}
+                onChange={(event) => {
+                  setRequestType(event.target.value);
+                  clear("requestType");
+                }}
               />
             </Field>
 
@@ -247,8 +368,12 @@ export function TicketForm() {
               <Input
                 id="subject"
                 placeholder="e.g. Web developer required"
+                invalid={missing.includes("subject")}
                 value={subject}
-                onChange={(event) => setSubject(event.target.value)}
+                onChange={(event) => {
+                  setSubject(event.target.value);
+                  clear("subject");
+                }}
               />
             </Field>
           </div>
@@ -258,9 +383,13 @@ export function TicketForm() {
               id="description"
               maxLength={1000}
               className="min-h-32"
+              invalid={missing.includes("description")}
               placeholder="We need a Node.js developer for the customer portal. Please start the hiring process and share a timeline for candidate availability."
               value={description}
-              onChange={(event) => setDescription(event.target.value)}
+              onChange={(event) => {
+                setDescription(event.target.value);
+                clear("description");
+              }}
             />
           </Field>
         </div>

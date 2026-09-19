@@ -84,13 +84,25 @@ export function Input({
   icon,
   className,
   trailing,
+  invalid,
   ...props
-}: React.ComponentProps<"input"> & { icon?: React.ReactNode; trailing?: React.ReactNode }) {
+}: React.ComponentProps<"input"> & {
+  icon?: React.ReactNode;
+  trailing?: React.ReactNode;
+  invalid?: boolean;
+}) {
   return (
     <div className="relative">
       {icon && <LeadingIcon>{icon}</LeadingIcon>}
       <input
-        className={cn(CONTROL, icon ? "pl-12" : "pl-4", trailing ? "pr-12" : "pr-4", className)}
+        aria-invalid={invalid || undefined}
+        className={cn(
+          CONTROL,
+          icon ? "pl-12" : "pl-4",
+          trailing ? "pr-12" : "pr-4",
+          invalid && "border-brand-400 bg-brand-50/40",
+          className,
+        )}
         {...props}
       />
       {trailing && (
@@ -121,17 +133,20 @@ export function Textarea({
   className,
   maxLength,
   value,
+  invalid,
   ...props
-}: React.ComponentProps<"textarea">) {
+}: React.ComponentProps<"textarea"> & { invalid?: boolean }) {
   const count = typeof value === "string" ? value.length : 0;
   return (
     <div className="relative">
       <textarea
+        aria-invalid={invalid || undefined}
         className={cn(
           "min-h-[116px] w-full resize-y rounded-field border border-line-strong bg-surface px-4 py-3.5 text-sm text-ink-900",
           "transition-colors placeholder:text-ink-400",
           "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10",
           maxLength ? "pb-9" : "",
+          invalid && "border-brand-400 bg-brand-50/40",
           className,
         )}
         maxLength={maxLength}

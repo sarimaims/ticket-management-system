@@ -2,21 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, Inbox, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { AlertCircle, Inbox, Plus, Search, SlidersHorizontal, UserCheck } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Field, Input, Select } from "@/components/ui/field";
-import { Modal } from "@/components/ui/modal";
-import { DateField } from "@/components/tickets/date-field";
+import { Input, Select } from "@/components/ui/field";
+import { TicketDetailSheet } from "@/components/tickets/ticket-detail-sheet";
+import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { listTickets, updateTicket, type TicketRecord } from "@/lib/tickets";
-import { getDepartment, type Member } from "@/lib/departments";
 import { errorMessage } from "@/lib/api";
 import { useActiveDepartment } from "@/components/layout/active-department";
-import { cn, formatDate } from "@/lib/utils";
+import { useAuth } from "@/components/auth/auth-provider";
+import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { Stat, TicketStatus } from "@/lib/types";
 
 const STATUSES: TicketStatus[] = [
@@ -93,8 +92,17 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
-  const [managing, setManaging] = useState<TicketRecord | null>(null);
+  const [viewing, setViewing] = useState<TicketRecord | null>(null);
+  const [mineOnly, setMineOnly] = useState(false);
   const { active } = useActiveDepartment();
+  const { session } = useAuth();
+  const toast = useToast();
+
+  // A ticket sits with my department; this says it sits with *me*.
+  const isMine = useCallback(
+    (ticket: TicketRecord) => scope === "assigned" && ticket.assignee?.id === session?.id,
+    [scope, session?.id],
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -127,6 +135,8 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
 
   const stats = useMemo(() => statsFor(visible, scope), [visible, scope]);
 
+  const mineCount = useMemo(() => visible.filter(isMine).length, [visible, isMine]);
+
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
     return tickets.filter((ticket) => {
@@ -134,11 +144,12 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
         return false;
       if (status && ticket.status !== status) return false;
       if (priority && ticket.priority !== priority) return false;
+      if (mineOnly && !isMine(ticket)) return false;
       // Switching department in the topbar narrows this queue to that one.
       if (scope === "assigned" && active && ticket.department.id !== active.id) return false;
       return true;
     });
-  }, [tickets, query, status, priority, scope, active]);
+  }, [tickets, query, status, priority, scope, active, mineOnly, isMine]);
 
   const columns = scope === "mine" ? 9 : 11;
 
@@ -152,9 +163,10 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
       const saved = await updateTicket(ticket.id, { status: next });
       setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
       setError("");
+      toast.success(`#${ticket.number} updated`, `Status: ${next}`);
     } catch (caught) {
       setTickets(previous);
-      setError(errorMessage(caught));
+      toast.error(`Could not update #${ticket.number}`, errorMessage(caught));
     }
   };
 
@@ -170,6 +182,7 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
         </div>
       )}
 
+      <div className={cn("transition-[padding] duration-200", viewing && "xl:pr-[28rem]")}>
       <StatTiles stats={stats} />
 
       <Card className="mt-4 overflow-hidden">
@@ -208,6 +221,31 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
               <option key={item}>{item}</option>
             ))}
           </Select>
+
+          {scope === "assigned" && (
+            <button
+              type="button"
+              onClick={() => setMineOnly((current) => !current)}
+              aria-pressed={mineOnly}
+              className={cn(
+                "inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-[13px] font-semibold transition-colors",
+                mineOnly
+                  ? "border-brand-600 bg-brand-50 text-brand-700"
+                  : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
+              )}
+            >
+              <UserCheck className="size-4" />
+              Assigned to me
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 text-[11px] leading-none font-bold",
+                  mineOnly ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-600",
+                )}
+              >
+                {mineCount}
+              </span>
+            </button>
+          )}
 
           {scope === "mine" && (
             <Link
@@ -253,12 +291,18 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                   <td colSpan={columns} className="px-3 py-12 text-center">
                     <Inbox className="mx-auto size-6 text-ink-300" />
                     <p className="mt-2 text-sm font-semibold text-ink-700">
-                      {scope === "mine" ? "No requests yet" : "Nothing in your queue"}
+                      {mineOnly
+                        ? "Nothing assigned to you"
+                        : scope === "mine"
+                          ? "No requests yet"
+                          : "Nothing in your queue"}
                     </p>
                     <p className="mt-0.5 text-sm text-ink-400">
-                      {scope === "mine"
-                        ? "Raise one and it lands in that department's queue."
-                        : "Tickets raised to your departments will appear here."}
+                      {mineOnly
+                        ? "Tickets picked up in your name show here."
+                        : scope === "mine"
+                          ? "Raise one and it lands in that department's queue."
+                          : "Tickets raised to your departments will appear here."}
                     </p>
                   </td>
                 </tr>
@@ -268,10 +312,28 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                 rows.map((ticket) => (
                   <tr
                     key={ticket.id}
-                    className="border-b border-line transition-colors last:border-0 hover:bg-ink-50/70"
+                    onClick={() => setViewing(ticket)}
+                    className={cn(
+                      "cursor-pointer border-b border-line transition-colors last:border-0",
+                      viewing?.id === ticket.id ? "bg-brand-50" : "hover:bg-ink-50/70",
+                    )}
                   >
-                    <TableCell>
-                      <span className="text-sm font-semibold text-brand-600">#{ticket.number}</span>
+                    <TableCell className={cn(isMine(ticket) && "relative")}>
+                      {/* A bar on the row's edge: visible even when the table is
+                          scrolled, and it costs the layout nothing. */}
+                      {isMine(ticket) && (
+                        <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />
+                      )}
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-sm font-semibold text-brand-600">
+                          #{ticket.number}
+                        </span>
+                        {isMine(ticket) && (
+                          <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
+                            Mine
+                          </span>
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="font-semibold whitespace-normal text-ink-900">
                       {ticket.subject}
@@ -317,6 +379,7 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                     <TableCell>
                       {scope === "assigned" ? (
                         <Select
+                          onClick={(event) => event.stopPropagation()}
                           className={cn(
                             "h-8 w-32 border-transparent pr-7 pl-2.5 text-xs font-semibold",
                             statusToneClasses(ticket.status),
@@ -335,7 +398,12 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                         <StatusBadge status={ticket.status} />
                       )}
                     </TableCell>
-                    <TableCell>{formatDate(ticket.createdAt.slice(0, 10))}</TableCell>
+                    <TableCell>
+                      <span className="block leading-tight">{formatDateOf(ticket.createdAt)}</span>
+                      <span className="block text-[11px] leading-tight text-ink-400">
+                        {formatTime(ticket.createdAt)}
+                      </span>
+                    </TableCell>
                     <TableCell>
                       {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "—"}
                     </TableCell>
@@ -344,9 +412,12 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                       <TableCell>
                         <button
                           type="button"
-                          onClick={() => setManaging(ticket)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setViewing(ticket);
+                          }}
                           className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                          aria-label={`Manage ${ticket.number}`}
+                          aria-label={`Open ${ticket.number}`}
                         >
                           <SlidersHorizontal className="size-4" />
                         </button>
@@ -364,161 +435,17 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
           current={1}
         />
       </Card>
+      </div>
 
-      <ManageTicketModal
-        ticket={managing}
-        onClose={() => setManaging(null)}
+      <TicketDetailSheet
+        ticket={viewing}
+        canWork={scope === "assigned"}
+        onClose={() => setViewing(null)}
         onSaved={(saved) => {
           setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
-          setManaging(null);
+          setViewing(saved);
         }}
       />
     </>
-  );
-}
-
-/* ------------------------------------------------------------ manage panel */
-
-function ManageTicketModal({
-  ticket,
-  onClose,
-  onSaved,
-}: {
-  ticket: TicketRecord | null;
-  onClose: () => void;
-  onSaved: (ticket: TicketRecord) => void;
-}) {
-  return (
-    <Modal
-      open={ticket !== null}
-      onClose={onClose}
-      title={ticket ? `Work ${ticket.number}` : "Work ticket"}
-      description="Set where this stands, who owns it and when it is due."
-    >
-      {ticket && <ManageTicketForm key={ticket.id} ticket={ticket} onClose={onClose} onSaved={onSaved} />}
-    </Modal>
-  );
-}
-
-function ManageTicketForm({
-  ticket,
-  onClose,
-  onSaved,
-}: {
-  ticket: TicketRecord;
-  onClose: () => void;
-  onSaved: (ticket: TicketRecord) => void;
-}) {
-  const [status, setStatus] = useState<TicketStatus>(ticket.status);
-  const [deadline, setDeadline] = useState(ticket.deadline ? ticket.deadline.slice(0, 10) : "");
-  const [assignee, setAssignee] = useState(ticket.assignee?.id ?? "");
-  const [members, setMembers] = useState<Member[]>([]);
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-
-  // Only this department's people can own its work, so that is the list.
-  useEffect(() => {
-    const controller = new AbortController();
-    getDepartment(ticket.department.id, controller.signal)
-      .then((data) => setMembers(data.members))
-      .catch(() => setMembers([]));
-    return () => controller.abort();
-  }, [ticket.department.id]);
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setPending(true);
-    try {
-      onSaved(
-        await updateTicket(ticket.id, {
-          status,
-          deadline: deadline || null,
-          assignee: assignee || null,
-        }),
-      );
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setPending(false);
-    }
-  };
-
-  return (
-    <form className="space-y-4" onSubmit={submit} noValidate>
-      {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-field border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-sm font-medium text-brand-700"
-        >
-          <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          {error}
-        </div>
-      )}
-
-      <div className="rounded-field bg-ink-50 px-3.5 py-3">
-        <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink-900">
-          {ticket.subject}
-          <OriginTag role={ticket.raisedByRole} />
-        </p>
-        <p className="mt-0.5 text-xs text-ink-500">
-          {ticket.requestType} · raised by {ticket.raisedBy.name} · {ticket.department.name}
-        </p>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Status" htmlFor="manage-status">
-          <Select
-            id="manage-status"
-            className={cn("h-11 border-transparent font-semibold", statusToneClasses(status))}
-            value={status}
-            onChange={(event) => setStatus(event.target.value as TicketStatus)}
-          >
-            {STATUSES.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </Select>
-        </Field>
-
-        <Field label="Assignee" htmlFor="manage-assignee">
-          <Select
-            id="manage-assignee"
-            className="h-11"
-            value={assignee}
-            onChange={(event) => setAssignee(event.target.value)}
-          >
-            <option value="">Nobody yet</option>
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.name} ({member.departmentRole})
-              </option>
-            ))}
-          </Select>
-        </Field>
-
-        <Field label="Deadline" htmlFor="manage-deadline">
-          <DateField id="manage-deadline" value={deadline} onChange={setDeadline} />
-        </Field>
-      </div>
-
-      <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:justify-between">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="text-status-completed-fg"
-          onClick={() => setStatus("Completed")}
-        >
-          Mark as resolved
-        </Button>
-
-        <div className="flex gap-2 sm:justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" disabled={pending}>
-            {pending ? "Saving..." : "Save Changes"}
-          </Button>
-        </div>
-      </div>
-    </form>
   );
 }

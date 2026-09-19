@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
@@ -82,6 +83,7 @@ function CountPill({
 
 export function DepartmentDetail({ departmentId }: { departmentId: string }) {
   const { session } = useAuth();
+  const toast = useToast();
 
   /** An admin runs every department; a head runs the one it leads. */
   const myRole = session?.departments.find((item) => item.id === departmentId)?.role;
@@ -127,9 +129,10 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
     try {
       await updateMemberRole(departmentId, member.id, role);
       await load();
+      toast.success(`${member.name} is now ${role === "head" ? "a head" : "a team member"}`);
     } catch (caught) {
       setMembers(previous);
-      setError(errorMessage(caught));
+      toast.error(`Could not change the role of ${member.name}`, errorMessage(caught));
     }
   };
 
@@ -139,9 +142,10 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
     try {
       await removeMember(departmentId, member.id);
       await load();
+      toast.success(`${member.name} removed`, `No longer in ${department?.name ?? "this department"}.`);
     } catch (caught) {
       setMembers(previous);
-      setError(errorMessage(caught));
+      toast.error(`Could not remove ${member.name}`, errorMessage(caught));
     }
   };
 
@@ -303,7 +307,6 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
         open={addOpen}
         departmentId={departmentId}
         departmentName={department.name}
-        canAppointHead={isHere}
         onClose={() => setAddOpen(false)}
         onAdded={() => {
           setAddOpen(false);
@@ -318,15 +321,12 @@ function AddMemberModal({
   open,
   departmentId,
   departmentName,
-  canAppointHead,
   onClose,
   onAdded,
 }: {
   open: boolean;
   departmentId: string;
   departmentName: string;
-  /** Appointing a head is an admin decision, so a head only adds team members. */
-  canAppointHead: boolean;
   onClose: () => void;
   onAdded: () => void;
 }) {
@@ -337,6 +337,7 @@ function AddMemberModal({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const toast = useToast();
 
   // "Advanced" puts the same person in more than one department in one go.
   const [advanced, setAdvanced] = useState(false);
@@ -395,6 +396,12 @@ function AddMemberModal({
         await updateUser(member.id, { memberships: [...merged.values()] });
       }
 
+      toast.success(
+        `${member.name} added to ${departmentName}`,
+        `Role: ${role === "head" ? "Head" : "Team"}${
+          extras.length > 0 ? ` · also in ${extras.length} other department(s)` : ""
+        }`,
+      );
       close();
       onAdded();
     } catch (caught) {
@@ -448,21 +455,15 @@ function AddMemberModal({
           </Field>
 
           <Field label="Role" required htmlFor="member-role">
-            {canAppointHead ? (
-              <Select
-                id="member-role"
-                className="h-11"
-                value={role}
-                onChange={(event) => setRole(event.target.value as DepartmentRole)}
-              >
-                <option value="head">Head</option>
-                <option value="team">Team</option>
-              </Select>
-            ) : (
-              <div className="flex h-11 items-center rounded-field border border-line-strong bg-ink-50 px-3 text-sm font-medium text-ink-500">
-                Team
-              </div>
-            )}
+            <Select
+              id="member-role"
+              className="h-11"
+              value={role}
+              onChange={(event) => setRole(event.target.value as DepartmentRole)}
+            >
+              <option value="head">Head</option>
+              <option value="team">Team</option>
+            </Select>
           </Field>
         </div>
 

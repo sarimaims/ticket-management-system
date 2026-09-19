@@ -47,7 +47,7 @@ wide. Heads and team members see only the departments they belong to.
 backend/src
 ├── app.js              # express app: middleware + route mounting
 ├── server.js           # http listener + graceful shutdown
-├── config/             # env vars, database connection
+├── config/             # env vars, database connection, prisma client
 ├── models/             # User, Department, Ticket
 ├── routes/             # mounted under /api
 ├── controllers/        # request handlers
@@ -64,3 +64,41 @@ API base path: `/api`. Health check: `GET /api/health`.
 | `npm run dev` | Start the API with reload |
 | `npm run seed` | Create the super admin, demo departments and members (idempotent) |
 | `npm run reset` | Delete every department, ticket and account except the super admin |
+| `npm run prisma:push` | Apply `prisma/schema.prisma` to MongoDB (collections and indexes) |
+| `npm run prisma:seed` | Create the super admin if it is missing (idempotent) |
+| `npm run prisma:generate` | Regenerate the Prisma client after a schema change |
+| `npm run prisma:studio` | Browse the data in Prisma Studio |
+
+### Prisma
+
+`backend/prisma/schema.prisma` describes the same data Mongoose writes — same
+collections, same `_id` keys, same field names — so both can read one database.
+It reads `MONGODB_URI`, the connection string the app already uses.
+
+There are no migration files, and there is no way to add them: `prisma migrate`
+is a SQL-only feature, and MongoDB is not a SQL database. Schema changes are
+applied with `npm run prisma:push`, which creates collections and indexes and
+never rewrites documents. Prisma ORM 7 dropped MongoDB support entirely, so the
+backend pins Prisma 6 until it returns.
+
+A fresh machine goes: `npm install`, `npm run prisma:push`, `npm run prisma:seed`,
+`npm run dev`. The seeder creates one account - the super admin,
+`admin@flowdesk.com` / `admin1234` unless `SEED_ADMIN_EMAIL` and
+`SEED_ADMIN_PASSWORD` say otherwise. Running it again changes nothing, except
+that it puts the account back to `superadmin` / `active` with no department if
+something moved it. It never touches an existing password unless you ask:
+
+```bash
+SEED_ADMIN_PASSWORD=somethingNew SEED_FORCE_PASSWORD=yes npm run prisma:seed
+```
+
+The seeder writes with `$runCommandRaw`, not `prisma.user.create`, because
+every Prisma write on MongoDB opens a transaction and MongoDB only offers
+transactions on a replica set. Reads are unaffected. Run the database as a
+single-node replica set if you want ordinary Prisma writes.
+
+Indexes are owned by the Prisma schema, which is why the Mongoose connection
+sets `autoIndex: false` — both index sets cover the same keys under different
+names, and MongoDB rejects the second one with `IndexOptionsConflict`. After
+changing a model in `src/models`, mirror it in `schema.prisma` and run
+`npm run prisma:push`.
