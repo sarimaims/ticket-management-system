@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, apiRevalidate } from "./api";
 import type { TicketPriority, TicketStatus } from "./types";
 
 export type TicketRecord = {
@@ -10,7 +10,12 @@ export type TicketRecord = {
   priority: TicketPriority;
   status: TicketStatus;
   project: string;
+  /** What the raiser asked for. Only the raiser can move it. */
   deadline: string | null;
+  /** What the receiving department promised back. */
+  committedDeadline: string | null;
+  committedBy: { id: string; name?: string } | null;
+  committedAt: string | null;
   department: { id: string; name?: string; code?: string };
   fromDepartments: { id: string; name?: string; code?: string }[];
   raisedBy: { id: string; name?: string; email?: string };
@@ -29,7 +34,7 @@ export function createTicket(input: {
   description: string;
   requestType: string;
   priority: TicketPriority;
-  deadline?: string;
+  deadline: string;
   project?: string;
 }) {
   return api<{ tickets: TicketRecord[] }>("/tickets", { method: "POST", body: input }).then(
@@ -53,13 +58,35 @@ export function listTickets(
   );
 }
 
-/** Working a ticket: only its department (or a manager) may do this. */
+/**
+ * The same list, asked for repeatedly. `etag` is whatever the last answer
+ * carried; when the queue has not moved the reply is 304 and `changed` is
+ * false, which costs one small request and no re-render.
+ */
+export function revalidateTickets(
+  scope: "mine" | "assigned",
+  etag: string | null,
+  signal?: AbortSignal,
+) {
+  return apiRevalidate<{ tickets: TicketRecord[] }>(`/tickets?scope=${scope}`, etag, signal);
+}
+
+/**
+ * Two sides send this. The department works the ticket - status, assignee,
+ * the date it commits to - and the person who raised it edits the request
+ * itself. The server enforces which fields belong to whom.
+ */
 export function updateTicket(
   id: string,
   input: {
     status?: TicketStatus;
     priority?: TicketPriority;
+    subject?: string;
+    description?: string;
+    requestType?: string;
+    project?: string;
     deadline?: string | null;
+    committedDeadline?: string | null;
     assignee?: string | null;
   },
 ) {

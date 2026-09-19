@@ -14,7 +14,7 @@
     "prisma:push": "prisma db push",
     "prisma:pull": "prisma db pull",
     "prisma:studio": "prisma studio",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate || exit 0",
     "prisma:seed": "prisma db seed"
   },
   "engines": {

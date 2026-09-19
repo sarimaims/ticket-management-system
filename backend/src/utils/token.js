@@ -13,19 +13,32 @@ export function verifyToken(token) {
 }
 
 /**
- * The session cookie is httpOnly, so no script on the page can read it, and
- * sameSite=lax keeps it off cross-site requests. Over HTTPS it is also secure.
+ * The session cookie is httpOnly, so no script on the page can read it.
+ *
+ * sameSite=lax is the default and keeps it off cross-site requests, which is
+ * most of the CSRF defence here. When the API is reached from another site -
+ * a dev tunnel while the page is on localhost - the browser will not send a
+ * lax cookie at all, so CROSS_SITE_COOKIE=yes switches it to None, which
+ * requires Secure and therefore HTTPS.
  */
+function cookieOptions() {
+  const crossSite = env.crossSiteCookie;
+  return {
+    httpOnly: true,
+    sameSite: crossSite ? 'none' : 'lax',
+    secure: crossSite || env.isProduction,
+    path: '/',
+  };
+}
+
 export function setAuthCookie(res, token) {
   res.cookie(env.cookieName, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: env.isProduction,
+    ...cookieOptions(),
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: '/',
   });
 }
 
+// Clearing has to match how it was set, or the browser keeps the old one.
 export function clearAuthCookie(res) {
-  res.clearCookie(env.cookieName, { path: '/' });
+  res.clearCookie(env.cookieName, cookieOptions());
 }

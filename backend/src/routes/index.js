@@ -4,6 +4,7 @@ import activityRoutes from './activity.routes.js';
 import authRoutes from './auth.routes.js';
 import departmentRoutes from './department.routes.js';
 import healthRoutes from './health.routes.js';
+import notificationRoutes from './notification.routes.js';
 import ticketRoutes from './ticket.routes.js';
 import userRoutes from './user.routes.js';
 
@@ -13,6 +14,7 @@ router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
 router.use('/activity', activityRoutes);
 router.use('/departments', departmentRoutes);
+router.use('/notifications', notificationRoutes);
 router.use('/tickets', ticketRoutes);
 router.use('/users', userRoutes);
 

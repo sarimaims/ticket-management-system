@@ -1,13 +1,20 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, CheckCircle2, Info, RefreshCw, TicketPlus, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export type ToastTone = "error" | "success" | "info";
+export type ToastTone = "error" | "success" | "info" | "ticket" | "update";
 
-type ToastInput = { title: string; description?: string; tone?: ToastTone };
+type ToastInput = {
+  title: string;
+  description?: string;
+  tone?: ToastTone;
+  /** Where clicking the toast takes the reader, if anywhere. */
+  href?: string;
+};
 type Toast = ToastInput & { id: number; tone: ToastTone };
 
 /** Long enough to read two lines, short enough to stay out of the way. */
@@ -20,6 +27,13 @@ const TONES: Record<ToastTone, { box: string; icon: React.ComponentType<{ classN
     icon: CheckCircle2,
   },
   info: { box: "border-line-strong bg-surface text-ink-700", icon: Info },
+  // A ticket arriving is the loudest thing that happens here, so it wears the
+  // brand colour; an update to one you already know about is quieter.
+  ticket: { box: "border-brand-200 bg-brand-50 text-brand-700", icon: TicketPlus },
+  update: {
+    box: "border-status-progress-fg/20 bg-status-progress-bg text-status-progress-fg",
+    icon: RefreshCw,
+  },
 };
 
 type ToastApi = {
@@ -100,12 +114,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               )}
             >
               <Icon className="mt-0.5 size-4.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{toast.title}</p>
-                {toast.description && (
-                  <p className="mt-0.5 text-[13px] leading-snug opacity-80">{toast.description}</p>
-                )}
-              </div>
+              {/* A toast with somewhere to go is clickable in full, so the
+                  reader does not have to find the page it is about. */}
+              <Body
+                href={toast.href}
+                onNavigate={() => dismiss(toast.id)}
+                title={toast.title}
+                description={toast.description}
+              />
               <button
                 type="button"
                 onClick={() => dismiss(toast.id)}
@@ -119,6 +135,37 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         })}
       </div>
     </ToastContext.Provider>
+  );
+}
+
+function Body({
+  href,
+  onNavigate,
+  title,
+  description,
+}: {
+  href?: string;
+  onNavigate: () => void;
+  title: string;
+  description?: string;
+}) {
+  const content = (
+    <>
+      <p className="text-sm font-semibold">{title}</p>
+      {description && <p className="mt-0.5 text-[13px] leading-snug opacity-80">{description}</p>}
+    </>
+  );
+
+  if (!href) return <div className="min-w-0 flex-1">{content}</div>;
+
+  return (
+    <Link
+      href={href as "/"}
+      onClick={onNavigate}
+      className="min-w-0 flex-1 text-left transition-opacity hover:opacity-80"
+    >
+      {content}
+    </Link>
   );
 }
 

@@ -1,20 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { AlertCircle, Inbox, Plus, Search, SlidersHorizontal, UserCheck } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/field";
-import { TicketDetailSheet } from "@/components/tickets/ticket-detail-sheet";
+import { DeadlineVerdict, TicketDetailSheet } from "@/components/tickets/ticket-detail-sheet";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
-import { listTickets, updateTicket, type TicketRecord } from "@/lib/tickets";
+import { updateTicket, type TicketRecord } from "@/lib/tickets";
 import { errorMessage } from "@/lib/api";
-import { useActiveDepartment } from "@/components/layout/active-department";
+import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
+import { isAdmin } from "@/lib/auth";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { Stat, TicketStatus } from "@/lib/types";
 
@@ -30,6 +32,12 @@ const STATUSES: TicketStatus[] = [
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
 const COMPACT = "h-11 pr-8 pl-3 text-[13px]";
+
+/** How often a live queue asks the API whether anything moved. */
+const REFRESH_MS = 7000;
+
+/** How long a row arrived at from a notification keeps its outline. */
+const FLASH_MS = 4000;
 
 function isToday(value: string | null) {
   if (!value) return false;
@@ -81,94 +89,327 @@ function statsFor(tickets: TicketRecord[], scope: "mine" | "assigned"): Stat[] {
 }
 
 /**
+ * One row, held apart from the table so a refresh only repaints the tickets
+ * that actually moved. The poll reuses the object of an unchanged ticket, so
+ * every prop here is reference-equal and React skips the row entirely.
+ */
+const TicketRow = memo(function TicketRow({
+  ticket,
+  scope,
+  mine,
+  byMe,
+  selected,
+  flashed,
+  onOpen,
+  onStatus,
+}: {
+  ticket: TicketRecord;
+  scope: "mine" | "assigned";
+  mine: boolean;
+  /** My department's queue, but I am the one who asked for it. */
+  byMe: boolean;
+  selected: boolean;
+  /** Arrived here from a notification: hold the eye on this row for a moment. */
+  flashed: boolean;
+  onOpen: (ticket: TicketRecord) => void;
+  onStatus: (ticket: TicketRecord, next: TicketStatus) => void;
+}) {
+  return (
+    <tr
+      id={`ticket-row-${ticket.id}`}
+      onClick={() => onOpen(ticket)}
+      className={cn(
+        "cursor-pointer border-b border-line transition-colors last:border-0",
+        selected ? "bg-brand-50" : "hover:bg-ink-50/70",
+        // Outlined rather than recoloured, so it reads as "this one" without
+        // competing with the status tints the row already carries.
+        flashed &&
+          "bg-status-waiting-bg ring-2 ring-status-waiting-fg ring-inset hover:bg-status-waiting-bg",
+      )}
+    >
+      <TableCell className={cn(mine && "relative")}>
+        {/* A bar on the row's edge: visible even when the table is
+            scrolled, and it costs the layout nothing. */}
+        {mine && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />}
+        <span className="flex items-center gap-1.5">
+          <span className="text-sm font-semibold text-brand-600">#{ticket.number}</span>
+          {mine && (
+            <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
+              Mine
+            </span>
+          )}
+        </span>
+      </TableCell>
+      <TableCell className="font-semibold whitespace-normal text-ink-900">
+        {ticket.subject}
+      </TableCell>
+
+      {scope === "assigned" && (
+        <TableCell className="whitespace-normal">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
+            {byMe && (
+              <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-ink-600 uppercase">
+                You
+              </span>
+            )}
+            <OriginTag role={ticket.raisedByRole} />
+          </span>
+        </TableCell>
+      )}
+
+      <TableCell className="whitespace-normal">
+        {ticket.fromDepartments.length === 0 ? (
+          // Empty for a manager: they sit above the departments,
+          // so the Raised By tag carries the origin instead.
+          <span className="text-ink-400">—</span>
+        ) : (
+          <span className="flex flex-wrap gap-1">
+            {ticket.fromDepartments.map((item) => (
+              <span
+                key={item.id}
+                className="rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600"
+              >
+                {item.name}
+              </span>
+            ))}
+          </span>
+        )}
+      </TableCell>
+
+      <TableCell>
+        <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
+          {ticket.department.name}
+        </span>
+      </TableCell>
+      <TableCell>{ticket.requestType}</TableCell>
+      <TableCell>
+        <PriorityBadge priority={ticket.priority} />
+      </TableCell>
+      <TableCell>
+        {scope === "assigned" ? (
+          <Select
+            onClick={(event) => event.stopPropagation()}
+            className={cn(
+              "h-8 w-32 border-transparent pr-7 pl-2.5 text-xs font-semibold",
+              statusToneClasses(ticket.status),
+            )}
+            value={ticket.status}
+            onChange={(event) => onStatus(ticket, event.target.value as TicketStatus)}
+            aria-label={`Status of ${ticket.number}`}
+          >
+            {STATUSES.map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </Select>
+        ) : (
+          <StatusBadge status={ticket.status} />
+        )}
+      </TableCell>
+      <TableCell>
+        <span className="block leading-tight">{formatDateOf(ticket.createdAt)}</span>
+        <span className="block text-[11px] leading-tight text-ink-400">
+          {formatTime(ticket.createdAt)}
+        </span>
+      </TableCell>
+      <TableCell>{ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "—"}</TableCell>
+      {/* What the receiving department promised back, next to
+          what was asked: green if it meets the ask, amber if it
+          runs past it. */}
+      <TableCell>
+        <DeadlineVerdict requested={ticket.deadline} committed={ticket.committedDeadline} />
+      </TableCell>
+
+      {scope === "assigned" && (
+        <TableCell>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen(ticket);
+            }}
+            className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            aria-label={`Open ${ticket.number}`}
+          >
+            <SlidersHorizontal className="size-4" />
+          </button>
+        </TableCell>
+      )}
+    </tr>
+  );
+});
+
+/** A quiet marker that the queue is keeping itself current. */
+function LiveTag({ syncedAt }: { syncedAt: number | null }) {
+  return (
+    <span
+      className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[11px] font-semibold text-ink-500"
+      title={
+        syncedAt
+          ? `Checks every ${REFRESH_MS / 1000}s · last change ${new Date(syncedAt).toLocaleTimeString()}`
+          : `Checks every ${REFRESH_MS / 1000}s`
+      }
+    >
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-status-completed-fg opacity-60" />
+        <span className="relative inline-flex size-2 rounded-full bg-status-completed-fg" />
+      </span>
+      Live
+    </span>
+  );
+}
+
+/**
  * `mine` lists what I raised; `assigned` lists what my departments have been
  * asked to do. The API decides what is visible - this only renders it.
+ *
+ * `live` keeps the queue current on a short conditional poll: each request
+ * carries the tag of the last answer, so an unchanged queue costs a 304 with
+ * no body and repaints nothing.
  */
-export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
-  const [tickets, setTickets] = useState<TicketRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+export function TicketsWorkspace({
+  scope,
+  live = false,
+}: {
+  scope: "mine" | "assigned";
+  live?: boolean;
+}) {
+  const { tickets, setTickets, loading, error, syncedAt, hold } = useLiveTickets({
+    scope,
+    intervalMs: live ? REFRESH_MS : null,
+  });
 
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
   const [viewing, setViewing] = useState<TicketRecord | null>(null);
   const [mineOnly, setMineOnly] = useState(false);
-  const { active } = useActiveDepartment();
   const { session } = useAuth();
   const toast = useToast();
 
+  // A notification lands here with the ticket it was about in the query.
+  const focusKey = useSearchParams().get("ticket");
+  const [flashed, setFlashed] = useState<string | null>(null);
+  const focused = useRef<string | null>(null);
+
+  // Filtering a long queue is the expensive part of a keystroke, so the field
+  // stays responsive and the table catches up a beat later.
+  const deferredQuery = useDeferredValue(query);
+
+  const meId = session?.id;
+
   // A ticket sits with my department; this says it sits with *me*.
   const isMine = useCallback(
-    (ticket: TicketRecord) => scope === "assigned" && ticket.assignee?.id === session?.id,
-    [scope, session?.id],
+    (ticket: TicketRecord) => scope === "assigned" && ticket.assignee?.id === meId,
+    [scope, meId],
   );
 
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
-      try {
-        setTickets(await listTickets({ scope }, signal));
-        setError("");
-      } catch (caught) {
-        if (caught instanceof DOMException && caught.name === "AbortError") return;
-        setError(errorMessage(caught));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [scope],
+  const manager = isAdmin(session);
+  const myDepartmentIds = useMemo(
+    () => new Set((session?.departments ?? []).map((membership) => membership.id)),
+    [session],
   );
 
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+  const stats = useMemo(() => statsFor(tickets, scope), [tickets, scope]);
 
-  const visible = useMemo(
-    () =>
-      scope === "assigned" && active
-        ? tickets.filter((ticket) => ticket.department.id === active.id)
-        : tickets,
-    [tickets, scope, active],
-  );
-
-  const stats = useMemo(() => statsFor(visible, scope), [visible, scope]);
-
-  const mineCount = useMemo(() => visible.filter(isMine).length, [visible, isMine]);
+  const mineCount = useMemo(() => tickets.filter(isMine).length, [tickets, isMine]);
 
   const rows = useMemo(() => {
-    const term = query.trim().toLowerCase();
+    const term = deferredQuery.trim().toLowerCase();
     return tickets.filter((ticket) => {
-      if (term && !`${ticket.number} ${ticket.subject} ${ticket.requestType}`.toLowerCase().includes(term))
+      if (
+        term &&
+        !`${ticket.number} ${ticket.subject} ${ticket.requestType}`.toLowerCase().includes(term)
+      )
         return false;
       if (status && ticket.status !== status) return false;
       if (priority && ticket.priority !== priority) return false;
       if (mineOnly && !isMine(ticket)) return false;
-      // Switching department in the topbar narrows this queue to that one.
-      if (scope === "assigned" && active && ticket.department.id !== active.id) return false;
       return true;
     });
-  }, [tickets, query, status, priority, scope, active, mineOnly, isMine]);
+  }, [tickets, deferredQuery, status, priority, mineOnly, isMine]);
 
-  const columns = scope === "mine" ? 9 : 11;
+  const columns = scope === "mine" ? 10 : 12;
 
-  /** Optimistic: the row moves now, and snaps back if the API refuses. */
-  const applyStatus = async (ticket: TicketRecord, next: TicketStatus) => {
-    const previous = tickets;
-    setTickets((current) =>
-      current.map((item) => (item.id === ticket.id ? { ...item, status: next } : item)),
+  /**
+   * Arriving from a notification: find the ticket it named, clear whatever
+   * would have hidden it, put it on screen and outline it.
+   *
+   * It waits for the list, because the click usually lands before the first
+   * answer does. `focused` makes it happen once per link - the poll replaces
+   * the array every time something moves, and the row must not jump again.
+   */
+  useEffect(() => {
+    if (!focusKey || focused.current === focusKey) return;
+
+    const target = tickets.find(
+      (ticket) => ticket.id === focusKey || ticket.number === focusKey,
     );
-    try {
-      const saved = await updateTicket(ticket.id, { status: next });
-      setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
-      setError("");
-      toast.success(`#${ticket.number} updated`, `Status: ${next}`);
-    } catch (caught) {
-      setTickets(previous);
-      toast.error(`Could not update #${ticket.number}`, errorMessage(caught));
-    }
-  };
+    if (!target) return;
+
+    focused.current = focusKey;
+
+    // A filter or a search would hide the row that was just asked for.
+    /* eslint-disable react-hooks/set-state-in-effect -- what triggers this is
+       the URL and the arriving list, both outside React, and the guard above
+       holds it to once per link. */
+    setQuery("");
+    setStatus("");
+    setPriority("");
+    setMineOnly(false);
+    setFlashed(target.id);
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    // The query has done its job. Dropping it here rather than through the
+    // router keeps it out of history without re-rendering the route.
+    window.history.replaceState(null, "", window.location.pathname);
+
+    // After the filters above have been painted, or it scrolls to where the
+    // row used to be.
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(`ticket-row-${target.id}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [focusKey, tickets]);
+
+  /** The outline is a pointer, not a state: it lets go on its own. */
+  useEffect(() => {
+    if (!flashed) return;
+    const timer = setTimeout(() => setFlashed(null), FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [flashed]);
+
+  /**
+   * Optimistic: the row moves now, and snaps back if the API refuses. The
+   * poll is held for the length of the write, so an answer that was already
+   * in the air cannot put the old status back.
+   */
+  const applyStatus = useCallback(
+    async (ticket: TicketRecord, next: TicketStatus) => {
+      const release = hold();
+      setTickets((current) =>
+        current.map((item) => (item.id === ticket.id ? { ...item, status: next } : item)),
+      );
+
+      try {
+        const saved = await updateTicket(ticket.id, { status: next });
+        setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+        toast.success(`#${ticket.number} updated`, `Status: ${next}`);
+      } catch (caught) {
+        // The row we were handed is the value before the edit.
+        setTickets((current) => current.map((item) => (item.id === ticket.id ? ticket : item)));
+        toast.error(`Could not update #${ticket.number}`, errorMessage(caught));
+      } finally {
+        release();
+      }
+    },
+    [hold, setTickets, toast],
+  );
+
+  const openTicket = useCallback((ticket: TicketRecord) => setViewing(ticket), []);
 
   return (
     <>
@@ -247,6 +488,8 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
             </button>
           )}
 
+          {live && <LiveTag syncedAt={syncedAt} />}
+
           {scope === "mine" && (
             <Link
               href="/create-ticket"
@@ -259,7 +502,7 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] border-collapse">
+          <table className="w-full min-w-[1220px] border-collapse">
             <thead className="border-b border-line bg-ink-50/60">
               <tr>
                 <TableHead sortable>Ticket ID</TableHead>
@@ -273,7 +516,8 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
                 <TableHead sortable>Priority</TableHead>
                 <TableHead sortable>Status</TableHead>
                 <TableHead sortable>Created On</TableHead>
-                <TableHead sortable>Deadline</TableHead>
+                <TableHead sortable>Deadline Asked</TableHead>
+                <TableHead sortable>Committed</TableHead>
                 {scope === "assigned" && <TableHead>Actions</TableHead>}
               </tr>
             </thead>
@@ -310,120 +554,17 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
 
               {!loading &&
                 rows.map((ticket) => (
-                  <tr
+                  <TicketRow
                     key={ticket.id}
-                    onClick={() => setViewing(ticket)}
-                    className={cn(
-                      "cursor-pointer border-b border-line transition-colors last:border-0",
-                      viewing?.id === ticket.id ? "bg-brand-50" : "hover:bg-ink-50/70",
-                    )}
-                  >
-                    <TableCell className={cn(isMine(ticket) && "relative")}>
-                      {/* A bar on the row's edge: visible even when the table is
-                          scrolled, and it costs the layout nothing. */}
-                      {isMine(ticket) && (
-                        <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />
-                      )}
-                      <span className="flex items-center gap-1.5">
-                        <span className="text-sm font-semibold text-brand-600">
-                          #{ticket.number}
-                        </span>
-                        {isMine(ticket) && (
-                          <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
-                            Mine
-                          </span>
-                        )}
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-semibold whitespace-normal text-ink-900">
-                      {ticket.subject}
-                    </TableCell>
-
-                    {scope === "assigned" && (
-                      <TableCell className="whitespace-normal">
-                        <span className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
-                          <OriginTag role={ticket.raisedByRole} />
-                        </span>
-                      </TableCell>
-                    )}
-
-                    <TableCell className="whitespace-normal">
-                      {ticket.fromDepartments.length === 0 ? (
-                        // Empty for a manager: they sit above the departments,
-                        // so the Raised By tag carries the origin instead.
-                        <span className="text-ink-400">—</span>
-                      ) : (
-                        <span className="flex flex-wrap gap-1">
-                          {ticket.fromDepartments.map((item) => (
-                            <span
-                              key={item.id}
-                              className="rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600"
-                            >
-                              {item.name}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </TableCell>
-
-                    <TableCell>
-                      <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
-                        {ticket.department.name}
-                      </span>
-                    </TableCell>
-                    <TableCell>{ticket.requestType}</TableCell>
-                    <TableCell>
-                      <PriorityBadge priority={ticket.priority} />
-                    </TableCell>
-                    <TableCell>
-                      {scope === "assigned" ? (
-                        <Select
-                          onClick={(event) => event.stopPropagation()}
-                          className={cn(
-                            "h-8 w-32 border-transparent pr-7 pl-2.5 text-xs font-semibold",
-                            statusToneClasses(ticket.status),
-                          )}
-                          value={ticket.status}
-                          onChange={(event) =>
-                            applyStatus(ticket, event.target.value as TicketStatus)
-                          }
-                          aria-label={`Status of ${ticket.number}`}
-                        >
-                          {STATUSES.map((item) => (
-                            <option key={item}>{item}</option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <StatusBadge status={ticket.status} />
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <span className="block leading-tight">{formatDateOf(ticket.createdAt)}</span>
-                      <span className="block text-[11px] leading-tight text-ink-400">
-                        {formatTime(ticket.createdAt)}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "—"}
-                    </TableCell>
-
-                    {scope === "assigned" && (
-                      <TableCell>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setViewing(ticket);
-                          }}
-                          className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                          aria-label={`Open ${ticket.number}`}
-                        >
-                          <SlidersHorizontal className="size-4" />
-                        </button>
-                      </TableCell>
-                    )}
-                  </tr>
+                    ticket={ticket}
+                    scope={scope}
+                    mine={isMine(ticket)}
+                    byMe={scope === "assigned" && ticket.raisedBy.id === meId}
+                    selected={viewing?.id === ticket.id}
+                    flashed={flashed === ticket.id}
+                    onOpen={openTicket}
+                    onStatus={applyStatus}
+                  />
                 ))}
             </tbody>
           </table>
@@ -437,9 +578,13 @@ export function TicketsWorkspace({ scope }: { scope: "mine" | "assigned" }) {
       </Card>
       </div>
 
+      {/* Both rights are read off the ticket, not off the page: someone in two
+          departments who raises from one to the other may edit the request and
+          work it, and sees the same sheet from either list. */}
       <TicketDetailSheet
         ticket={viewing}
-        canWork={scope === "assigned"}
+        canWork={viewing ? manager || myDepartmentIds.has(viewing.department.id) : false}
+        canEdit={viewing ? manager || viewing.raisedBy.id === meId : false}
         onClose={() => setViewing(null)}
         onSaved={(saved) => {
           setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));

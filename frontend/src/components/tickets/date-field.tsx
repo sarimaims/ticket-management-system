@@ -20,6 +20,7 @@ export function DateField({
   clearable = true,
   bare = false,
   showIcon = true,
+  invalid = false,
   className,
 }: {
   value: string;
@@ -29,6 +30,7 @@ export function DateField({
   clearable?: boolean;
   bare?: boolean;
   showIcon?: boolean;
+  invalid?: boolean;
   className?: string;
 }) {
   return (
@@ -38,6 +40,7 @@ export function DateField({
         bare
           ? "h-full px-1"
           : "h-12 rounded-field border border-line-strong bg-surface px-4 transition-colors focus-within:border-brand-400 focus-within:ring-4 focus-within:ring-brand-500/10",
+        !bare && invalid && "border-brand-400 bg-brand-50/40",
         className,
       )}
     >
@@ -61,6 +64,7 @@ export function DateField({
         onChange={(event) => onChange(event.target.value)}
         className="absolute inset-0 cursor-pointer opacity-0"
         aria-label={placeholder}
+        aria-invalid={invalid || undefined}
       />
 
       {clearable && value && (

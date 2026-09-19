@@ -94,7 +94,24 @@ const ticketSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+    // What the raiser asked for. Theirs to move, nobody else's.
     deadline: {
+      type: Date,
+      default: null,
+    },
+    // What the receiving department promises back: "I can resolve this by".
+    // Kept apart from `deadline` so a commitment can never overwrite the ask,
+    // and so both dates stay readable side by side.
+    committedDeadline: {
+      type: Date,
+      default: null,
+    },
+    committedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    committedAt: {
       type: Date,
       default: null,
     },
@@ -107,6 +124,12 @@ const ticketSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Polling asks the same two questions over and over: how many tickets a
+// person can see, and which of them moved most recently. These cover both
+// halves of the visibility filter so neither question scans the collection.
+ticketSchema.index({ department: 1, updatedAt: -1 });
+ticketSchema.index({ raisedBy: 1, updatedAt: -1 });
 
 ticketSchema.pre('save', async function assignNumber() {
   if (this.number) return;

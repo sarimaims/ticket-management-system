@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -18,7 +19,11 @@ export default function AssignedToMePage() {
           { label: "Assigned to Me" },
         ]}
       />
-      <TicketsWorkspace scope="assigned" />
+      {/* A queue other people are filling: it keeps itself current, and reads
+          `?ticket=` to find the row a notification meant. */}
+      <Suspense>
+        <TicketsWorkspace scope="assigned" live />
+      </Suspense>
     </>
   );
 }

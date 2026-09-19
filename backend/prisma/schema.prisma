@@ -48,6 +48,13 @@ enum TicketStatus {
   Overdue
 }
 
+/// Mongoose stores these with a dot; Prisma names cannot carry one.
+enum NotificationType {
+  ticket_new     @map("ticket.new")
+  ticket_updated @map("ticket.updated")
+  ticket_edited  @map("ticket.edited")
+}
+
 enum TicketPriority {
   Low
   Medium
@@ -80,6 +87,8 @@ model User {
   departmentsCreated Department[] @relation("DepartmentCreatedBy")
   ticketsRaised      Ticket[]     @relation("TicketRaisedBy")
   ticketsAssigned    Ticket[]     @relation("TicketAssignee")
+  ticketsCommitted   Ticket[]     @relation("TicketCommittedBy")
+  notifications      Notification[]
   activities         Activity[]
 
   @@index([memberships.departmentId])
@@ -135,14 +144,46 @@ model Ticket {
   assigneeId String? @map("assignee") @db.ObjectId
   assignee   User?   @relation("TicketAssignee", fields: [assigneeId], references: [id])
 
-  deadline  DateTime?
+  /// What the raiser asked for. Theirs to move, nobody else's.
+  deadline DateTime?
+
+  /// What the receiving department promised back, and who promised it.
+  committedDeadline DateTime?
+  committedById     String?   @map("committedBy") @db.ObjectId
+  committedBy       User?     @relation("TicketCommittedBy", fields: [committedById], references: [id])
+  committedAt       DateTime?
+
   project   String    @default("")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  notifications Notification[]
+
   @@index([departmentId])
   @@index([raisedById])
   @@map("tickets")
+}
+
+/// One line addressed to one person: a ticket arrived for their department,
+/// or one they care about moved. Names are snapshots, like the activity log.
+model Notification {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @map("user") @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  type           NotificationType
+  ticketId       String?   @map("ticket") @db.ObjectId
+  ticket         Ticket?   @relation(fields: [ticketId], references: [id])
+  ticketNumber   String    @default("")
+  title          String
+  body           String    @default("")
+  actorName      String    @default("")
+  departmentName String    @default("")
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
 }
 
 /// A line in a department's activity log. Written once, never updated: the

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { Logo } from "@/components/layout/logo";
+import { SidebarProfile } from "@/components/layout/sidebar-profile";
 import { useAuth } from "@/components/auth/auth-provider";
 import { isAdmin } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -119,6 +120,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             </>
           )}
         </nav>
+
+        <SidebarProfile onNavigate={onClose} />
       </aside>
     </>
   );

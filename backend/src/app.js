@@ -6,13 +6,37 @@ import morgan from 'morgan';
 
 import env from './config/env.js';
 import routes from './routes/index.js';
+import healthRoutes from './routes/health.routes.js';
 import notFound from './middleware/notFound.js';
 import errorHandler from './middleware/errorHandler.js';
 
 const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: env.corsOrigin, credentials: true }));
+// ETag is not a CORS-safelisted response header, so without exposing it the
+// browser hides it from fetch and a polling client can never revalidate.
+/**
+ * Allowed callers: whatever CORS_ORIGIN lists, plus any *.devtunnels.ms host,
+ * so the app keeps working when the frontend is reached through a tunnel too.
+ * Requests with no Origin (curl, health checks, server to server) are allowed.
+ */
+function allowedOrigin(origin, callback) {
+  if (!origin) return callback(null, true);
+  if (env.corsOrigin.includes(origin)) return callback(null, true);
+
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol === 'https:' && hostname.endsWith('.devtunnels.ms')) {
+      return callback(null, true);
+    }
+  } catch {
+    /* an origin that will not parse is not one we allow */
+  }
+
+  return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+}
+
+app.use(cors({ origin: allowedOrigin, credentials: true, exposedHeaders: ['ETag'] }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -22,6 +46,13 @@ if (env.nodeEnv !== 'test') {
 }
 
 app.use('/api', routes);
+
+// Hosting platforms probe the root, not /api. Both answer, so a health check
+// passes whichever path it was pointed at.
+app.use('/health', healthRoutes);
+app.get('/', (req, res) => {
+  res.json({ success: true, service: 'flowdesk-api', api: '/api' });
+});
 
 app.use(notFound);
 app.use(errorHandler);

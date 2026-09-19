@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -18,7 +19,10 @@ export default function MyRequestsPage() {
           { label: "My Requests" },
         ]}
       />
-      <TicketsWorkspace scope="mine" />
+      {/* The workspace reads `?ticket=` to find the row a notification meant. */}
+      <Suspense>
+        <TicketsWorkspace scope="mine" />
+      </Suspense>
     </>
   );
 }

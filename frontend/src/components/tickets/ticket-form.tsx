@@ -15,7 +15,6 @@ import { listDepartmentOptions, type DepartmentOption } from "@/lib/departments"
 import { createTicket, type TicketRecord } from "@/lib/tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { isAdmin, ROLE_LABEL } from "@/lib/auth";
-import { useActiveDepartment } from "@/components/layout/active-department";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { TicketPriority } from "@/lib/types";
@@ -28,6 +27,7 @@ const REQUIRED = [
   { key: "requestType", label: "Request Type", id: "request-type" },
   { key: "subject", label: "Subject", id: "subject" },
   { key: "description", label: "Description", id: "description" },
+  { key: "completionDate", label: "Deadline", id: "completion-date" },
 ] as const;
 
 type RequiredKey = (typeof REQUIRED)[number]["key"];
@@ -118,10 +118,13 @@ function Step({
 export function TicketForm() {
   const toast = useToast();
   const { session } = useAuth();
-  const { active } = useActiveDepartment();
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [targetDepts, setTargetDepts] = useState<string[]>([]);
-  const [fromDepts, setFromDepts] = useState<string[]>([]);
+  // Someone speaks for every department they belong to by default; they can
+  // narrow it before raising.
+  const [fromDepts, setFromDepts] = useState<string[]>(
+    () => (session?.departments ?? []).map((membership) => membership.id),
+  );
   const [priority, setPriority] = useState<TicketPriority>("Medium");
   const [requestType, setRequestType] = useState("");
   const [subject, setSubject] = useState("");
@@ -134,11 +137,6 @@ export function TicketForm() {
   const [pending, setPending] = useState(false);
   const [raised, setRaised] = useState<TicketRecord[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-
-  // Whatever department they are working in is the obvious default.
-  useEffect(() => {
-    if (active) setFromDepts([active.id]);
-  }, [active]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -192,6 +190,7 @@ export function TicketForm() {
       requestType: Boolean(requestType.trim()),
       subject: Boolean(subject.trim()),
       description: Boolean(description.trim()),
+      completionDate: Boolean(completionDate),
     };
     const gaps = REQUIRED.filter((field) => !filled[field.key]);
 
@@ -221,7 +220,7 @@ export function TicketForm() {
         description: description.trim(),
         requestType: requestType.trim(),
         priority,
-        deadline: completionDate || undefined,
+        deadline: completionDate,
         project: project.trim() || undefined,
       });
       setRaised(tickets);
@@ -392,30 +391,40 @@ export function TicketForm() {
               }}
             />
           </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Deadline"
+              required
+              help="The date you need this done by."
+              htmlFor="completion-date"
+            >
+              <DateField
+                id="completion-date"
+                value={completionDate}
+                onChange={(value) => {
+                  setCompletionDate(value);
+                  if (value) clear("completionDate");
+                }}
+                clearable={false}
+                placeholder="Select a date"
+                invalid={missing.includes("completionDate")}
+              />
+            </Field>
+          </div>
         </div>
       </Step>
 
       <Step title="Extra details" optional>
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Preferred completion date" htmlFor="completion-date">
-              <DateField
-                id="completion-date"
-                value={completionDate}
-                onChange={setCompletionDate}
-                placeholder="Select a date"
-              />
-            </Field>
-
-            <Field label="Related project" htmlFor="project">
-              <Input
-                id="project"
-                placeholder="e.g. FlowDesk Portal"
-                value={project}
-                onChange={(event) => setProject(event.target.value)}
-              />
-            </Field>
-          </div>
+          <Field label="Related project" htmlFor="project">
+            <Input
+              id="project"
+              placeholder="e.g. FlowDesk Portal"
+              value={project}
+              onChange={(event) => setProject(event.target.value)}
+            />
+          </Field>
 
           <div>
             <p className="mb-2 text-sm font-semibold text-ink-800">Attachments</p>

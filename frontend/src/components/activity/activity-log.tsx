@@ -9,7 +9,6 @@ import { Card } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/components/auth/auth-provider";
-import { useActiveDepartment } from "@/components/layout/active-department";
 import { useToast } from "@/components/ui/toast";
 import { clearActivity, listActivity, type ActivityEntry } from "@/lib/activity";
 import { listDepartments, type Department } from "@/lib/departments";
@@ -60,7 +59,6 @@ function timeAgo(iso: string) {
 
 export function ActivityLog() {
   const { session } = useAuth();
-  const { active } = useActiveDepartment();
   const canClear = isAdmin(session);
 
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
@@ -95,11 +93,6 @@ export function ActivityLog() {
       .catch(() => setDepartments([]));
     return () => controller.abort();
   }, [load]);
-
-  // The topbar switcher narrows this page too, unless a filter is chosen here.
-  useEffect(() => {
-    if (active) setDepartment(active.id);
-  }, [active]);
 
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
