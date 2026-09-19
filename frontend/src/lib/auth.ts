@@ -15,6 +15,8 @@ export type Membership = {
   name?: string;
   code?: string;
   role: DepartmentRole;
+  /** The unit this department sits under. */
+  unit?: { id: string; name?: string } | null;
 };
 
 export type Session = {

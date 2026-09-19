@@ -24,6 +24,10 @@ const ACTION_TONES: Record<string, string> = {
   "member.removed": "bg-status-overdue-bg text-status-overdue-fg",
   "member.role_changed": "bg-status-waiting-bg text-status-waiting-fg",
   "department.created": "bg-tile-admin-bg text-tile-admin-fg",
+  "department.moved": "bg-status-waiting-bg text-status-waiting-fg",
+  "unit.created": "bg-tile-admin-bg text-tile-admin-fg",
+  "unit.updated": "bg-status-progress-bg text-status-progress-fg",
+  "unit.deleted": "bg-status-overdue-bg text-status-overdue-fg",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -33,6 +37,10 @@ const ACTION_LABELS: Record<string, string> = {
   "member.removed": "Member removed",
   "member.role_changed": "Role changed",
   "department.created": "Department created",
+  "department.moved": "Department moved",
+  "unit.created": "Unit created",
+  "unit.updated": "Unit updated",
+  "unit.deleted": "Unit deleted",
 };
 
 /** "3 hours ago" reads better than a timestamp for a feed this recent. */

@@ -32,7 +32,8 @@ export function createTicket(input: {
   fromDepartments?: string[];
   subject: string;
   description: string;
-  requestType: string;
+  /** Optional: the form no longer asks, older tickets still carry one. */
+  requestType?: string;
   priority: TicketPriority;
   deadline: string;
   project?: string;

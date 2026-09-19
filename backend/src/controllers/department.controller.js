@@ -2,8 +2,9 @@ import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
+import Unit from '../models/Unit.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES } from '../models/User.js';
-import { presentUser } from './auth.controller.js';
+import { presentUser, WITH_DEPARTMENTS } from './auth.controller.js';
 import { record } from '../services/activity.js';
 
 function assertObjectId(id, label = 'id') {
@@ -46,10 +47,18 @@ async function countsByDepartment() {
 
 function present(department, counts) {
   const tally = counts?.get(String(department._id)) ?? { members: 0, heads: 0, team: 0 };
+  const unit = department.unit;
+  const populated = unit && typeof unit === 'object' && unit.name;
+
   return {
     id: String(department._id),
     name: department.name,
     code: department.code,
+    unit: unit
+      ? populated
+        ? { id: String(unit._id), name: unit.name, code: unit.code }
+        : { id: String(unit) }
+      : null,
     description: department.description,
     isActive: department.isActive,
     memberCount: tally.members,
@@ -64,8 +73,15 @@ export async function listDepartments(req, res) {
   // Managers see the whole org chart.
   const filter = isManager(req.user) ? {} : { _id: { $in: myDepartmentIds(req.user) } };
 
+  // ?unit= narrows the list to one unit; an unparseable id matches nothing
+  // rather than quietly listing everything.
+  if (req.query.unit) {
+    assertObjectId(req.query.unit, 'unit id');
+    filter.unit = req.query.unit;
+  }
+
   const [departments, counts] = await Promise.all([
-    Department.find(filter).sort({ name: 1 }),
+    Department.find(filter).populate('unit', 'name code').sort({ name: 1 }),
     countsByDepartment(),
   ]);
 
@@ -82,7 +98,8 @@ export async function listDepartments(req, res) {
  */
 export async function listDepartmentOptions(req, res) {
   const departments = await Department.find({ isActive: true })
-    .select('name code')
+    .select('name code unit')
+    .populate('unit', 'name code')
     .sort({ name: 1 });
 
   res.json({
@@ -91,6 +108,9 @@ export async function listDepartmentOptions(req, res) {
       id: String(department._id),
       name: department.name,
       code: department.code,
+      unit: department.unit
+        ? { id: String(department.unit._id), name: department.unit.name }
+        : null,
     })),
   });
 }
@@ -98,7 +118,7 @@ export async function listDepartmentOptions(req, res) {
 export async function getDepartment(req, res) {
   assertObjectId(req.params.id, 'department id');
 
-  const department = await Department.findById(req.params.id);
+  const department = await Department.findById(req.params.id).populate('unit', 'name code');
   if (!department) throw ApiError.notFound('Department not found.');
 
   if (!isManager(req.user) && !req.user.roleInDepartment(department._id)) {
@@ -107,7 +127,7 @@ export async function getDepartment(req, res) {
 
   const members = await User.find({ 'memberships.department': department._id })
     .sort({ name: 1 })
-    .populate('memberships.department', 'name code');
+    .populate(WITH_DEPARTMENTS);
 
   const counts = await countsByDepartment();
 
@@ -122,9 +142,14 @@ export async function getDepartment(req, res) {
 }
 
 export async function createDepartment(req, res) {
-  const { name, description, code } = req.body ?? {};
+  const { name, description, code, unit } = req.body ?? {};
 
   if (!name?.trim()) throw ApiError.badRequest('Department name is required.');
+  if (!unit) throw ApiError.badRequest('Choose the unit this department belongs to.');
+
+  assertObjectId(unit, 'unit id');
+  const parent = await Unit.findById(unit);
+  if (!parent) throw ApiError.notFound('That unit does not exist.');
 
   const trimmed = name.trim();
   if (await Department.exists({ name: trimmed })) {
@@ -142,6 +167,7 @@ export async function createDepartment(req, res) {
   const department = await Department.create({
     name: trimmed,
     code: candidate,
+    unit: parent._id,
     description: description?.trim() ?? '',
     createdBy: req.user._id,
   });
@@ -150,9 +176,10 @@ export async function createDepartment(req, res) {
     actor: req.user,
     department,
     action: 'department.created',
-    summary: `created the department ${department.name}`,
+    summary: `created the department ${department.name} under ${parent.name}`,
   });
 
+  department.unit = parent;
   res.status(201).json({ success: true, department: present(department) });
 }
 
@@ -162,7 +189,7 @@ export async function updateDepartment(req, res) {
   const department = await Department.findById(req.params.id);
   if (!department) throw ApiError.notFound('Department not found.');
 
-  const { name, description, isActive } = req.body ?? {};
+  const { name, description, isActive, unit } = req.body ?? {};
 
   if (typeof name === 'string' && name.trim()) {
     const clash = await Department.exists({ name: name.trim(), _id: { $ne: department._id } });
@@ -172,9 +199,26 @@ export async function updateDepartment(req, res) {
   if (typeof description === 'string') department.description = description.trim();
   if (typeof isActive === 'boolean') department.isActive = isActive;
 
+  if (unit !== undefined) {
+    assertObjectId(unit, 'unit id');
+    const parent = await Unit.findById(unit);
+    if (!parent) throw ApiError.notFound('That unit does not exist.');
+
+    if (String(parent._id) !== String(department.unit)) {
+      await record({
+        actor: req.user,
+        department,
+        action: 'department.moved',
+        summary: `moved ${department.name} to ${parent.name}`,
+      });
+    }
+    department.unit = parent._id;
+  }
+
   await department.save();
 
   const counts = await countsByDepartment();
+  await department.populate('unit', 'name code');
   res.json({ success: true, department: present(department, counts) });
 }
 
@@ -245,7 +289,7 @@ export async function addMember(req, res) {
     });
   }
 
-  const populated = await User.findById(user._id).populate('memberships.department', 'name code');
+  const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
 
   await record({
     actor: req.user,
@@ -291,7 +335,7 @@ export async function updateMemberRole(req, res) {
     summary: `changed ${user.name}'s role to ${role}`,
   });
 
-  const populated = await User.findById(user._id).populate('memberships.department', 'name code');
+  const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
   res.json({ success: true, member: { ...presentUser(populated), departmentRole: role } });
 }
 

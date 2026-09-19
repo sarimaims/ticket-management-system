@@ -1,10 +1,14 @@
 import { api } from "./api";
 import type { DepartmentRole, Membership } from "./auth";
 
+/** The unit a department sits under, as the API sends it alongside. */
+export type DepartmentUnit = { id: string; name?: string; code?: string };
+
 export type Department = {
   id: string;
   name: string;
   code: string;
+  unit: DepartmentUnit | null;
   description: string;
   isActive: boolean;
   memberCount: number;
@@ -25,7 +29,9 @@ export type Member = {
   lastActiveAt: string;
 };
 
-export type DepartmentOption = Pick<Department, "id" | "name" | "code">;
+export type DepartmentOption = Pick<Department, "id" | "name" | "code"> & {
+  unit: { id: string; name: string } | null;
+};
 
 /** Every department, names only - what you may send a ticket to. */
 export function listDepartmentOptions(signal?: AbortSignal) {
@@ -34,9 +40,13 @@ export function listDepartmentOptions(signal?: AbortSignal) {
   );
 }
 
-/** The departments you may manage or inspect: yours, or all if you are an admin. */
-export function listDepartments(signal?: AbortSignal) {
-  return api<{ departments: Department[] }>("/departments", { signal }).then(
+/**
+ * The departments you may manage or inspect: yours, or all if you are an
+ * admin. Pass a unit id to see only what sits under it.
+ */
+export function listDepartments(signal?: AbortSignal, unit?: string) {
+  const query = unit ? `?unit=${encodeURIComponent(unit)}` : "";
+  return api<{ departments: Department[] }>(`/departments${query}`, { signal }).then(
     (data) => data.departments,
   );
 }
@@ -45,10 +55,21 @@ export function getDepartment(id: string, signal?: AbortSignal) {
   return api<{ department: Department; members: Member[] }>(`/departments/${id}`, { signal });
 }
 
-export function createDepartment(input: { name: string; description?: string }) {
+export function createDepartment(input: { name: string; unit: string; description?: string }) {
   return api<{ department: Department }>("/departments", { method: "POST", body: input }).then(
     (data) => data.department,
   );
+}
+
+/** Renames a department, or moves it to another unit. */
+export function updateDepartment(
+  id: string,
+  input: { name?: string; description?: string; unit?: string },
+) {
+  return api<{ department: Department }>(`/departments/${id}`, {
+    method: "PATCH",
+    body: input,
+  }).then((data) => data.department);
 }
 
 export function deleteDepartment(id: string) {

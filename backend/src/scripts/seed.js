@@ -7,6 +7,7 @@
  */
 import { connectDatabase, disconnectDatabase } from '../config/db.js';
 import Department from '../models/Department.js';
+import Unit from '../models/Unit.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 
 const SUPER_ADMIN = {
@@ -14,6 +15,8 @@ const SUPER_ADMIN = {
   email: (process.env.SEED_ADMIN_EMAIL || 'admin@flowdesk.com').toLowerCase(),
   password: process.env.SEED_ADMIN_PASSWORD || 'admin1234',
 };
+
+const UNIT_NAME = process.env.SEED_UNIT_NAME || 'Head Office';
 
 const DEPARTMENTS = [
   { name: 'Human Resources', description: 'Hiring, onboarding and people operations.' },
@@ -57,6 +60,13 @@ async function run() {
     console.log(`Super admin already exists: ${SUPER_ADMIN.email}`);
   }
 
+  // Departments hang off a unit, so the unit comes first.
+  let unit = await Unit.findOne({ name: UNIT_NAME });
+  if (!unit) {
+    unit = await Unit.create({ name: UNIT_NAME, code: Unit.codeFrom(UNIT_NAME) });
+    console.log(`Created unit ${unit.name} (${unit.code})`);
+  }
+
   const byName = new Map();
   for (const entry of DEPARTMENTS) {
     let department = await Department.findOne({ name: entry.name });
@@ -64,6 +74,7 @@ async function run() {
       department = await Department.create({
         name: entry.name,
         code: await uniqueCode(entry.name),
+        unit: unit._id,
         description: entry.description,
         createdBy: admin._id,
       });

@@ -161,14 +161,18 @@ function RequestEditor({
         />
       </Field>
 
-      <Field label="Request type" required htmlFor="edit-request-type">
-        <Input
-          id="edit-request-type"
-          value={draft.requestType}
-          invalid={invalid.includes("requestType")}
-          onChange={(event) => set("requestType", event.target.value)}
-        />
-      </Field>
+      {/* The form stopped asking for this, so it is only offered where one
+          was already given. */}
+      {draft.requestType && (
+        <Field label="Request type" htmlFor="edit-request-type">
+          <Input
+            id="edit-request-type"
+            value={draft.requestType}
+            invalid={invalid.includes("requestType")}
+            onChange={(event) => set("requestType", event.target.value)}
+          />
+        </Field>
+      )}
 
       <Field label="Priority" required htmlFor="edit-priority">
         <Select
@@ -350,7 +354,9 @@ function SheetBody({
 
   /** Sends the request as the raiser now wants it; the department is told. */
   const saveEdit = async () => {
-    const gaps = (["subject", "description", "requestType", "deadline"] as const).filter(
+    // requestType is not in this list: the form no longer asks for one, so an
+    // edit must not be blocked by a ticket that never had it.
+    const gaps = (["subject", "description", "deadline"] as const).filter(
       (key) => !draft[key].trim(),
     );
     if (gaps.length > 0) {
@@ -483,7 +489,7 @@ function SheetBody({
               <OriginTag role={ticket.raisedByRole} />
             </span>
           </Row>
-          <Row label="Request type">{ticket.requestType}</Row>
+          {ticket.requestType && <Row label="Request type">{ticket.requestType}</Row>}
           <Row label="Priority">
             <PriorityBadge priority={ticket.priority} />
           </Row>

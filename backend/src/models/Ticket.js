@@ -44,11 +44,13 @@ const ticketSchema = new mongoose.Schema(
       trim: true,
       maxlength: 1000,
     },
+    // Free text, kept for the tickets that were raised while the form asked
+    // for it. Nothing requires it now.
     requestType: {
       type: String,
-      required: [true, 'Request type is required'],
       trim: true,
       maxlength: 60,
+      default: '',
     },
     priority: {
       type: String,

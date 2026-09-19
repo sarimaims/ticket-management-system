@@ -15,7 +15,8 @@
     "prisma:pull": "prisma db pull",
     "prisma:studio": "prisma studio",
     "postinstall": "prisma generate || exit 0",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "units:migrate": "node src/scripts/add-units.js"
   },
   "engines": {
     "node": ">=18.18.0"

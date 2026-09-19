@@ -85,6 +85,7 @@ model User {
   updatedAt    DateTime     @updatedAt
 
   departmentsCreated Department[] @relation("DepartmentCreatedBy")
+  unitsCreated       Unit[]       @relation("UnitCreatedBy")
   ticketsRaised      Ticket[]     @relation("TicketRaisedBy")
   ticketsAssigned    Ticket[]     @relation("TicketAssignee")
   ticketsCommitted   Ticket[]     @relation("TicketCommittedBy")
@@ -95,11 +96,32 @@ model User {
   @@map("users")
 }
 
+/// The level above a department: a business unit, a branch, a company in the
+/// group. Every department belongs to exactly one.
+model Unit {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String   @unique
+  code        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true)
+  createdById String?  @map("createdBy") @db.ObjectId
+  createdBy   User?    @relation("UnitCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  departments Department[]
+
+  @@map("units")
+}
+
 model Department {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   name        String   @unique
   /// Short handle shown next to the name, e.g. "HR", "ITS".
   code        String   @unique
+  /// The unit this department sits under.
+  unitId      String   @map("unit") @db.ObjectId
+  unit        Unit     @relation(fields: [unitId], references: [id])
   description String   @default("")
   isActive    Boolean  @default(true)
   createdById String?  @map("createdBy") @db.ObjectId
@@ -110,6 +132,7 @@ model Department {
   tickets    Ticket[]
   activities Activity[]
 
+  @@index([unitId])
   @@map("departments")
 }
 

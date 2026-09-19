@@ -13,11 +13,17 @@ export function presentUser(user) {
     departments: (user.memberships ?? []).map((membership) => {
       const department = membership.department;
       const populated = department && typeof department === 'object' && department.name;
+      const unit = populated ? department.unit : null;
+      const unitPopulated = unit && typeof unit === 'object' && unit.name;
+
       return {
         id: String(populated ? department._id : department),
         name: populated ? department.name : undefined,
         code: populated ? department.code : undefined,
         role: membership.role,
+        unit: unit
+          ? { id: String(unitPopulated ? unit._id : unit), name: unitPopulated ? unit.name : undefined }
+          : null,
       };
     }),
     createdAt: user.createdAt,
@@ -25,9 +31,17 @@ export function presentUser(user) {
   };
 }
 
+const WITH_DEPARTMENTS = {
+  path: 'memberships.department',
+  select: 'name code unit',
+  populate: { path: 'unit', select: 'name code' },
+};
+
 async function loadWithDepartments(userId) {
-  return User.findById(userId).populate('memberships.department', 'name code');
+  return User.findById(userId).populate(WITH_DEPARTMENTS);
 }
+
+export { WITH_DEPARTMENTS };
 
 export async function login(req, res) {
   const { email, password } = req.body ?? {};

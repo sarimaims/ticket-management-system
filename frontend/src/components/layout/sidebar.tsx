@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Building,
   FileText,
   History,
   LayoutDashboard,
@@ -22,11 +23,19 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { isAdmin } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; accent?: boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  accent?: boolean;
+  /** The top of the org chart is an admin's concern, so it is hidden here. */
+  adminOnly?: boolean;
+};
 
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/create-ticket", label: "Create Ticket", icon: Plus, accent: true },
+  { href: "/units", label: "Units", icon: Building, adminOnly: true },
   { href: "/departments", label: "Departments", icon: Users },
   { href: "/assigned-to-me", label: "Assigned to Me", icon: UserRound },
   { href: "/my-requests", label: "My Requests", icon: FileText },
@@ -109,7 +118,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-          {NAV.map(renderItem)}
+          {NAV.filter((item) => !item.adminOnly || isAdmin(session)).map(renderItem)}
 
           {isAdmin(session) && (
             <>

@@ -119,6 +119,21 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
 
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("");
+  const [unit, setUnit] = useState("");
+
+  // The units represented by the departments in this workspace. One person
+  // can hold departments in several of them, so both are worth filtering by
+  // and worth naming on the chips - but only once there is more than one.
+  const units = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string }>();
+    for (const item of departments) {
+      if (item.unit?.id && !seen.has(item.unit.id)) {
+        seen.set(item.unit.id, { id: item.unit.id, name: item.unit.name ?? "Unit" });
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [departments]);
+  const manyUnits = units.length > 1;
   const [status, setStatus] = useState("");
   const [role, setRole] = useState("");
 
@@ -160,11 +175,12 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
       if (term && !`${user.name} ${user.email} ${shortId(user.id)}`.toLowerCase().includes(term))
         return false;
       if (department && !user.departments.some((item) => item.id === department)) return false;
+      if (unit && !user.departments.some((item) => item.unit?.id === unit)) return false;
       if (status && user.status !== status) return false;
       if (role && effectiveRole(user) !== role) return false;
       return true;
     });
-  }, [users, query, department, status, role]);
+  }, [users, query, department, unit, status, role]);
 
   const setStatusFor = async (user: DirectoryUser, next: DirectoryUser["status"]) => {
     try {
@@ -196,6 +212,25 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             />
           </div>
 
+          {units.length > 1 && (
+            <Select
+              className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
+              value={unit}
+              onChange={(event) => {
+                setUnit(event.target.value);
+                setDepartment("");
+              }}
+              aria-label="Filter by unit"
+            >
+              <option value="">All Units</option>
+              {units.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </Select>
+          )}
+
           <Select
             className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-40 lg:flex-none"
             value={department}
@@ -203,11 +238,13 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             aria-label="Filter by department"
           >
             <option value="">All Departments</option>
-            {departments.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
+            {departments
+              .filter((item) => !unit || item.unit?.id === unit)
+              .map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
           </Select>
 
           {scope === "all" && (
@@ -299,6 +336,9 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                               key={item.id}
                               className="inline-flex items-center gap-1 rounded-md bg-ink-100 py-0.5 pr-1 pl-2 text-[11px] font-medium text-ink-600"
                             >
+                              {manyUnits && item.unit?.name && (
+                                <span className="text-ink-400">{item.unit.name} ·</span>
+                              )}
                               {item.name ?? "Department"}
                               <RoleTag role={item.role} className="px-1 py-0 text-[10px]" />
                             </span>

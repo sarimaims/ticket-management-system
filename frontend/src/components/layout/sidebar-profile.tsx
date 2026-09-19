@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronUp, LogOut, Settings, ShieldCheck } from "lucide-react";
+import { Building, ChevronUp, LogOut, Settings, ShieldCheck } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { RoleTag } from "@/components/ui/badge";
@@ -42,14 +42,28 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
   const departments = session.departments ?? [];
   const manager = isAdmin(session);
 
+  // Departments are listed under the unit they belong to, so the menu shows
+  // the whole of where someone sits: unit, department, and role in it.
+  const byUnit = new Map<string, { name: string; departments: typeof departments }>();
+  for (const membership of departments) {
+    const key = membership.unit?.id ?? "none";
+    const group = byUnit.get(key) ?? {
+      name: membership.unit?.name ?? "No unit",
+      departments: [],
+    };
+    group.departments.push(membership);
+    byUnit.set(key, group);
+  }
+  const units = [...byUnit.values()];
+
   // The second line says what they are here: their rank if they have one,
   // otherwise where they work, falling back to the address they signed in with.
   const subtitle = manager
     ? ROLE_LABEL[session.role]
-    : departments.length === 1
-      ? (departments[0].name ?? session.email)
-      : departments.length > 1
-        ? `${departments.length} departments`
+    : units.length === 1
+      ? units[0].name
+      : units.length > 1
+        ? `${units.length} units · ${departments.length} departments`
         : session.email;
 
   return (
@@ -86,7 +100,7 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
       {open && (
         <div
           role="menu"
-          className="absolute right-3 bottom-full left-3 z-50 mb-2 overflow-hidden rounded-card border border-line bg-surface shadow-xl shadow-ink-900/10"
+          className="absolute bottom-full left-3 z-50 mb-2 w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-card border border-line bg-surface shadow-xl shadow-ink-900/10"
         >
           <div className="border-b border-line px-3 py-2.5">
             <p className="truncate text-sm font-bold text-ink-900">{name}</p>
@@ -101,17 +115,30 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
 
           {/* What they belong to, stated not chosen: every department they are
               in is in scope at all times. */}
-          {departments.length > 0 && (
+          {units.length > 0 && (
             <div className="border-b border-line py-1.5">
-              <p className="px-3 pt-1 pb-1.5 text-[11px] font-bold tracking-wide text-ink-400 uppercase">
-                Departments
+              <p className="px-3 pt-1 pb-1 text-[11px] font-bold tracking-wide text-ink-400 uppercase">
+                {units.length === 1 ? "Unit" : "Units"}
               </p>
-              {departments.map((membership) => (
-                <div key={membership.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <span className="min-w-0 flex-1 truncate font-medium text-ink-800">
-                    {membership.name ?? "Department"}
-                  </span>
-                  <RoleTag role={membership.role} className="px-1.5 py-0 text-[10px]" />
+
+              {units.map((unit) => (
+                <div key={unit.name} className="pb-1">
+                  <p className="flex items-center gap-1.5 px-3 py-1 text-[13px] font-bold text-ink-900">
+                    <Building className="size-3.5 shrink-0 text-ink-400" />
+                    <span className="min-w-0 truncate">{unit.name}</span>
+                  </p>
+
+                  {unit.departments.map((membership) => (
+                    <div
+                      key={membership.id}
+                      className="flex items-center gap-2 py-1 pr-3 pl-[1.85rem] text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-ink-700">
+                        {membership.name ?? "Department"}
+                      </span>
+                      <RoleTag role={membership.role} className="px-1.5 py-0 text-[10px]" />
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

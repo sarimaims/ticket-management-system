@@ -85,7 +85,6 @@ export async function createTicket(req, res) {
   }
   if (!subject?.trim()) throw ApiError.badRequest('Subject is required.');
   if (!description?.trim()) throw ApiError.badRequest('Description is required.');
-  if (!requestType?.trim()) throw ApiError.badRequest('Request type is required.');
   if (!deadline) throw ApiError.badRequest('Deadline is required.');
   const dueDate = new Date(deadline);
   if (Number.isNaN(dueDate.getTime())) throw ApiError.badRequest('Invalid deadline.');
@@ -107,7 +106,7 @@ export async function createTicket(req, res) {
   const shared = {
     subject: subject.trim(),
     description: description.trim(),
-    requestType: requestType.trim(),
+    requestType: requestType?.trim() ?? '',
     priority: priority || 'Medium',
     raisedBy: req.user._id,
     raisedByRole: req.user.role,
@@ -341,10 +340,7 @@ export async function updateTicket(req, res) {
     ticket.description = description.trim();
   }
 
-  if (requestType !== undefined) {
-    if (!requestType?.trim()) throw ApiError.badRequest('Request type is required.');
-    ticket.requestType = requestType.trim();
-  }
+  if (requestType !== undefined) ticket.requestType = requestType?.trim() ?? '';
 
   // The only one of these that may be emptied: it is optional to begin with.
   if (project !== undefined) ticket.project = project?.trim() ?? '';

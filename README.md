@@ -29,6 +29,17 @@ npm run dev
 
 MongoDB must be running locally; the database is `flowdesk_tickets`.
 
+## Org chart
+
+```
+Unit  ->  Department  ->  head / team
+```
+
+A unit is the level above a department: a business unit, a branch, a company
+in the group. Every department belongs to exactly one, and a department is
+created from inside its unit. Deleting a unit never cascades - it refuses
+while departments are still filed under it.
+
 ## Roles
 
 | Role | Scope |
@@ -64,6 +75,7 @@ API base path: `/api`. Health check: `GET /api/health`.
 | `npm run dev` | Start the API with reload |
 | `npm run seed` | Create the super admin, demo departments and members (idempotent) |
 | `npm run reset` | Delete every department, ticket and account except the super admin |
+| `npm run units:migrate` | File any department that predates units under a default one (idempotent) |
 | `npm run prisma:push` | Apply `prisma/schema.prisma` to MongoDB (collections and indexes) |
 | `npm run prisma:seed` | Create the super admin if it is missing (idempotent) |
 | `npm run prisma:generate` | Regenerate the Prisma client after a schema change |

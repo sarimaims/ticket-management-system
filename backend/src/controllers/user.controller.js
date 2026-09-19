@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES, USER_STATUSES } from '../models/User.js';
-import { presentUser } from './auth.controller.js';
+import { presentUser, WITH_DEPARTMENTS } from './auth.controller.js';
 
 function assertObjectId(id, label = 'id') {
   if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest(`Invalid ${label}.`);
@@ -23,7 +23,7 @@ export async function listUsers(req, res) {
 
   const users = await User.find(filter)
     .sort({ createdAt: -1 })
-    .populate('memberships.department', 'name code');
+    .populate(WITH_DEPARTMENTS);
 
   res.json({ success: true, users: users.map(presentUser) });
 }
@@ -156,7 +156,7 @@ export async function updateUser(req, res) {
 
   await user.save({ validateBeforeSave: true });
 
-  const populated = await User.findById(user._id).populate('memberships.department', 'name code');
+  const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
   res.json({ success: true, user: presentUser(populated) });
 }
 

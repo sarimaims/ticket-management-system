@@ -6,6 +6,7 @@ import departmentRoutes from './department.routes.js';
 import healthRoutes from './health.routes.js';
 import notificationRoutes from './notification.routes.js';
 import ticketRoutes from './ticket.routes.js';
+import unitRoutes from './unit.routes.js';
 import userRoutes from './user.routes.js';
 
 const router = Router();
@@ -16,6 +17,7 @@ router.use('/activity', activityRoutes);
 router.use('/departments', departmentRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/tickets', ticketRoutes);
+router.use('/units', unitRoutes);
 router.use('/users', userRoutes);
 
 export default router;

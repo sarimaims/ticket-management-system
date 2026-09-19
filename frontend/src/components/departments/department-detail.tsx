@@ -157,9 +157,20 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
     <PageHeader
       title={name}
       backHref="/departments"
+      /* The trail shows where this sits in the chart: unit, then department.
+         Units are an admin page, so for everyone else the unit is named but
+         not linked - a dead link is worse than plain text. */
       crumbs={[
         { label: "Home", href: "/dashboard" },
-        { label: "Departments", href: "/departments" },
+        ...(isHere ? [{ label: "Units", href: "/units" as const }] : []),
+        ...(department?.unit
+          ? [
+              {
+                label: department.unit.name ?? "Unit",
+                ...(isHere ? { href: `/units/${department.unit.id}` as const } : {}),
+              },
+            ]
+          : []),
         { label: name },
       ]}
       actions={

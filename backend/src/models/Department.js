@@ -18,6 +18,14 @@ const departmentSchema = new mongoose.Schema(
       maxlength: 8,
       unique: true,
     },
+    // Which unit this department sits under. Every department has one, so
+    // the chart never has an orphan hanging off the root.
+    unit: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Unit',
+      required: [true, 'A department must belong to a unit'],
+      index: true,
+    },
     description: {
       type: String,
       trim: true,

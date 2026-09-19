@@ -2,16 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, Paperclip, ShieldCheck, Users, X } from "lucide-react";
+import { ArrowRight, Building, CheckCircle2, Paperclip, ShieldCheck, Users, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Field, Input, Label, Textarea } from "@/components/ui/field";
+import { Field, Input, Label, Select, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/components/ui/toast";
 import { DateField } from "@/components/tickets/date-field";
 import { listDepartmentOptions, type DepartmentOption } from "@/lib/departments";
+import { listUnitOptions, type UnitOption } from "@/lib/units";
 import { createTicket, type TicketRecord } from "@/lib/tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { isAdmin, ROLE_LABEL } from "@/lib/auth";
@@ -24,7 +25,6 @@ const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High", "Critical"];
 /** The boxes that must be filled, in the order they appear on the page. */
 const REQUIRED = [
   { key: "target", label: "Request To Department", id: "target-departments" },
-  { key: "requestType", label: "Request Type", id: "request-type" },
   { key: "subject", label: "Subject", id: "subject" },
   { key: "description", label: "Description", id: "description" },
   { key: "completionDate", label: "Deadline", id: "completion-date" },
@@ -115,10 +115,25 @@ function Step({
   );
 }
 
+/** The one unit this person belongs to, or "" when it is none or several. */
+function ownUnit(session: ReturnType<typeof useAuth>["session"]) {
+  const units = new Set(
+    (session?.departments ?? []).map((membership) => membership.unit?.id).filter(Boolean),
+  );
+  return units.size === 1 ? [...units][0]! : "";
+}
+
 export function TicketForm() {
   const toast = useToast();
   const { session } = useAuth();
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [units, setUnits] = useState<UnitOption[]>([]);
+  /**
+   * Which unit's departments are on offer. Empty means every unit. It starts
+   * on the raiser's own unit, because that is where most requests go; someone
+   * in several units, or in none, starts on "All units".
+   */
+  const [targetUnit, setTargetUnit] = useState(() => ownUnit(session));
   const [targetDepts, setTargetDepts] = useState<string[]>([]);
   // Someone speaks for every department they belong to by default; they can
   // narrow it before raising.
@@ -126,7 +141,6 @@ export function TicketForm() {
     () => (session?.departments ?? []).map((membership) => membership.id),
   );
   const [priority, setPriority] = useState<TicketPriority>("Medium");
-  const [requestType, setRequestType] = useState("");
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [completionDate, setCompletionDate] = useState("");
@@ -143,6 +157,9 @@ export function TicketForm() {
     listDepartmentOptions(controller.signal)
       .then(setDepartments)
       .catch(() => setDepartments([]));
+    listUnitOptions(controller.signal)
+      .then(setUnits)
+      .catch(() => setUnits([]));
     return () => controller.abort();
   }, []);
 
@@ -161,19 +178,44 @@ export function TicketForm() {
     label: membership.name ?? "Department",
   }));
 
-  const allDepartments = departments.map((department) => ({
+  const inUnit = targetUnit
+    ? departments.filter((department) => department.unit?.id === targetUnit)
+    : departments;
+
+  const allDepartments = inUnit.map((department) => ({
     value: department.id,
-    label: department.name,
+    label:
+      // With every unit on offer the name alone can be ambiguous, so the unit
+      // rides along; inside one unit that would just be repetition.
+      !targetUnit && units.length > 1 && department.unit?.name
+        ? `${department.name} · ${department.unit.name}`
+        : department.name,
   }));
+
+  /**
+   * Switching unit drops anything picked that the new unit does not hold -
+   * done here rather than in an effect, so the list and the chips never
+   * disagree for a render.
+   */
+  const chooseUnit = (unitId: string) => {
+    setTargetUnit(unitId);
+    if (!unitId) return;
+    const allowed = new Set(
+      departments
+        .filter((department) => department.unit?.id === unitId)
+        .map((department) => department.id),
+    );
+    setTargetDepts((current) => current.filter((id) => allowed.has(id)));
+  };
 
   const manager = isAdmin(session);
   const hasOwnDepartments = myDepartments.length > 0;
 
   const reset = () => {
     setTargetDepts([]);
+    setTargetUnit(ownUnit(session));
     setFromDepts([]);
     setPriority("Medium");
-    setRequestType("");
     setSubject("");
     setDescription("");
     setCompletionDate("");
@@ -187,7 +229,6 @@ export function TicketForm() {
 
     const filled: Record<RequiredKey, boolean> = {
       target: targetDepts.length > 0,
-      requestType: Boolean(requestType.trim()),
       subject: Boolean(subject.trim()),
       description: Boolean(description.trim()),
       completionDate: Boolean(completionDate),
@@ -218,7 +259,6 @@ export function TicketForm() {
         fromDepartments: fromDepts,
         subject: subject.trim(),
         description: description.trim(),
-        requestType: requestType.trim(),
         priority,
         deadline: completionDate,
         project: project.trim() || undefined,
@@ -251,6 +291,24 @@ export function TicketForm() {
             hasOwnDepartments && "sm:grid-cols-[1fr_auto_1fr] sm:items-end sm:gap-3",
           )}
         >
+          <div className="sm:col-span-full">
+            <Field label="Request To Unit" hint="(narrows the departments below)" htmlFor="target-unit">
+              <Select
+                id="target-unit"
+                icon={<Building className="text-ink-500" />}
+                value={targetUnit}
+                onChange={(event) => chooseUnit(event.target.value)}
+              >
+                <option value="">All units</option>
+                {units.map((unit) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
           {hasOwnDepartments && (
             <>
               <Field
@@ -283,10 +341,19 @@ export function TicketForm() {
                 if (value.length > 0) clear("target");
               }}
               placeholder="Select one or more"
-              emptyMessage="No departments yet"
+              emptyMessage={
+                targetUnit ? "Nothing in this unit yet" : "No departments yet"
+              }
               invalid={missing.includes("target")}
             />
-            {allDepartments.length === 0 && (
+            {allDepartments.length === 0 && targetUnit && (
+              <p className="mt-1.5 text-xs text-ink-400">
+                That unit has no departments yet. Pick another, or choose{" "}
+                <span className="font-semibold text-ink-500">All units</span>.
+              </p>
+            )}
+
+            {departments.length === 0 && (
               <p className="mt-1.5 text-xs text-ink-400">
                 No departments exist yet.{" "}
                 {manager ? (
@@ -349,20 +416,7 @@ export function TicketForm() {
 
       <Step title="What you need">
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Request Type" required htmlFor="request-type">
-              <Input
-                id="request-type"
-                placeholder="e.g. Recruitment"
-                invalid={missing.includes("requestType")}
-                value={requestType}
-                onChange={(event) => {
-                  setRequestType(event.target.value);
-                  clear("requestType");
-                }}
-              />
-            </Field>
-
+          <div className="grid gap-4">
             <Field label="Subject" required htmlFor="subject">
               <Input
                 id="subject"

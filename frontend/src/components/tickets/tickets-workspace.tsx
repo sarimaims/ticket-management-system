@@ -100,6 +100,7 @@ const TicketRow = memo(function TicketRow({
   byMe,
   selected,
   flashed,
+  showType,
   onOpen,
   onStatus,
 }: {
@@ -111,6 +112,8 @@ const TicketRow = memo(function TicketRow({
   selected: boolean;
   /** Arrived here from a notification: hold the eye on this row for a moment. */
   flashed: boolean;
+  /** Whether the list is showing a request type column at all. */
+  showType: boolean;
   onOpen: (ticket: TicketRecord) => void;
   onStatus: (ticket: TicketRecord, next: TicketStatus) => void;
 }) {
@@ -182,7 +185,7 @@ const TicketRow = memo(function TicketRow({
           {ticket.department.name}
         </span>
       </TableCell>
-      <TableCell>{ticket.requestType}</TableCell>
+      {showType && <TableCell>{ticket.requestType || "—"}</TableCell>}
       <TableCell>
         <PriorityBadge priority={ticket.priority} />
       </TableCell>
@@ -329,7 +332,13 @@ export function TicketsWorkspace({
     });
   }, [tickets, deferredQuery, status, priority, mineOnly, isMine]);
 
-  const columns = scope === "mine" ? 10 : 12;
+  /**
+   * The form stopped asking for a request type, so the column would be a
+   * stripe of dashes. It appears only while something in view still carries
+   * one, which keeps it for the tickets raised when the field existed.
+   */
+  const showType = tickets.some((ticket) => Boolean(ticket.requestType));
+  const columns = (scope === "mine" ? 9 : 11) + (showType ? 1 : 0);
 
   /**
    * Arriving from a notification: find the ticket it named, clear whatever
@@ -512,7 +521,7 @@ export function TicketsWorkspace({
                 {scope === "assigned" && <TableHead sortable>Raised By</TableHead>}
                 <TableHead sortable>From Department</TableHead>
                 <TableHead sortable>To Department</TableHead>
-                <TableHead sortable>Request Type</TableHead>
+                {showType && <TableHead sortable>Request Type</TableHead>}
                 <TableHead sortable>Priority</TableHead>
                 <TableHead sortable>Status</TableHead>
                 <TableHead sortable>Created On</TableHead>
@@ -562,6 +571,7 @@ export function TicketsWorkspace({
                     byMe={scope === "assigned" && ticket.raisedBy.id === meId}
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
+                    showType={showType}
                     onOpen={openTicket}
                     onStatus={applyStatus}
                   />
