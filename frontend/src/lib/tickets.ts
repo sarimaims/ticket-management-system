@@ -22,6 +22,9 @@ export type TicketRecord = {
   /** The raiser's standing when the ticket was raised, not their standing now. */
   raisedByRole: "superadmin" | "admin" | "user";
   assignee: { id: string; name?: string } | null;
+  /** How long the conversation on this ticket is, without loading any of it. */
+  messageCount: number;
+  lastMessageAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -23,6 +23,7 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
   if (unique.length === 0) return 0;
 
   const department = ticket.department;
+  const raiser = String(ticket.raisedBy?._id ?? ticket.raisedBy ?? '');
   const rows = unique.map((user) => ({
     user,
     type,
@@ -32,6 +33,10 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
     body,
     actorName,
     departmentName: department?.name ?? '',
+    // One event, two audiences: the raiser reads it on My Requests, the
+    // department on its queue. Stored per copy, because by the time it is
+    // clicked nothing else knows which side the reader was on.
+    forRaiser: raiser !== '' && String(user) === raiser,
   }));
 
   await Notification.insertMany(rows);
@@ -105,6 +110,33 @@ export async function notifyTicketUpdated({ ticket, actor, summary }) {
     });
   } catch (error) {
     console.error('Notification failed (ticket.updated):', error.message);
+    return 0;
+  }
+}
+
+/**
+ * Somebody said something on a ticket: tell everyone else who can see it - the
+ * raiser and the receiving department, minus the person who just typed it.
+ *
+ * `preview` is the message trimmed to a line, because the bell shows one line
+ * and the thread itself is a click away.
+ */
+export async function notifyNewMessage({ ticket, actor, preview }) {
+  try {
+    const departmentId = ticket.department?._id ?? ticket.department;
+    const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+
+    return await deliver({
+      recipients: [...(await departmentMemberIds(departmentId)), raiser],
+      exclude: actor._id,
+      type: 'ticket.message',
+      ticket,
+      title: `${ticket.number} · ${actor.name}`,
+      body: preview,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.message):', error.message);
     return 0;
   }
 }

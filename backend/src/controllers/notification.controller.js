@@ -15,6 +15,9 @@ function present(item) {
     body: item.body,
     actorName: item.actorName,
     departmentName: item.departmentName,
+    // Which page this copy belongs on: see the field on the model. Null on
+    // rows written before it existed, and the client has a rule for those.
+    forRaiser: item.forRaiser ?? null,
     read: Boolean(item.readAt),
     createdAt: item.createdAt,
   };

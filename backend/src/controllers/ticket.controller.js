@@ -5,6 +5,7 @@ import Department from '../models/Department.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
+import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
 
 function present(ticket) {
@@ -43,23 +44,12 @@ function present(ticket) {
     assignee: populated(ticket.assignee)
       ? { id: String(ticket.assignee._id), name: ticket.assignee.name }
       : null,
+    // How much has been said on it, so a row can show there is a conversation
+    // without the list loading a single message.
+    messageCount: ticket.messageCount ?? 0,
+    lastMessageAt: ticket.lastMessageAt ?? null,
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
-  };
-}
-
-/**
- * A raised ticket belongs to one department: its head and its team see it, and
- * so does whoever raised it. Admins see everything. This is the only place
- * that decides who may read a ticket.
- */
-function visibilityFilter(user) {
-  if (MANAGER_ROLES.includes(user.role)) return {};
-
-  const departmentIds = (user.memberships ?? []).map((membership) => membership.department);
-
-  return {
-    $or: [{ raisedBy: user._id }, { department: { $in: departmentIds } }],
   };
 }
 
@@ -234,16 +224,6 @@ export async function getTicket(req, res) {
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
   res.json({ success: true, ticket: present(ticket) });
-}
-
-/** Who may work a ticket: its department's head and team, plus any manager. */
-function canWorkOn(user, ticket) {
-  if (MANAGER_ROLES.includes(user.role)) return true;
-
-  const departmentId = String(ticket.department?._id ?? ticket.department);
-  return (user.memberships ?? []).some(
-    (membership) => String(membership.department) === departmentId,
-  );
 }
 
 /**

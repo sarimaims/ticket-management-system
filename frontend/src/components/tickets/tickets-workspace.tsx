@@ -3,12 +3,25 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { AlertCircle, Inbox, Plus, Search, SlidersHorizontal, UserCheck } from "lucide-react";
+import {
+  AlertCircle,
+  Inbox,
+  MessagesSquare,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  UserCheck,
+} from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/field";
-import { DeadlineVerdict, TicketDetailSheet } from "@/components/tickets/ticket-detail-sheet";
+import {
+  DeadlineVerdict,
+  TicketDetailSheet,
+  type SheetTab,
+} from "@/components/tickets/ticket-detail-sheet";
+import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
@@ -101,6 +114,7 @@ const TicketRow = memo(function TicketRow({
   selected,
   flashed,
   showType,
+  unreadMessages,
   onOpen,
   onStatus,
 }: {
@@ -114,7 +128,9 @@ const TicketRow = memo(function TicketRow({
   flashed: boolean;
   /** Whether the list is showing a request type column at all. */
   showType: boolean;
-  onOpen: (ticket: TicketRecord) => void;
+  /** How many messages on this ticket the reader has not opened yet. */
+  unreadMessages: number;
+  onOpen: (ticket: TicketRecord, tab?: SheetTab) => void;
   onStatus: (ticket: TicketRecord, next: TicketStatus) => void;
 }) {
   return (
@@ -145,6 +161,36 @@ const TicketRow = memo(function TicketRow({
       </TableCell>
       <TableCell className="font-semibold whitespace-normal text-ink-900">
         {ticket.subject}
+        {/* The way into the conversation, on every row rather than only the
+            ones that already have one - a thread nobody can find is a thread
+            nobody starts. */}
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(ticket, "chat");
+          }}
+          aria-label={
+            unreadMessages > 0
+              ? `Open the conversation on ${ticket.number}, ${unreadMessages} unread`
+              : `Open the conversation on ${ticket.number}`
+          }
+          className={cn(
+            "ml-2 inline-flex translate-y-px items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold transition-colors",
+            unreadMessages > 0
+              ? "bg-brand-600 text-white hover:bg-brand-700"
+              : ticket.messageCount > 0
+                ? "bg-ink-100 text-ink-600 hover:bg-ink-200"
+                : "text-ink-300 hover:bg-ink-100 hover:text-ink-600",
+          )}
+        >
+          <MessagesSquare className="size-3.5" />
+          {unreadMessages > 0
+            ? unreadMessages
+            : ticket.messageCount > 0
+              ? ticket.messageCount
+              : null}
+        </button>
       </TableCell>
 
       {scope === "assigned" && (
@@ -286,8 +332,12 @@ export function TicketsWorkspace({
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
   const [viewing, setViewing] = useState<TicketRecord | null>(null);
+  // Which pane the sheet opens on. Held here rather than inside the sheet, so
+  // the chat icon on a row can go straight to the conversation.
+  const [tab, setTab] = useState<SheetTab>("details");
   const [mineOnly, setMineOnly] = useState(false);
   const { session } = useAuth();
+  const { items: feed } = useNotifications();
   const toast = useToast();
 
   // A notification lands here with the ticket it was about in the query.
@@ -312,6 +362,23 @@ export function TicketsWorkspace({
     () => new Set((session?.departments ?? []).map((membership) => membership.id)),
     [session],
   );
+
+  /**
+   * Unread messages per ticket, read off the bell's own feed.
+   *
+   * The feed is already the per-person record of what has been seen, so there
+   * is nothing further to store and nothing further to ask the API for - and
+   * opening a thread, which marks its entries read, clears the row's badge by
+   * the same stroke.
+   */
+  const unreadByTicket = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of feed) {
+      if (item.type !== "ticket.message" || item.read || !item.ticket) continue;
+      counts.set(item.ticket, (counts.get(item.ticket) ?? 0) + 1);
+    }
+    return counts;
+  }, [feed]);
 
   const stats = useMemo(() => statsFor(tickets, scope), [tickets, scope]);
 
@@ -418,7 +485,10 @@ export function TicketsWorkspace({
     [hold, setTickets, toast],
   );
 
-  const openTicket = useCallback((ticket: TicketRecord) => setViewing(ticket), []);
+  const openTicket = useCallback((ticket: TicketRecord, next: SheetTab = "details") => {
+    setViewing(ticket);
+    setTab(next);
+  }, []);
 
   return (
     <>
@@ -572,6 +642,7 @@ export function TicketsWorkspace({
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
                     showType={showType}
+                    unreadMessages={unreadByTicket.get(ticket.id) ?? 0}
                     onOpen={openTicket}
                     onStatus={applyStatus}
                   />
@@ -595,6 +666,8 @@ export function TicketsWorkspace({
         ticket={viewing}
         canWork={viewing ? manager || myDepartmentIds.has(viewing.department.id) : false}
         canEdit={viewing ? manager || viewing.raisedBy.id === meId : false}
+        tab={tab}
+        onTab={setTab}
         onClose={() => setViewing(null)}
         onSaved={(saved) => {
           setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));

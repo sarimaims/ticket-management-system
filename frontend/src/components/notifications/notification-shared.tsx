@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { PencilLine, RefreshCw, TicketPlus } from "lucide-react";
+import { MessageSquare, PencilLine, RefreshCw, TicketPlus } from "lucide-react";
 
 import type { NotificationRecord, NotificationType } from "@/lib/notifications";
 import { chime } from "@/lib/chime";
@@ -62,9 +62,12 @@ export function shortTime(iso: string) {
  * the row it was about rather than at the top of a list.
  */
 export const destination = (item: NotificationRecord) => {
-  // "new" and "edited" are both the department's business; "updated" is the
-  // department answering, which the raiser reads on their own page.
-  const page = item.type === "ticket.updated" ? "/my-requests" : "/assigned-to-me";
+  // The raiser reads a ticket on My Requests, the department on its own queue,
+  // and a message goes to both - so the copy itself says which side it was
+  // written for. Rows from before that flag fall back to the old rule: "new"
+  // and "edited" are the department's business, "updated" is the raiser's.
+  const forRaiser = item.forRaiser ?? item.type === "ticket.updated";
+  const page = forRaiser ? "/my-requests" : "/assigned-to-me";
 
   // The id is exact; the number still finds the row if the id is missing.
   const key = item.ticket ?? item.ticketNumber;
@@ -94,6 +97,11 @@ export const TYPE_META: Record<NotificationType, Meta> = {
     icon: PencilLine,
     badge: "bg-status-waiting-fg text-white",
     label: "Edited",
+  },
+  "ticket.message": {
+    icon: MessageSquare,
+    badge: "bg-ink-700 text-white",
+    label: "Message",
   },
 };
 

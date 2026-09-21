@@ -5,7 +5,12 @@ import mongoose from 'mongoose';
  * one they care about moved. Names are snapshots, like the activity log, so an
  * old notification still reads correctly after a rename or a deletion.
  */
-export const NOTIFICATION_TYPES = ['ticket.new', 'ticket.updated', 'ticket.edited'];
+export const NOTIFICATION_TYPES = [
+  'ticket.new',
+  'ticket.updated',
+  'ticket.edited',
+  'ticket.message',
+];
 
 const notificationSchema = new mongoose.Schema(
   {
@@ -46,6 +51,16 @@ const notificationSchema = new mongoose.Schema(
     departmentName: {
       type: String,
       default: '',
+    },
+    /**
+     * Whether this copy went to the person who raised the ticket. The same
+     * event is written once per recipient, and the two sides read it on
+     * different pages - the raiser on My Requests, the department on its own
+     * queue - so the link has to know which copy it is looking at.
+     */
+    forRaiser: {
+      type: Boolean,
+      default: null,
     },
     readAt: {
       type: Date,

@@ -13,6 +13,12 @@ const NEW_TICKET: Note[] = [
   { hz: 1568.0, at: 0.2, seconds: 0.75, gain: 0.75 },
 ];
 
+/** A5 up to D6, short and light: somebody is talking, not filing. */
+const MESSAGE: Note[] = [
+  { hz: 880.0, at: 0, seconds: 0.26, gain: 0.45 },
+  { hz: 1174.7, at: 0.075, seconds: 0.38, gain: 0.4 },
+];
+
 /** G5 down to E5: the same voice, quieter, saying a ticket merely moved. */
 const UPDATE: Note[] = [
   { hz: 783.99, at: 0, seconds: 0.4, gain: 0.6 },
@@ -109,6 +115,7 @@ function play(notes: Note[]) {
 export const chime = {
   newTicket: () => play(NEW_TICKET),
   update: () => play(UPDATE),
+  message: () => play(MESSAGE),
 };
 
 const MUTE_KEY = "flowdesk.notifications.muted";

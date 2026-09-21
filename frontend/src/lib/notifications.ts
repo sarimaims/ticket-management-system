@@ -1,6 +1,10 @@
 import { api } from "./api";
 
-export type NotificationType = "ticket.new" | "ticket.updated" | "ticket.edited";
+export type NotificationType =
+  | "ticket.new"
+  | "ticket.updated"
+  | "ticket.edited"
+  | "ticket.message";
 
 export type NotificationRecord = {
   id: string;
@@ -11,6 +15,13 @@ export type NotificationRecord = {
   body: string;
   actorName: string;
   departmentName: string;
+  /**
+   * Whether this copy went to the person who raised the ticket. The same event
+   * is written once per recipient and the two sides read it on different
+   * pages, so the link has to know which copy it is looking at. Null on rows
+   * written before the flag existed.
+   */
+  forRaiser: boolean | null;
   read: boolean;
   createdAt: string;
 };
