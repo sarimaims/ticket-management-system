@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Bell, BellOff, CheckCheck, Volume2 } from "lucide-react";
+import { ArrowRight, Bell, CheckCheck, Volume2, VolumeX } from "lucide-react";
 
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { NotificationCard, toggleSound } from "@/components/notifications/notification-shared";
@@ -78,7 +78,7 @@ export function NotificationBell() {
                   aria-label={muted ? "Turn the sound on" : "Turn the sound off"}
                   title={muted ? "Sound off" : "Sound on"}
                 >
-                  {muted ? <BellOff className="size-4" /> : <Volume2 className="size-4" />}
+                  {muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
                 </button>
                 <button
                   type="button"

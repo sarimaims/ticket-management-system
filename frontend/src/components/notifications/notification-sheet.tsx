@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bell, BellOff, CheckCheck, Trash2, Volume2, X } from "lucide-react";
+import { Bell, CheckCheck, Trash2, Volume2, VolumeX, X } from "lucide-react";
 
 import { useNotifications } from "@/components/notifications/notification-provider";
 import {
@@ -85,7 +85,7 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
             aria-label={muted ? "Turn the sound on" : "Turn the sound off"}
             title={muted ? "Sound off" : "Sound on"}
           >
-            {muted ? <BellOff className="size-4.5" /> : <Volume2 className="size-4.5" />}
+            {muted ? <VolumeX className="size-4.5" /> : <Volume2 className="size-4.5" />}
           </button>
           <button
             type="button"

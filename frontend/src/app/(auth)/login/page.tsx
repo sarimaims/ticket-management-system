@@ -12,7 +12,6 @@ export default function LoginPage() {
     <AuthShell
       title="Welcome back"
       subtitle="Sign in to raise and track your department requests."
-      footer={<>Accounts are created by your super admin under Departments.</>}
     >
       <LoginForm />
     </AuthShell>

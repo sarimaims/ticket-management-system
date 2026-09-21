@@ -60,7 +60,7 @@ function PriorityPicker({
     <div
       role="radiogroup"
       aria-label="Priority"
-      className="flex w-full gap-1 rounded-field border border-line-strong bg-surface p-1 sm:w-auto"
+      className="flex w-full gap-1 rounded-field border border-line-strong bg-surface p-1"
     >
       {PRIORITIES.map((level) => {
         const selected = value === level;
@@ -72,7 +72,7 @@ function PriorityPicker({
             aria-checked={selected}
             onClick={() => onChange(level)}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors sm:flex-none sm:px-3.5",
+              "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors",
               selected ? PRIORITY_TONE[level].selected : "text-ink-500 hover:bg-ink-50",
             )}
           >
@@ -388,11 +388,6 @@ export function TicketForm() {
           </p>
         )}
 
-        <div className="mt-4">
-          <Label required>Priority</Label>
-          <PriorityPicker value={priority} onChange={setPriority} />
-        </div>
-
         {/* Who can see it is a property of the department, so say so up front. */}
         {selected.length > 0 && (
           <div className="mt-4 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
@@ -446,6 +441,8 @@ export function TicketForm() {
             />
           </Field>
 
+          {/* When it is needed and how urgent it is are the same judgement,
+              so they sit side by side. */}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
               label="Deadline"
@@ -465,6 +462,14 @@ export function TicketForm() {
                 invalid={missing.includes("completionDate")}
               />
             </Field>
+
+            <div>
+              <Label required className="mb-1">
+                Priority
+              </Label>
+              <p className="mb-2 text-xs text-ink-400">How urgent this is.</p>
+              <PriorityPicker value={priority} onChange={setPriority} />
+            </div>
           </div>
         </div>
       </Step>

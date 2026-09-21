@@ -104,18 +104,6 @@ export function LoginForm() {
       <Button type="submit" className="w-full" disabled={pending}>
         {pending ? "Signing in..." : "Sign In"}
       </Button>
-
-      <div className="rounded-field border border-line bg-ink-50 px-4 py-3 text-xs text-ink-500">
-        <p className="font-semibold text-ink-700">Demo accounts</p>
-        <p className="mt-1">
-          Super admin: <span className="font-medium text-ink-700">admin@flowdesk.com</span> /
-          admin1234
-        </p>
-        <p>
-          Member: <span className="font-medium text-ink-700">intizar.shah@flowdesk.com</span> /
-          flowdesk1234
-        </p>
-      </div>
     </form>
   );
 }

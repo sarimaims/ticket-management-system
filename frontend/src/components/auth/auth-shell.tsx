@@ -18,7 +18,7 @@ export function AuthShell({
   title: string;
   subtitle: string;
   children: React.ReactNode;
-  footer: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   return (
     <div className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -69,7 +69,7 @@ export function AuthShell({
 
           <div className="mt-7">{children}</div>
 
-          <div className="mt-6 text-sm text-ink-500">{footer}</div>
+          {footer && <div className="mt-6 text-sm text-ink-500">{footer}</div>}
         </div>
       </main>
     </div>
