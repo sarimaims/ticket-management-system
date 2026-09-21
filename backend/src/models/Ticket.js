@@ -123,6 +123,16 @@ const ticketSchema = new mongoose.Schema(
       maxlength: 80,
       default: '',
     },
+    // The thread lives in its own collection; these two are kept here so a
+    // list can show that a conversation exists without reading any of it.
+    messageCount: {
+      type: Number,
+      default: 0,
+    },
+    lastMessageAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true },
 );

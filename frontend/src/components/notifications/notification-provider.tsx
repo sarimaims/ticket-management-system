@@ -92,9 +92,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
         for (const item of fresh) {
           announced.current!.add(item.id);
-          const isNew = item.type === "ticket.new";
           toast.show({
-            tone: isNew ? "ticket" : "update",
+            tone:
+              item.type === "ticket.new"
+                ? "ticket"
+                : item.type === "ticket.message"
+                  ? "message"
+                  : "update",
             title: item.title,
             description: item.body,
             href: destination(item),
@@ -102,7 +106,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         }
 
         if (fresh.length > 0 && !isMuted()) {
+          // Loudest first: a ticket arriving outranks a reply to one you know
+          // about, and a run of plain messages only ever taps.
           if (fresh.some((item) => item.type === "ticket.new")) chime.newTicket();
+          else if (fresh.every((item) => item.type === "ticket.message")) chime.message();
           else chime.update();
         }
       } catch {

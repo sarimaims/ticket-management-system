@@ -1,12 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CalendarCheck, CheckCircle2, Lock, PencilLine, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CalendarCheck,
+  CheckCircle2,
+  Lock,
+  MessagesSquare,
+  PencilLine,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { DateField } from "@/components/tickets/date-field";
+import { TicketChat } from "@/components/tickets/ticket-chat";
+import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
 import { updateTicket, type TicketRecord } from "@/lib/tickets";
@@ -209,6 +218,71 @@ function RequestEditor({
   );
 }
 
+export type SheetTab = "details" | "chat";
+
+/**
+ * Two panes on one ticket: what it says, and what is being said about it.
+ *
+ * The badge prefers unread over total, because "two you have not read" is the
+ * thing worth walking across the room for; a quiet thread just says how long
+ * it is.
+ */
+function Tabs({
+  tab,
+  onTab,
+  count,
+  unread,
+}: {
+  tab: SheetTab;
+  onTab: (tab: SheetTab) => void;
+  count: number;
+  unread: number;
+}) {
+  const style = (value: SheetTab) =>
+    cn(
+      "flex-1 border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors",
+      tab === value
+        ? "border-brand-600 text-brand-700"
+        : "border-transparent text-ink-500 hover:text-ink-800",
+    );
+
+  return (
+    <div role="tablist" className="flex border-b border-line px-2">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "details"}
+        onClick={() => onTab("details")}
+        className={style("details")}
+      >
+        Details
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "chat"}
+        onClick={() => onTab("chat")}
+        className={style("chat")}
+      >
+        <span className="inline-flex items-center justify-center gap-1.5">
+          <MessagesSquare className="size-4" />
+          Chat
+          {(unread > 0 || count > 0) && (
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[10px] leading-none font-bold",
+                unread > 0 ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-600",
+              )}
+            >
+              {unread > 0 ? unread : count}
+            </span>
+          )}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2.5">
@@ -243,12 +317,18 @@ export function TicketDetailSheet({
   ticket,
   canWork,
   canEdit = false,
+  tab,
+  onTab,
   onClose,
   onSaved,
 }: {
   ticket: TicketRecord | null;
   canWork: boolean;
   canEdit?: boolean;
+  /** Which pane is open. Held by the list, so a row can open straight to the
+      conversation and switching tickets does not land on the wrong one. */
+  tab: SheetTab;
+  onTab: (tab: SheetTab) => void;
   onClose: () => void;
   onSaved: (ticket: TicketRecord) => void;
 }) {
@@ -286,6 +366,8 @@ export function TicketDetailSheet({
             ticket={ticket}
             canWork={canWork}
             canEdit={canEdit}
+            tab={tab}
+            onTab={onTab}
             onClose={onClose}
             onSaved={onSaved}
           />
@@ -299,12 +381,16 @@ function SheetBody({
   ticket,
   canWork,
   canEdit,
+  tab,
+  onTab,
   onClose,
   onSaved,
 }: {
   ticket: TicketRecord;
   canWork: boolean;
   canEdit: boolean;
+  tab: SheetTab;
+  onTab: (tab: SheetTab) => void;
   onClose: () => void;
   onSaved: (ticket: TicketRecord) => void;
 }) {
@@ -330,6 +416,24 @@ function SheetBody({
     deadline: ticket.deadline ? ticket.deadline.slice(0, 10) : "",
   }));
   const [invalid, setInvalid] = useState<string[]>([]);
+
+  /**
+   * How long the thread is. The list only learns this when it next refreshes,
+   * so once the chat has been open it reports its own count and the badge
+   * stops lagging behind what the reader can see.
+   */
+  const [chatCount, setChatCount] = useState<number | null>(null);
+
+  // The feed is the only per-person record of what has been read, so it is
+  // also what says whether this ticket has anything waiting.
+  const { items } = useNotifications();
+  const unread = useMemo(
+    () =>
+      items.filter(
+        (item) => item.type === "ticket.message" && !item.read && item.ticket === ticket.id,
+      ).length,
+    [items, ticket.id],
+  );
 
   // A department name is only missing when the record was never populated.
   const departmentName = ticket.department.name ?? "That department";
@@ -457,7 +561,14 @@ function SheetBody({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <Tabs tab={tab} onTab={onTab} count={chatCount ?? ticket.messageCount} unread={unread} />
+
+      {/* Mounted only while it is being read, so a closed thread costs no
+          polling. The details below are hidden rather than unmounted, so an
+          edit in progress survives a look at the conversation. */}
+      {tab === "chat" && <TicketChat ticket={ticket} onCount={setChatCount} />}
+
+      <div className={cn("flex-1 overflow-y-auto px-5 py-4", tab === "chat" && "hidden")}>
         {editing && (
           <RequestEditor
             draft={draft}
@@ -598,7 +709,7 @@ function SheetBody({
         )}
       </div>
 
-      {canEdit && (
+      {canEdit && tab === "details" && (
         <div className="space-y-2 border-t border-line px-5 py-4">
           {editing ? (
             <>
@@ -621,7 +732,7 @@ function SheetBody({
         </div>
       )}
 
-      {canWork && (
+      {canWork && tab === "details" && (
         <div className="space-y-2 border-t border-line px-5 py-4">
           <Button className="w-full" onClick={() => save()} disabled={pending}>
             {pending ? "Saving..." : "Save Changes"}

@@ -2,11 +2,19 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, CheckCircle2, Info, RefreshCw, TicketPlus, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Info,
+  MessageSquare,
+  RefreshCw,
+  TicketPlus,
+  X,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export type ToastTone = "error" | "success" | "info" | "ticket" | "update";
+export type ToastTone = "error" | "success" | "info" | "ticket" | "update" | "message";
 
 type ToastInput = {
   title: string;
@@ -34,6 +42,9 @@ const TONES: Record<ToastTone, { box: string; icon: React.ComponentType<{ classN
     box: "border-status-progress-fg/20 bg-status-progress-bg text-status-progress-fg",
     icon: RefreshCw,
   },
+  // Somebody talking on a ticket: the brand voice, but unfilled, so it is not
+  // mistaken for a ticket arriving.
+  message: { box: "border-brand-200 bg-surface text-brand-700", icon: MessageSquare },
 };
 
 type ToastApi = {
@@ -62,11 +73,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const show = useCallback(
-    ({ title, description, tone = "error" }: ToastInput) => {
+    ({ title, description, tone = "error", href }: ToastInput) => {
       nextId.current += 1;
       const id = nextId.current;
       // Three is as many as anyone reads at once; older ones make room.
-      setToasts((current) => [...current.slice(-2), { id, title, description, tone }]);
+      setToasts((current) => [...current.slice(-2), { id, title, description, tone, href }]);
       timers.current.set(
         id,
         setTimeout(() => dismiss(id), DURATION),
