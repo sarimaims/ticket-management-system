@@ -25,13 +25,26 @@ const COLUMNS: Record<number, string> = {
   6: "lg:grid-cols-6",
 };
 
-export function StatTiles({ stats, className }: { stats: Stat[]; className?: string }) {
+export function StatTiles({
+  stats,
+  loading,
+  className,
+}: {
+  stats: Stat[];
+  /** Counts of nothing are indistinguishable from real zeros, so say so. */
+  loading?: boolean;
+  className?: string;
+}) {
   return (
     <div className={cn("grid grid-cols-2 gap-3", COLUMNS[stats.length] ?? "lg:grid-cols-4", className)}>
       {stats.map((stat) => (
         <div key={stat.label} className={cn("rounded-xl px-4 py-3", TILE_TONES[stat.tone])}>
           <p className="text-xs font-semibold opacity-80">{stat.label}</p>
-          <p className="mt-1 text-2xl leading-none font-bold tabular-nums">{stat.value}</p>
+          {loading ? (
+            <span className="mt-1.5 block h-6 w-10 animate-pulse rounded-md bg-current opacity-20" />
+          ) : (
+            <p className="mt-1 text-2xl leading-none font-bold tabular-nums">{stat.value}</p>
+          )}
         </div>
       ))}
     </div>

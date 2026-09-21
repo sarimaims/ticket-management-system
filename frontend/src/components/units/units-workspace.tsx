@@ -12,6 +12,7 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
@@ -57,7 +58,10 @@ export function UnitsWorkspace() {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setError(errorMessage(caught));
     } finally {
-      setLoading(false);
+      // An aborted request is not an answer. React mounts an effect twice in
+      // development, so the first fetch is always cancelled: clearing the flag
+      // here would declare "nothing found" while the real request is still out.
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
@@ -130,11 +134,7 @@ export function UnitsWorkspace() {
               </tr>
             </thead>
             <tbody>
-              {loading && (
-                <tr>
-                  <TableCell className="py-8 text-center text-ink-400">Loading…</TableCell>
-                </tr>
-              )}
+              {loading && <TableSkeleton rows={3} columns={5} />}
 
               {!loading && visible.length === 0 && (
                 <tr>

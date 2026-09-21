@@ -127,6 +127,8 @@ export function TicketForm() {
   const toast = useToast();
   const { session } = useAuth();
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  /** Until this clears, "no departments" would be a lie rather than a fact. */
+  const [loadingOptions, setLoadingOptions] = useState(true);
   const [units, setUnits] = useState<UnitOption[]>([]);
   /**
    * Which unit's departments are on offer. Empty means every unit. It starts
@@ -154,12 +156,12 @@ export function TicketForm() {
 
   useEffect(() => {
     const controller = new AbortController();
-    listDepartmentOptions(controller.signal)
-      .then(setDepartments)
-      .catch(() => setDepartments([]));
-    listUnitOptions(controller.signal)
-      .then(setUnits)
-      .catch(() => setUnits([]));
+    Promise.allSettled([
+      listDepartmentOptions(controller.signal).then(setDepartments),
+      listUnitOptions(controller.signal).then(setUnits),
+    ]).then(() => {
+      if (!controller.signal.aborted) setLoadingOptions(false);
+    });
     return () => controller.abort();
   }, []);
 
@@ -346,14 +348,21 @@ export function TicketForm() {
               }
               invalid={missing.includes("target")}
             />
-            {allDepartments.length === 0 && targetUnit && (
+            {loadingOptions && (
+              <p className="mt-1.5 flex items-center gap-2 text-xs text-ink-400">
+                <span className="size-3 animate-spin rounded-full border-2 border-ink-200 border-t-ink-400" />
+                Loading departments…
+              </p>
+            )}
+
+            {!loadingOptions && allDepartments.length === 0 && targetUnit && (
               <p className="mt-1.5 text-xs text-ink-400">
                 That unit has no departments yet. Pick another, or choose{" "}
                 <span className="font-semibold text-ink-500">All units</span>.
               </p>
             )}
 
-            {departments.length === 0 && (
+            {!loadingOptions && departments.length === 0 && (
               <p className="mt-1.5 text-xs text-ink-400">
                 No departments exist yet.{" "}
                 {manager ? (

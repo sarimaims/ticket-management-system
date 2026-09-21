@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -109,7 +110,10 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setError(errorMessage(caught));
       } finally {
-        setLoading(false);
+        // An aborted request is not an answer. React mounts an effect twice in
+        // development, so the first fetch is always cancelled: clearing the flag
+        // here would declare "nothing found" while the real request is still out.
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [departmentId],
@@ -189,7 +193,17 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
     return (
       <>
         {header("Department")}
-        <p className="text-sm text-ink-400">Loading…</p>
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+            <Skeleton className="size-9 rounded-full" />
+            <Skeleton className="h-4 w-44" />
+          </div>
+          <table className="w-full border-collapse">
+            <tbody>
+              <TableSkeleton rows={4} columns={4} />
+            </tbody>
+          </table>
+        </Card>
       </>
     );
   }

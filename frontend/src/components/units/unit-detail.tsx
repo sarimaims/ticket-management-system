@@ -12,6 +12,7 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
+import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
@@ -68,7 +69,10 @@ export function UnitDetail({ unitId }: { unitId: string }) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setError(errorMessage(caught));
       } finally {
-        setLoading(false);
+        // An aborted request is not an answer. React mounts an effect twice in
+        // development, so the first fetch is always cancelled: clearing the flag
+        // here would declare "nothing found" while the real request is still out.
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [unitId],
@@ -105,6 +109,18 @@ export function UnitDetail({ unitId }: { unitId: string }) {
       />
 
       {error && <Banner message={error} />}
+
+      {loading && !unit && (
+        <Card className="mb-4 p-4">
+          <div className="flex items-start gap-3">
+            <Skeleton className="size-10 rounded-xl" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-3 w-72" />
+            </div>
+          </div>
+        </Card>
+      )}
 
       {unit && (
         <Card className="mb-4 p-4">
@@ -153,11 +169,7 @@ export function UnitDetail({ unitId }: { unitId: string }) {
               </tr>
             </thead>
             <tbody>
-              {loading && (
-                <tr>
-                  <TableCell className="py-8 text-center text-ink-400">Loading…</TableCell>
-                </tr>
-              )}
+              {loading && <TableSkeleton rows={3} columns={6} />}
 
               {!loading && departments.length === 0 && (
                 <tr>

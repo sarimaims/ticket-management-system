@@ -24,6 +24,7 @@ import {
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { updateTicket, type TicketRecord } from "@/lib/tickets";
 import { errorMessage } from "@/lib/api";
@@ -503,7 +504,7 @@ export function TicketsWorkspace({
       )}
 
       <div className={cn("transition-[padding] duration-200", viewing && "xl:pr-[28rem]")}>
-      <StatTiles stats={stats} />
+      <StatTiles stats={stats} loading={loading} />
 
       <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
@@ -601,13 +602,7 @@ export function TicketsWorkspace({
               </tr>
             </thead>
             <tbody>
-              {loading && (
-                <tr>
-                  <td colSpan={columns} className="px-3 py-12 text-center text-sm text-ink-400">
-                    Loading…
-                  </td>
-                </tr>
-              )}
+              {loading && <TableSkeleton rows={6} columns={columns} />}
 
               {!loading && rows.length === 0 && (
                 <tr>
@@ -652,7 +647,9 @@ export function TicketsWorkspace({
         </div>
 
         <Pagination
-          summary={`Showing 1 to ${rows.length} of ${rows.length} tickets`}
+          summary={
+            loading ? "Loading tickets…" : `Showing 1 to ${rows.length} of ${rows.length} tickets`
+          }
           pages={1}
           current={1}
         />

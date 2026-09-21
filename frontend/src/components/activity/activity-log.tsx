@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { ListSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/ui/toast";
 import { clearActivity, listActivity, type ActivityEntry } from "@/lib/activity";
@@ -87,7 +88,10 @@ export function ActivityLog() {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setError(errorMessage(caught));
       } finally {
-        setLoading(false);
+        // An aborted request is not an answer. React mounts an effect twice in
+        // development, so the first fetch is always cancelled: clearing the flag
+        // here would declare "nothing found" while the real request is still out.
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [department],
@@ -164,7 +168,7 @@ export function ActivityLog() {
           )}
         </div>
 
-        {loading && <p className="px-5 py-12 text-center text-sm text-ink-400">Loading…</p>}
+        {loading && <ListSkeleton rows={5} />}
 
         {!loading && rows.length === 0 && (
           <div className="px-5 py-14 text-center">

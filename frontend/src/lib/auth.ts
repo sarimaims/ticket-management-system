@@ -44,6 +44,17 @@ export function login(email: string, password: string) {
   }).then((data) => data.user);
 }
 
+/**
+ * Your own password. The current one goes with it: the cookie proves the
+ * session, not the person sitting in front of it.
+ */
+export function changePassword(currentPassword: string, newPassword: string) {
+  return api<{ success: boolean }>("/auth/password", {
+    method: "POST",
+    body: { currentPassword, newPassword },
+  });
+}
+
 export function logout() {
   return api<{ success: boolean }>("/auth/logout", { method: "POST" });
 }

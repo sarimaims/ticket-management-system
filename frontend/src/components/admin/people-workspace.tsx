@@ -24,6 +24,7 @@ import { Field, Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -152,7 +153,10 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setError(errorMessage(caught));
       } finally {
-        setLoading(false);
+        // An aborted request is not an answer. React mounts an effect twice in
+        // development, so the first fetch is always cancelled: clearing the flag
+        // here would declare "nothing found" while the real request is still out.
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [scopeRole],
@@ -197,7 +201,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     <>
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} />
+      <StatTiles stats={stats} loading={loading} />
 
       <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-3 py-2.5">
@@ -413,19 +417,15 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                 </tr>
               )}
 
-              {loading && (
-                <tr>
-                  <td colSpan={8} className="px-5 py-14 text-center text-sm text-ink-400">
-                    Loading…
-                  </td>
-                </tr>
-              )}
+              {loading && <TableSkeleton rows={5} columns={8} />}
             </tbody>
           </table>
         </div>
 
         <Pagination
-          summary={`Showing 1 to ${rows.length} of ${rows.length} users`}
+          summary={
+            loading ? "Loading users…" : `Showing 1 to ${rows.length} of ${rows.length} users`
+          }
           pages={1}
           current={1}
         />
