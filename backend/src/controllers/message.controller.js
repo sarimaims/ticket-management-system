@@ -5,6 +5,17 @@ import Message from '../models/Message.js';
 import Ticket from '../models/Ticket.js';
 import { isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import { notifyNewMessage } from '../services/notify.js';
+import {
+  ATTACHMENT_KINDS,
+  buildKey,
+  createDownloadUrl,
+  createUploadUrl,
+  describeObject,
+  isConfigured as storageReady,
+  keyPrefixFor,
+  StorageUnavailable,
+  validateUpload,
+} from '../services/storage.js';
 
 /** Same ceiling as the model, checked here so the error is a sentence. */
 const MAX_BODY = 2000;
@@ -12,7 +23,9 @@ const MAX_BODY = 2000;
 /** How much of a message the bell and the toast quote. */
 const PREVIEW = 140;
 
-function present(message) {
+async function present(message) {
+  const attachment = message.attachment;
+
   return {
     id: String(message._id),
     ticket: String(message.ticket),
@@ -21,6 +34,17 @@ function present(message) {
     authorRole: message.authorRole,
     side: message.side,
     body: message.body,
+    attachment: attachment
+      ? {
+          kind: attachment.kind,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          durationMs: attachment.durationMs ?? null,
+          filename: attachment.filename || '',
+          // Signed on the way out; expires long before it could be shared.
+          url: await createDownloadUrl(attachment.key),
+        }
+      : null,
     createdAt: message.createdAt,
   };
 }
@@ -56,7 +80,10 @@ async function fingerprint(ticketId) {
   ]);
 
   const last = newest?.createdAt ? new Date(newest.createdAt).getTime() : 0;
-  return `W/"msg-${count}-${last}"`;
+  // Signed links live an hour, so the tag turns over every half hour: a chat
+  // left open overnight refetches rather than holding dead URLs.
+  const window = Math.floor(Date.now() / (30 * 60 * 1000));
+  return `W/"msg-${count}-${last}-${window}"`;
 }
 
 /** The whole conversation, oldest first - the order a chat is read in. */
@@ -75,7 +102,41 @@ export async function listMessages(req, res) {
 
   const messages = await Message.find({ ticket: ticket._id }).sort({ createdAt: 1 });
 
-  res.json({ success: true, messages: messages.map(present) });
+  res.json({ success: true, messages: await Promise.all(messages.map(present)) });
+}
+
+/**
+ * Hands back a URL the browser may PUT one file to.
+ *
+ * The key is built here rather than taken from the caller: a client that could
+ * name its own object could overwrite someone else's, or read one by guessing.
+ * The ticket id is in the path, so every object can be traced to its thread.
+ */
+export async function createUploadTarget(req, res) {
+  const ticket = await readableTicket(req);
+
+  if (!storageReady()) {
+    throw ApiError.unavailable(
+      'File storage is not configured yet, so photos and voice notes cannot be sent.',
+    );
+  }
+
+  const { kind, contentType, size, filename } = req.body ?? {};
+
+  const problem = validateUpload({ kind, contentType, size });
+  if (problem) throw ApiError.badRequest(problem);
+
+  const key = buildKey({ ticketId: String(ticket._id), kind, filename, contentType });
+
+  let target;
+  try {
+    target = await createUploadUrl({ key, contentType, size: Number(size) });
+  } catch (error) {
+    if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+    throw error;
+  }
+
+  res.json({ success: true, key, ...target });
 }
 
 /**
@@ -90,7 +151,11 @@ export async function createMessage(req, res) {
   const ticket = await readableTicket(req);
 
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
-  if (!body) throw ApiError.badRequest('Write something first.');
+  const attachment = await resolveAttachment(req, ticket);
+
+  // A photo or a voice note says something on its own; only a line with
+  // neither is nothing at all.
+  if (!body && !attachment) throw ApiError.badRequest('Write something first.');
   if (body.length > MAX_BODY) {
     throw ApiError.badRequest(`A message cannot be longer than ${MAX_BODY} characters.`);
   }
@@ -102,6 +167,7 @@ export async function createMessage(req, res) {
     authorRole: req.user.role,
     side: isRaiser(req.user, ticket) ? 'raiser' : 'department',
     body,
+    attachment,
   });
 
   // The ticket carries the thread's size and its last line, so a list can show
@@ -113,11 +179,61 @@ export async function createMessage(req, res) {
     { $inc: { messageCount: 1 }, $set: { lastMessageAt: message.createdAt } },
   );
 
+  const trimmed = body.length > PREVIEW ? `${body.slice(0, PREVIEW - 1)}…` : body;
   await notifyNewMessage({
     ticket,
     actor: req.user,
-    preview: body.length > PREVIEW ? `${body.slice(0, PREVIEW - 1)}…` : body,
+    // A bell that says "Photo" is more use than one that says nothing.
+    preview: trimmed || (attachment ? ATTACHMENT_KINDS[attachment.kind].label : ''),
   });
 
-  res.status(201).json({ success: true, message: present(message) });
+  res.status(201).json({ success: true, message: await present(message) });
+}
+
+/**
+ * Turns the key the browser uploaded to into something worth storing.
+ *
+ * The object is inspected in the bucket first: that proves the upload actually
+ * finished, and means the size and type recorded are S3's own rather than
+ * whatever the client claimed. The key is checked against this ticket's own
+ * prefix, so a message cannot be made to point at another thread's file.
+ */
+async function resolveAttachment(req, ticket) {
+  const input = req.body?.attachment;
+  if (!input) return null;
+
+  if (!storageReady()) {
+    throw ApiError.unavailable('File storage is not configured yet.');
+  }
+
+  const { kind, key, durationMs, filename } = input;
+  if (!ATTACHMENT_KINDS[kind]) throw ApiError.badRequest('Unknown attachment kind.');
+  if (typeof key !== 'string' || !key) throw ApiError.badRequest('The upload key is missing.');
+
+  // The key names its ticket, so one thread cannot be made to show another's file.
+  if (!key.startsWith(keyPrefixFor({ ticketId: String(ticket._id), kind }))) {
+    throw ApiError.badRequest('That upload does not belong to this ticket.');
+  }
+
+  let object;
+  try {
+    object = await describeObject(key);
+  } catch (error) {
+    // Storage being unusable and the file being absent are different problems
+    // and deserve different answers.
+    if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+    throw ApiError.badRequest('That upload did not finish. Try sending it again.');
+  }
+
+  const problem = validateUpload({ kind, contentType: object.contentType, size: object.size });
+  if (problem) throw ApiError.badRequest(problem);
+
+  return {
+    kind,
+    key,
+    mimeType: object.contentType,
+    size: object.size,
+    durationMs: Number.isFinite(Number(durationMs)) ? Math.round(Number(durationMs)) : null,
+    filename: typeof filename === 'string' ? filename.slice(0, 120) : '',
+  };
 }

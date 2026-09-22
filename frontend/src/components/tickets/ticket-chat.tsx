@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, MessagesSquare, SendHorizontal } from "lucide-react";
+import { AlertCircle, ImagePlus, Mic, MessagesSquare, SendHorizontal, Square } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -10,6 +10,13 @@ import { dayLabel } from "@/components/notifications/notification-shared";
 import { errorMessage } from "@/lib/api";
 import { initials } from "@/lib/auth";
 import { revalidateMessages, sendMessage, type MessageRecord } from "@/lib/messages";
+import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
+import {
+  DraftPreview,
+  MessageAttachmentView,
+  useVoiceRecorder,
+  type Draft,
+} from "@/components/tickets/chat-attachments";
 import type { TicketRecord } from "@/lib/tickets";
 import { cn, formatTime } from "@/lib/utils";
 
@@ -117,12 +124,21 @@ function Bubble({
 
         <div
           className={cn(
-            "rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed break-words whitespace-pre-wrap",
+            "rounded-2xl text-[13px] leading-relaxed break-words whitespace-pre-wrap",
+            // A photo fills its bubble; anything else keeps the padding.
+            message.attachment?.kind === "image" ? "overflow-hidden p-1" : "px-3.5 py-2",
             mine ? "rounded-tr-sm bg-brand-600 text-white" : "rounded-tl-sm bg-ink-100 text-ink-800",
             pending && "opacity-60",
           )}
         >
-          {message.body}
+          {message.attachment && (
+            <MessageAttachmentView attachment={message.attachment} mine={Boolean(mine)} />
+          )}
+          {message.body && (
+            <span className={cn("block", message.attachment && "px-2.5 pt-2 pb-1")}>
+              {message.body}
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -149,7 +165,7 @@ export function TicketChat({
   /** How many messages the server has. Must be a stable function. */
   onCount?: (count: number) => void;
 }) {
-  const { session } = useAuth();
+  const { session, features } = useAuth();
   const { items, markOneRead } = useNotifications();
 
   const [messages, setMessages] = useState<MessageRecord[]>([]);
@@ -258,6 +274,49 @@ export function TicketChat({
     onCount?.(messages.length);
   }, [messages.length, onCount]);
 
+  // What is attached to the line being written, and how far it has uploaded.
+  const [draftFile, setDraftFile] = useState<Draft | null>(null);
+  const [percent, setPercent] = useState<number | null>(null);
+  const filePicker = useRef<HTMLInputElement>(null);
+  const recorder = useVoiceRecorder();
+
+  const attachmentsAllowed = features.attachments;
+
+  const dropDraftFile = useCallback(() => {
+    setDraftFile((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl);
+      return null;
+    });
+    setPercent(null);
+  }, []);
+
+  const chooseImage = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > ATTACHMENT_LIMITS.image.maxBytes) {
+      setError(`That photo is ${formatBytes(file.size)}; the limit is 10 MB.`);
+      return;
+    }
+    setError("");
+    dropDraftFile();
+    setDraftFile({
+      kind: "image",
+      file,
+      filename: file.name,
+      previewUrl: URL.createObjectURL(file),
+    });
+  };
+
+  const finishRecording = async () => {
+    const recorded = await recorder.stop();
+    if (!recorded) {
+      setError("That was too short to send.");
+      return;
+    }
+    setError("");
+    dropDraftFile();
+    setDraftFile(recorded);
+  };
+
   const thread = useMemo(() => [...messages, ...pending], [messages, pending]);
   const groups = useMemo(() => groupByDay(thread), [thread]);
 
@@ -280,7 +339,8 @@ export function TicketChat({
 
   const send = async () => {
     const body = draft.trim();
-    if (!body || sending) return;
+    const file = draftFile;
+    if ((!body && !file) || sending) return;
 
     // On screen immediately, greyed until the server has it.
     nextPendingId.current += 1;
@@ -291,6 +351,18 @@ export function TicketChat({
       authorRole: session?.role ?? "user",
       side: ticket.raisedBy.id === meId ? "raiser" : "department",
       body,
+      // The local copy is shown while it uploads, so the thread does not jump
+      // when the real one arrives.
+      attachment: file
+        ? {
+            kind: file.kind,
+            mimeType: file.file.type,
+            size: file.file.size,
+            durationMs: file.durationMs ?? null,
+            filename: file.filename,
+            url: file.previewUrl,
+          }
+        : null,
       createdAt: new Date().toISOString(),
     };
 
@@ -300,10 +372,28 @@ export function TicketChat({
     following.current = true;
 
     try {
-      const saved = await sendMessage(ticketId, body);
+      // The file goes straight to storage; only its key passes through the API.
+      let stored: { kind: Draft["kind"]; key: string; durationMs?: number; filename?: string } | undefined;
+      if (file) {
+        setPercent(0);
+        const key = await uploadAttachment(ticketId, file.file, {
+          kind: file.kind,
+          filename: file.filename,
+          onProgress: setPercent,
+        });
+        stored = {
+          kind: file.kind,
+          key,
+          durationMs: file.durationMs,
+          filename: file.filename,
+        };
+      }
+
+      const saved = await sendMessage(ticketId, body, stored);
       if (!alive.current) return;
       setMessages((current) => merge(current, [saved]));
       setPending((current) => current.filter((item) => item.id !== placeholder.id));
+      dropDraftFile();
     } catch (caught) {
       if (!alive.current) return;
       // Nothing was said, so nothing is left on screen pretending it was: the
@@ -312,7 +402,10 @@ export function TicketChat({
       setDraft((current) => current || body);
       setError(errorMessage(caught));
     } finally {
-      if (alive.current) setSending(false);
+      if (alive.current) {
+        setSending(false);
+        setPercent(null);
+      }
     }
   };
 
@@ -356,13 +449,13 @@ export function TicketChat({
         ))}
       </div>
 
-      {error && (
+      {(error || recorder.error) && (
         <p
           role="alert"
           className="flex items-start gap-2 border-t border-line bg-brand-50 px-5 py-2.5 text-xs font-medium text-brand-700"
         >
           <AlertCircle className="mt-px size-4 shrink-0" />
-          {error}
+          {error || recorder.error}
         </p>
       )}
 
@@ -373,7 +466,84 @@ export function TicketChat({
           void send();
         }}
       >
+        {draftFile && (
+          <DraftPreview draft={draftFile} percent={percent} onRemove={dropDraftFile} />
+        )}
+
+        {recorder.recording && (
+          <div className="mb-2 flex items-center gap-3 rounded-field border border-brand-200 bg-brand-50 px-3 py-2">
+            <span className="size-2.5 animate-pulse rounded-full bg-brand-600" />
+            <span className="flex-1 text-[13px] font-semibold text-brand-700">
+              Recording {formatDuration(recorder.elapsed)}
+            </span>
+            <button
+              type="button"
+              onClick={() => recorder.cancel()}
+              className="text-[12px] font-semibold text-ink-500 hover:text-ink-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void finishRecording()}
+              className="flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1.5 text-[12px] font-bold text-white hover:bg-brand-700"
+            >
+              <Square className="size-3 fill-current" />
+              Stop
+            </button>
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
+          {/* Photo and voice note, side by side with the box they belong to. */}
+          <input
+            ref={filePicker}
+            type="file"
+            accept={ATTACHMENT_LIMITS.image.accept}
+            className="hidden"
+            onChange={(event) => {
+              chooseImage(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => filePicker.current?.click()}
+            disabled={!attachmentsAllowed || sending || recorder.recording}
+            title={attachmentsAllowed ? "Attach a photo" : "File storage is not configured yet"}
+            aria-label="Attach a photo"
+            className={cn(
+              "grid size-11 shrink-0 place-items-center rounded-lg border border-line-strong text-ink-500 transition-colors",
+              "hover:bg-ink-50 hover:text-ink-700 disabled:pointer-events-none disabled:opacity-40",
+            )}
+          >
+            <ImagePlus className="size-4.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => (recorder.recording ? void finishRecording() : void recorder.start())}
+            disabled={!attachmentsAllowed || !recorder.supported || sending}
+            title={
+              !attachmentsAllowed
+                ? "File storage is not configured yet"
+                : recorder.supported
+                  ? "Record a voice note"
+                  : "This browser cannot record audio"
+            }
+            aria-label={recorder.recording ? "Stop recording" : "Record a voice note"}
+            className={cn(
+              "grid size-11 shrink-0 place-items-center rounded-lg border transition-colors",
+              recorder.recording
+                ? "border-brand-300 bg-brand-50 text-brand-600"
+                : "border-line-strong text-ink-500 hover:bg-ink-50 hover:text-ink-700",
+              "disabled:pointer-events-none disabled:opacity-40",
+            )}
+          >
+            <Mic className="size-4.5" />
+          </button>
+
           <textarea
             value={draft}
             maxLength={MAX_BODY}
@@ -397,7 +567,7 @@ export function TicketChat({
           />
           <button
             type="submit"
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && !draftFile) || sending || recorder.recording}
             aria-label="Send message"
             className={cn(
               "grid size-11 shrink-0 place-items-center rounded-lg bg-brand-600 text-white transition-colors",

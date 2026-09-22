@@ -43,9 +43,30 @@ const messageSchema = new mongoose.Schema(
     },
     body: {
       type: String,
-      required: [true, 'A message cannot be empty'],
+      // A photo or a voice note is a message on its own; the controller
+      // refuses only a line that is empty of both.
       trim: true,
       maxlength: 2000,
+      default: '',
+    },
+    /**
+     * A photo or a voice note living in S3. Only the key is stored: the URL is
+     * signed fresh on every read, so the bucket can stay private and a link
+     * copied out of the page stops working before long.
+     */
+    attachment: {
+      type: {
+        kind: { type: String, enum: ['image', 'voice'], required: true },
+        key: { type: String, required: true },
+        mimeType: { type: String, required: true },
+        size: { type: Number, required: true },
+        /** Voice notes only, in milliseconds. */
+        durationMs: { type: Number, default: null },
+        /** What the sender called it, kept for the download filename. */
+        filename: { type: String, default: '' },
+      },
+      default: null,
+      _id: false,
     },
   },
   { timestamps: { createdAt: true, updatedAt: false } },

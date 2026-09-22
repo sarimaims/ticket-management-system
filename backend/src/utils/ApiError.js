@@ -24,4 +24,9 @@ export default class ApiError extends Error {
   static conflict(message) {
     return new ApiError(409, message);
   }
+
+  /** Configured away, not broken: the caller can try again once it is set up. */
+  static unavailable(message = 'That part of the service is not available.') {
+    return new ApiError(503, message);
+  }
 }

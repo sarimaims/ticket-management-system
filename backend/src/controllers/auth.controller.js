@@ -1,6 +1,7 @@
 import ApiError from '../utils/ApiError.js';
 import User from '../models/User.js';
 import { clearAuthCookie, setAuthCookie, signToken } from '../utils/token.js';
+import { isConfigured as storageReady } from '../services/storage.js';
 
 /** Shape sent to the client. Never includes the password hash. */
 export function presentUser(user) {
@@ -65,7 +66,11 @@ export async function login(req, res) {
   await user.save({ validateBeforeSave: false });
 
   setAuthCookie(res, signToken(user));
-  res.json({ success: true, user: presentUser(await loadWithDepartments(user._id)) });
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(user._id)),
+    features: { attachments: storageReady() },
+  });
 }
 
 export async function logout(req, res) {
@@ -74,7 +79,13 @@ export async function logout(req, res) {
 }
 
 export async function me(req, res) {
-  res.json({ success: true, user: presentUser(await loadWithDepartments(req.user._id)) });
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(req.user._id)),
+    // What this deployment can actually do, so the app does not offer a
+    // button that is bound to fail.
+    features: { attachments: storageReady() },
+  });
 }
 
 /** The shortest password this workspace accepts, as everywhere else. */
