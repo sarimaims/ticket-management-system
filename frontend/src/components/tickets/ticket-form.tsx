@@ -452,7 +452,7 @@ export function TicketForm() {
                 <Field label="Unit" htmlFor="from-unit">
                   <Select
                     id="from-unit"
-                    className="h-11"
+                    className="h-8"
                     icon={<Building className="text-ink-500" />}
                     value={fromUnit}
                     onChange={(event) => chooseFromUnit(event.target.value)}
@@ -506,7 +506,7 @@ export function TicketForm() {
             <Field label="Unit" htmlFor="target-unit">
               <Select
                 id="target-unit"
-                className="h-11"
+                className="h-8"
                 icon={<Building className="text-ink-500" />}
                 value={targetUnit}
                 onChange={(event) => chooseTargetUnit(event.target.value)}
@@ -589,7 +589,7 @@ export function TicketForm() {
                         <Select
                           id={`person-${id}`}
                           className={cn(
-                            "h-11",
+                            "h-8",
                             missing.includes("person") &&
                               !people[id] &&
                               "border-brand-400 bg-brand-50/40",

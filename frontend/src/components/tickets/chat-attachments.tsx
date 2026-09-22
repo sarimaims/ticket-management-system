@@ -78,20 +78,20 @@ function VoiceAttachment({ attachment, mine }: { attachment: MessageAttachment; 
         aria-label={playing ? "Pause voice note" : "Play voice note"}
         className={cn(
           "grid size-9 shrink-0 place-items-center rounded-full transition-colors",
-          mine ? "bg-white/20 text-white hover:bg-white/30" : "bg-brand-600 text-white hover:bg-brand-700",
+          "bg-chat-accent text-white hover:bg-chat-accent-strong",
         )}
       >
         {playing ? <Pause className="size-4" /> : <Play className="size-4 translate-x-px" />}
       </button>
 
       <div className="min-w-0 flex-1">
-        <div className={cn("h-1.5 w-full rounded-full", mine ? "bg-white/25" : "bg-ink-300/60")}>
+        <div className={cn("h-1.5 w-full rounded-full", mine ? "bg-chat-accent/25" : "bg-ink-300/60")}>
           <div
-            className={cn("h-full rounded-full transition-[width]", mine ? "bg-white" : "bg-brand-600")}
+            className="h-full rounded-full bg-chat-accent transition-[width]"
             style={{ width: `${progress}%` }}
           />
         </div>
-        <p className={cn("mt-1 text-[11px] tabular-nums", mine ? "text-white/80" : "text-ink-500")}>
+        <p className={cn("mt-1 text-[11px] tabular-nums", mine ? "text-chat-mine-meta" : "text-ink-500")}>
           {formatDuration(elapsed)} / {total ? formatDuration(total) : formatBytes(attachment.size)}
         </p>
       </div>
@@ -154,7 +154,7 @@ export function DraftPreview({
         // eslint-disable-next-line @next/next/no-img-element -- a local blob URL
         <img src={draft.previewUrl} alt="" className="size-12 shrink-0 rounded-lg object-cover" />
       ) : (
-        <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600">
+        <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-chat-accent-soft text-chat-accent-strong">
           <Mic className="size-5" />
         </span>
       )}
@@ -171,7 +171,7 @@ export function DraftPreview({
         {percent !== null && (
           <div className="mt-1.5 h-1 w-full rounded-full bg-ink-200">
             <div
-              className="h-full rounded-full bg-brand-600 transition-[width]"
+              className="h-full rounded-full bg-chat-accent transition-[width]"
               style={{ width: `${percent}%` }}
             />
           </div>

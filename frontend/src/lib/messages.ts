@@ -2,6 +2,9 @@ import { api, apiRevalidate } from "./api";
 import type { Role } from "./auth";
 import type { AttachmentKind } from "./uploads";
 
+/** The ceiling the API enforces on one message. */
+export const MAX_BODY = 2000;
+
 /**
  * A photo or a voice note hanging off a message. `url` is signed by the API on
  * every read and expires within the hour, so it is never stored or shared.
@@ -17,6 +20,20 @@ export type MessageAttachment = {
 };
 
 /**
+ * Enough of the line being answered to show above a reply. It is resolved on
+ * every read rather than copied at send time, so a quote follows the original
+ * when its author corrects or withdraws it.
+ */
+export type MessageQuote = {
+  id: string;
+  author: { id: string; name: string };
+  deleted: boolean;
+  /** Empty for a withdrawn original, unless you are an admin. */
+  body: string;
+  attachmentKind: AttachmentKind | null;
+};
+
+/**
  * One line of a ticket's conversation. Name and standing are the author's at
  * the time of writing, so an old message still reads correctly after a rename
  * or a change of role.
@@ -25,6 +42,11 @@ export type MessageRecord = {
   id: string;
   ticket: string;
   author: { id: string; name: string };
+  /** Where the author sits today - named in the menu on their message. */
+  authorDepartments: { id: string; name: string; role?: string }[];
+  authorUnits: { id: string; name: string }[];
+  /** The line this one answers, quoted. */
+  replyTo: MessageQuote | null;
   authorRole: Role;
   /** Which end of the ticket it was written from. */
   side: "raiser" | "department";
@@ -43,6 +65,24 @@ export type MessageRecord = {
   adminOnly: boolean;
   createdAt: string;
 };
+
+/**
+ * When one line was said, and who has had the thread open since. "Seen" is
+ * what a thread read top to bottom can honestly claim: the conversation was
+ * open after this was written.
+ */
+export type MessageInfo = {
+  sentAt: string;
+  editedAt: string | null;
+  deletedAt: string | null;
+  seenBy: { id: string; name: string; at: string }[];
+};
+
+export function messageInfo(ticketId: string, messageId: string, signal?: AbortSignal) {
+  return api<{ info: MessageInfo }>(`/tickets/${ticketId}/messages/${messageId}/info`, {
+    signal,
+  }).then((data) => data.info);
+}
 
 /** The whole thread, oldest first - the order a chat is read in. */
 export function listMessages(ticketId: string, signal?: AbortSignal) {
@@ -90,9 +130,11 @@ export function sendMessage(
   ticketId: string,
   body: string,
   attachment?: { kind: AttachmentKind; key: string; durationMs?: number; filename?: string },
+  /** The message being answered, if this is a reply. */
+  replyTo?: string | null,
 ) {
   return api<{ message: MessageRecord }>(`/tickets/${ticketId}/messages`, {
     method: "POST",
-    body: { body, ...(attachment ? { attachment } : {}) },
+    body: { body, ...(attachment ? { attachment } : {}), ...(replyTo ? { replyTo } : {}) },
   }).then((data) => data.message);
 }

@@ -343,7 +343,7 @@ function CreateDepartmentModal({
         <Field label="Department name" required htmlFor="unit-department-name">
           <Input
             id="unit-department-name"
-            className="h-11"
+            className="h-8"
             icon={<Building2 className="text-ink-500" />}
             placeholder="e.g. Human Resources"
             value={name}

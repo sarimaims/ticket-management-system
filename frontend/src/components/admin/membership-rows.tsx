@@ -103,7 +103,7 @@ export function MembershipRows({
       {rows.map((row) => (
         <div key={row.key} className="grid gap-2 sm:grid-cols-[1fr_1fr_7rem_auto]">
           <Select
-            className="h-10 text-[13px]"
+            className="h-8 text-[13px]"
             icon={<Building className="text-ink-500" />}
             value={row.unit}
             aria-label="Unit"
@@ -126,7 +126,7 @@ export function MembershipRows({
           </Select>
 
           <Select
-            className={cn("h-10 text-[13px]", !row.department && "text-ink-400")}
+            className={cn("h-8 text-[13px]", !row.department && "text-ink-400")}
             value={row.department}
             aria-label="Department"
             onChange={(event) => update(row.key, { department: event.target.value })}
@@ -142,7 +142,7 @@ export function MembershipRows({
           </Select>
 
           <Select
-            className="h-10 text-[13px]"
+            className="h-8 text-[13px]"
             value={row.role}
             aria-label="Account type"
             onChange={(event) => update(row.key, { role: event.target.value as DepartmentRole })}

@@ -3,49 +3,38 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  Check,
-  EyeOff,
-  History,
-  ImagePlus,
+  CornerUpLeft,
   Mic,
   MessagesSquare,
-  Pencil,
+  Paperclip,
   SendHorizontal,
   Square,
-  Trash2,
   X,
 } from "lucide-react";
 
-import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { dayLabel } from "@/components/notifications/notification-shared";
 import { errorMessage } from "@/lib/api";
-import { initials, isAdmin } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
 import {
   deleteMessage,
   editMessage,
   revalidateMessages,
   sendMessage,
+  MAX_BODY,
   type MessageRecord,
 } from "@/lib/messages";
+import { ChatMessage } from "@/components/tickets/chat-message";
 import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
-import {
-  DraftPreview,
-  MessageAttachmentView,
-  useVoiceRecorder,
-  type Draft,
-} from "@/components/tickets/chat-attachments";
+import { DraftPreview, useVoiceRecorder, type Draft } from "@/components/tickets/chat-attachments";
 import type { TicketRecord } from "@/lib/tickets";
-import { cn, formatTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 /** How often an open thread asks whether anything has been said. */
 const REFRESH_MS = 5000;
-
-/** The ceiling the API enforces, so the box stops before the server refuses. */
-const MAX_BODY = 2000;
 
 /** With fewer than this many characters left, the counter appears. */
 const COUNTER_FROM = 200;
@@ -95,213 +84,6 @@ function groupByDay(messages: MessageRecord[]) {
   }
 
   return groups;
-}
-
-/** Which end of the ticket someone wrote from, named rather than colour-coded. */
-function SideTag({
-  side,
-  departmentName,
-}: {
-  side: MessageRecord["side"];
-  departmentName: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
-        side === "raiser" ? "bg-brand-50 text-brand-700" : "bg-ink-100 text-ink-600",
-      )}
-    >
-      {side === "raiser" ? "Requester" : departmentName}
-    </span>
-  );
-}
-
-function Bubble({
-  message,
-  mine,
-  pending,
-  departmentName,
-  manager,
-  editing,
-  editDraft,
-  onEditDraft,
-  onStartEdit,
-  onCancelEdit,
-  onSaveEdit,
-  onDelete,
-  busy,
-}: {
-  message: MessageRecord;
-  mine: boolean;
-  /** Written here but not yet acknowledged by the server. */
-  pending?: boolean;
-  departmentName: string;
-  /** Admins are shown what a withdrawn line said, and what an edit replaced. */
-  manager: boolean;
-  editing: boolean;
-  editDraft: string;
-  onEditDraft: (value: string) => void;
-  onStartEdit: () => void;
-  onCancelEdit: () => void;
-  onSaveEdit: () => void;
-  onDelete: () => void;
-  busy: boolean;
-}) {
-  const [showHistory, setShowHistory] = useState(false);
-
-  // Nothing to act on while it is still in flight, or once it is withdrawn.
-  const actionable = mine && !pending && !message.deleted;
-  return (
-    <div className={cn("group flex items-start gap-2", mine && "flex-row-reverse")}>
-      {/* Brand for the side that asked, slate for the side answering - so a
-          long thread still reads as two voices at a glance. */}
-      <Avatar
-        initials={initials(message.author.name)}
-        tone={message.side === "raiser" ? "head" : "team"}
-        className="size-7 text-[10px]"
-      />
-
-      <div className={cn("flex min-w-0 max-w-[85%] flex-col", mine && "items-end")}>
-        <p
-          className={cn(
-            "mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400",
-            mine && "flex-row-reverse",
-          )}
-        >
-          <span className="font-semibold text-ink-700">{mine ? "You" : message.author.name}</span>
-          {!mine && <SideTag side={message.side} departmentName={departmentName} />}
-          <span>{pending ? "Sending..." : formatTime(message.createdAt)}</span>
-          {message.editedAt && !message.deleted && <span className="italic">edited</span>}
-
-          {/* The two things only an admin is shown, each said plainly. */}
-          {manager && message.adminOnly && (
-            <span className="inline-flex items-center gap-1 rounded-md bg-status-waiting-bg px-1.5 py-0.5 font-semibold text-status-waiting-fg">
-              <EyeOff className="size-3" />
-              Deleted · admins only
-            </span>
-          )}
-          {manager && message.revisions.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowHistory((current) => !current)}
-              className="inline-flex items-center gap-1 rounded-md bg-ink-100 px-1.5 py-0.5 font-semibold text-ink-600 transition-colors hover:bg-ink-200"
-            >
-              <History className="size-3" />
-              {showHistory ? "Hide" : `${message.revisions.length} earlier`}
-            </button>
-          )}
-        </p>
-
-        {editing ? (
-          <div className="w-full min-w-[15rem] rounded-2xl border border-brand-200 bg-surface p-2">
-            <textarea
-              value={editDraft}
-              maxLength={MAX_BODY}
-              autoFocus
-              onChange={(event) => onEditDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  onSaveEdit();
-                }
-                if (event.key === "Escape") onCancelEdit();
-              }}
-              className={cn(
-                "max-h-40 min-h-16 w-full resize-none rounded-lg border border-line-strong bg-surface px-2.5 py-2",
-                "text-[13px] leading-relaxed text-ink-900 focus:border-brand-400 focus:outline-none",
-              )}
-            />
-            <div className="mt-1.5 flex items-center justify-end gap-1.5">
-              <button
-                type="button"
-                onClick={onCancelEdit}
-                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-semibold text-ink-500 hover:bg-ink-100"
-              >
-                <X className="size-3.5" />
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={onSaveEdit}
-                disabled={busy}
-                className="flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-[12px] font-bold text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                <Check className="size-3.5" />
-                Save
-              </button>
-            </div>
-          </div>
-        ) : message.deleted && !manager ? (
-          // The thread is told a line existed and is gone, not what it said.
-          <div className="rounded-2xl border border-dashed border-line-strong px-3.5 py-2 text-[13px] text-ink-400 italic">
-            This message was deleted
-          </div>
-        ) : (
-        <div
-          className={cn(
-            "rounded-2xl text-[13px] leading-relaxed break-words whitespace-pre-wrap",
-            // A photo fills its bubble; anything else keeps the padding.
-            message.attachment?.kind === "image" ? "overflow-hidden p-1" : "px-3.5 py-2",
-            mine ? "rounded-tr-sm bg-brand-600 text-white" : "rounded-tl-sm bg-ink-100 text-ink-800",
-            pending && "opacity-60",
-            // A withdrawn line an admin can still read is set apart, so it is
-            // never mistaken for something the thread can see.
-            message.deleted && "opacity-70 ring-1 ring-status-waiting-fg/40 ring-inset",
-          )}
-        >
-          {message.attachment && (
-            <MessageAttachmentView attachment={message.attachment} mine={Boolean(mine)} />
-          )}
-          {message.body && (
-            <span className={cn("block", message.attachment && "px-2.5 pt-2 pb-1")}>
-              {message.body}
-            </span>
-          )}
-        </div>
-        )}
-
-        {/* Earlier versions, for an admin who asked to see them. */}
-        {manager && showHistory && message.revisions.length > 0 && (
-          <ul className="mt-1.5 space-y-1">
-            {message.revisions.map((revision, index) => (
-              <li
-                key={`${revision.replacedAt}-${index}`}
-                className="rounded-lg border border-dashed border-line-strong px-2.5 py-1.5 text-[12px] text-ink-500"
-              >
-                <span className="mr-1.5 text-[10px] font-bold tracking-wide text-ink-400 uppercase">
-                  before {formatTime(revision.replacedAt)}
-                </span>
-                {revision.body || "(empty)"}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {/* Your own line, while it is yours to change. */}
-        {actionable && !editing && (
-          <p className="mt-1 flex gap-2 text-[11px] text-ink-400 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-            <button
-              type="button"
-              onClick={onStartEdit}
-              className="inline-flex items-center gap-1 font-semibold hover:text-ink-700"
-            >
-              <Pencil className="size-3" />
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              className="inline-flex items-center gap-1 font-semibold hover:text-brand-600"
-            >
-              <Trash2 className="size-3" />
-              Delete
-            </button>
-          </p>
-        )}
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -433,6 +215,14 @@ export function TicketChat({
     onCount?.(messages.length);
   }, [messages.length, onCount]);
 
+  /**
+   * The line being answered, and the one just jumped to from a quote. Both are
+   * only ever about what is on screen, so neither is persisted.
+   */
+  const [replyTo, setReplyTo] = useState<MessageRecord | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+
   // The line being corrected, if any, and the one waiting to be withdrawn.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -544,6 +334,7 @@ export function TicketChat({
   const send = async () => {
     const body = draft.trim();
     const file = draftFile;
+    const answering = replyTo;
     if ((!body && !file) || sending) return;
 
     // On screen immediately, greyed until the server has it.
@@ -552,6 +343,19 @@ export function TicketChat({
       id: `${PENDING}${nextPendingId.current}`,
       ticket: ticketId,
       author: { id: meId ?? "", name: session?.name ?? "You" },
+      authorDepartments: [],
+      authorUnits: [],
+      // Quoted from what is already on screen, so the reply reads correctly
+      // while it is still in flight.
+      replyTo: answering
+        ? {
+            id: answering.id,
+            author: answering.author,
+            deleted: answering.deleted,
+            body: answering.body.slice(0, 160),
+            attachmentKind: answering.attachment?.kind ?? null,
+          }
+        : null,
       authorRole: session?.role ?? "user",
       side: ticket.raisedBy.id === meId ? "raiser" : "department",
       body,
@@ -578,6 +382,7 @@ export function TicketChat({
 
     setPending((current) => [...current, placeholder]);
     setDraft("");
+    setReplyTo(null);
     setSending(true);
     following.current = true;
 
@@ -599,7 +404,7 @@ export function TicketChat({
         };
       }
 
-      const saved = await sendMessage(ticketId, body, stored);
+      const saved = await sendMessage(ticketId, body, stored, answering?.id ?? null);
       if (!alive.current) return;
       setMessages((current) => merge(current, [saved]));
       setPending((current) => current.filter((item) => item.id !== placeholder.id));
@@ -610,6 +415,7 @@ export function TicketChat({
       // text goes back in the box to be sent again.
       setPending((current) => current.filter((item) => item.id !== placeholder.id));
       setDraft((current) => current || body);
+      setReplyTo((current) => current ?? answering);
       setError(errorMessage(caught));
     } finally {
       if (alive.current) {
@@ -619,11 +425,35 @@ export function TicketChat({
     }
   };
 
+  const startReply = (message: MessageRecord) => {
+    setReplyTo(message);
+    composer.current?.focus();
+  };
+
+  /**
+   * Walks back to a quoted line and marks it, briefly. Following the
+   * conversation is switched off on the way: being sent back up the thread and
+   * then yanked to the bottom by the next message is worse than not jumping.
+   */
+  const jumpTo = (id: string) => {
+    const node = document.getElementById(`msg-${id}`);
+    if (!node) return;
+
+    node.scrollIntoView({ block: "center", behavior: "smooth" });
+    following.current = false;
+    setHighlight(id);
+    window.setTimeout(() => setHighlight((current) => (current === id ? null : current)), 1800);
+  };
+
   const remaining = MAX_BODY - draft.length;
+
+  // With something written or attached, the round button sends; until then it
+  // records, the way a messaging app does it.
+  const canSend = Boolean(draft.trim() || draftFile) && !recorder.recording;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+      <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
         {loading && thread.length === 0 && (
           <p className="py-8 text-center text-sm text-ink-400">Loading the conversation...</p>
         )}
@@ -646,9 +476,11 @@ export function TicketChat({
                 {group.label}
               </span>
             </p>
-            {group.items.map((message) => (
-              <Bubble
+            {group.items.map((message, index) => (
+              <ChatMessage
                 key={message.id}
+                // One name per run of messages, the way a chat app does it.
+                showHeader={group.items[index - 1]?.author.id !== message.author.id}
                 message={message}
                 mine={message.author.id === meId}
                 pending={message.id.startsWith(PENDING)}
@@ -657,6 +489,7 @@ export function TicketChat({
                 editing={editingId === message.id}
                 editDraft={editDraft}
                 busy={busy}
+                highlighted={highlight === message.id}
                 onEditDraft={setEditDraft}
                 onStartEdit={() => {
                   setEditingId(message.id);
@@ -665,6 +498,8 @@ export function TicketChat({
                 onCancelEdit={() => setEditingId(null)}
                 onSaveEdit={() => void saveEdit(message)}
                 onDelete={() => setPendingDelete(message)}
+                onReply={() => startReply(message)}
+                onJump={jumpTo}
               />
             ))}
           </div>
@@ -674,7 +509,7 @@ export function TicketChat({
       {(error || recorder.error) && (
         <p
           role="alert"
-          className="flex items-start gap-2 border-t border-line bg-brand-50 px-5 py-2.5 text-xs font-medium text-brand-700"
+          className="flex items-start gap-2 border-t border-line bg-brand-50 px-3 py-2 text-[11px] font-medium text-brand-700"
         >
           <AlertCircle className="mt-px size-4 shrink-0" />
           {error || recorder.error}
@@ -682,20 +517,48 @@ export function TicketChat({
       )}
 
       <form
-        className="border-t border-line px-4 py-3"
+        className="border-t border-line px-3 py-2"
         onSubmit={(event) => {
           event.preventDefault();
           void send();
         }}
       >
+        {/* What is being answered, above the box, the way a chat app shows it. */}
+        {replyTo && (
+          <div className="mb-1.5 flex items-start gap-1.5 rounded-md border-l-[3px] border-chat-accent bg-ink-50 py-1 pr-1 pl-2">
+            <CornerUpLeft className="mt-0.5 size-3.5 shrink-0 text-ink-400" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[11px] font-bold text-chat-accent-strong">
+                Replying to {replyTo.author.id === meId ? "yourself" : replyTo.author.name}
+              </span>
+              <span className="block truncate text-[11px] text-ink-500 italic">
+                {replyTo.body ||
+                  (replyTo.attachment?.kind === "image"
+                    ? "Photo"
+                    : replyTo.attachment
+                      ? "Voice note"
+                      : "Message")}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setReplyTo(null)}
+              aria-label="Cancel reply"
+              className="grid size-5 shrink-0 place-items-center rounded text-ink-400 hover:bg-ink-200 hover:text-ink-700"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         {draftFile && (
           <DraftPreview draft={draftFile} percent={percent} onRemove={dropDraftFile} />
         )}
 
         {recorder.recording && (
-          <div className="mb-2 flex items-center gap-3 rounded-field border border-brand-200 bg-brand-50 px-3 py-2">
-            <span className="size-2.5 animate-pulse rounded-full bg-brand-600" />
-            <span className="flex-1 text-[13px] font-semibold text-brand-700">
+          <div className="mb-2 flex items-center gap-3 rounded-field border border-chat-accent-line bg-chat-accent-soft px-3 py-2">
+            <span className="size-2.5 animate-pulse rounded-full bg-chat-accent" />
+            <span className="flex-1 text-[13px] font-semibold text-chat-accent-strong">
               Recording {formatDuration(recorder.elapsed)}
             </span>
             <button
@@ -708,7 +571,7 @@ export function TicketChat({
             <button
               type="button"
               onClick={() => void finishRecording()}
-              className="flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1.5 text-[12px] font-bold text-white hover:bg-brand-700"
+              className="flex items-center gap-1.5 rounded-lg bg-chat-accent px-2.5 py-1.5 text-[12px] font-bold text-white hover:bg-chat-accent-strong"
             >
               <Square className="size-3 fill-current" />
               Stop
@@ -717,7 +580,6 @@ export function TicketChat({
         )}
 
         <div className="flex items-end gap-2">
-          {/* Photo and voice note, side by side with the box they belong to. */}
           <input
             ref={filePicker}
             type="file"
@@ -729,81 +591,102 @@ export function TicketChat({
             }}
           />
 
-          <button
-            type="button"
-            onClick={() => filePicker.current?.click()}
-            disabled={!attachmentsAllowed || sending || recorder.recording}
-            title={attachmentsAllowed ? "Attach a photo" : "File storage is not configured yet"}
-            aria-label="Attach a photo"
+          {/* One pill holding the box and what can be added to it. */}
+          <div
             className={cn(
-              "grid size-11 shrink-0 place-items-center rounded-lg border border-line-strong text-ink-500 transition-colors",
-              "hover:bg-ink-50 hover:text-ink-700 disabled:pointer-events-none disabled:opacity-40",
+              "flex min-w-0 flex-1 items-end gap-1 rounded-2xl border border-line-strong bg-surface px-1.5 py-1",
+              "transition-colors focus-within:border-chat-accent focus-within:ring-2 focus-within:ring-chat-accent/15",
             )}
           >
-            <ImagePlus className="size-4.5" />
-          </button>
+            <textarea
+              ref={composer}
+              value={draft}
+              maxLength={MAX_BODY}
+              rows={1}
+              placeholder="Type a message"
+              aria-label={`Message on ticket ${ticket.number}`}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                // Enter sends, Shift+Enter breaks the line: what everyone
+                // already expects of a message box.
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              className={cn(
+                "max-h-28 min-h-7 w-full flex-1 resize-none border-0 bg-transparent px-1.5 py-1",
+                "text-[13px] leading-snug text-ink-900 placeholder:truncate placeholder:text-ink-400",
+                "focus:ring-0 focus:outline-none",
+              )}
+            />
 
+            {/* Only near the ceiling, where it starts to matter. */}
+            {remaining <= COUNTER_FROM && (
+              <span className="mb-1.5 shrink-0 text-[10px] font-medium text-ink-400">
+                {remaining}
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => filePicker.current?.click()}
+              disabled={!attachmentsAllowed || sending || recorder.recording}
+              title={attachmentsAllowed ? "Attach a photo" : "File storage is not configured yet"}
+              aria-label="Attach a photo"
+              className={cn(
+                "grid size-7 shrink-0 place-items-center rounded-full text-ink-500 transition-colors",
+                "hover:bg-ink-100 hover:text-ink-700 disabled:pointer-events-none disabled:opacity-40",
+              )}
+            >
+              <Paperclip className="size-4" />
+            </button>
+          </div>
+
+          {/* The round one: a microphone until there is something to send, and
+              the send key the moment there is - so the common action is always
+              under the same thumb. */}
           <button
-            type="button"
-            onClick={() => (recorder.recording ? void finishRecording() : void recorder.start())}
-            disabled={!attachmentsAllowed || !recorder.supported || sending}
-            title={
-              !attachmentsAllowed
-                ? "File storage is not configured yet"
-                : recorder.supported
-                  ? "Record a voice note"
-                  : "This browser cannot record audio"
+            type={canSend ? "submit" : "button"}
+            onClick={
+              canSend
+                ? undefined
+                : () => (recorder.recording ? void finishRecording() : void recorder.start())
             }
-            aria-label={recorder.recording ? "Stop recording" : "Record a voice note"}
+            disabled={
+              canSend
+                ? sending
+                : !attachmentsAllowed || !recorder.supported || sending
+            }
+            title={
+              canSend
+                ? "Send"
+                : !attachmentsAllowed
+                  ? "File storage is not configured yet"
+                  : recorder.supported
+                    ? "Record a voice note"
+                    : "This browser cannot record audio"
+            }
+            aria-label={
+              canSend ? "Send message" : recorder.recording ? "Stop recording" : "Record a voice note"
+            }
             className={cn(
-              "grid size-11 shrink-0 place-items-center rounded-lg border transition-colors",
+              "grid size-9 shrink-0 place-items-center rounded-full text-white shadow-sm transition-colors",
               recorder.recording
-                ? "border-brand-300 bg-brand-50 text-brand-600"
-                : "border-line-strong text-ink-500 hover:bg-ink-50 hover:text-ink-700",
+                ? "bg-chat-accent-strong hover:bg-chat-accent"
+                : "bg-chat-accent hover:bg-chat-accent-strong",
               "disabled:pointer-events-none disabled:opacity-40",
             )}
           >
-            <Mic className="size-4.5" />
-          </button>
-
-          <textarea
-            value={draft}
-            maxLength={MAX_BODY}
-            rows={1}
-            placeholder={`Message ${departmentName}...`}
-            aria-label={`Message on ticket ${ticket.number}`}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              // Enter sends, Shift+Enter breaks the line: what everyone
-              // already expects of a message box.
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            className={cn(
-              "max-h-32 min-h-11 w-full flex-1 resize-none rounded-field border border-line-strong bg-surface px-3.5 py-2.5",
-              "text-[13px] leading-relaxed text-ink-900 transition-colors placeholder:text-ink-400",
-              "focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 focus:outline-none",
+            {canSend ? (
+              <SendHorizontal className="size-4" />
+            ) : recorder.recording ? (
+              <Square className="size-3.5 fill-current" />
+            ) : (
+              <Mic className="size-4" />
             )}
-          />
-          <button
-            type="submit"
-            disabled={(!draft.trim() && !draftFile) || sending || recorder.recording}
-            aria-label="Send message"
-            className={cn(
-              "grid size-11 shrink-0 place-items-center rounded-lg bg-brand-600 text-white transition-colors",
-              "hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-40",
-            )}
-          >
-            <SendHorizontal className="size-4.5" />
           </button>
         </div>
-
-        <p className="mt-1.5 flex items-center justify-between text-[11px] text-ink-400">
-          <span>Enter to send · Shift + Enter for a new line</span>
-          {remaining <= COUNTER_FROM && <span>{remaining} left</span>}
-        </p>
       </form>
 
       <Modal

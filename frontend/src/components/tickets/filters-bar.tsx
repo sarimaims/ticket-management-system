@@ -19,7 +19,7 @@ const STATUSES: TicketStatus[] = [
 
 const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High", "Critical"];
 
-const COMPACT = "h-11 text-[13px]";
+const COMPACT = "h-8 text-[13px]";
 /* Selects carry their own chevron, so they trim the default field padding to
    keep every filter on one row. */
 const COMPACT_SELECT = COMPACT + " pr-8 pl-3";
@@ -63,7 +63,7 @@ export function FiltersBar({ action }: { action?: React.ReactNode }) {
         ))}
       </Select>
 
-      <div className="flex h-11 w-full shrink-0 items-center rounded-field sm:w-auto border border-line-strong bg-surface pl-3 focus-within:border-brand-400 focus-within:ring-4 focus-within:ring-brand-500/10">
+      <div className="flex h-8 w-full shrink-0 items-center rounded-field sm:w-auto border border-line-strong bg-surface pl-3 focus-within:border-brand-400 focus-within:ring-4 focus-within:ring-brand-500/10">
         <Calendar className="size-4.5 shrink-0 text-ink-400" />
         <DateField
           value={from}

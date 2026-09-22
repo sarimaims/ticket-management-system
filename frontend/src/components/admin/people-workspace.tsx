@@ -208,7 +208,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-3 py-2.5">
           <div className="w-full lg:min-w-44 lg:flex-1">
             <Input
-              className="h-11 text-[13px]"
+              className="h-8 text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search by name, email or user ID..."
               value={query}
@@ -219,7 +219,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
 
           {units.length > 1 && (
             <Select
-              className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
+              className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
               value={unit}
               onChange={(event) => {
                 setUnit(event.target.value);
@@ -237,7 +237,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
           )}
 
           <Select
-            className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-40 lg:flex-none"
+            className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-40 lg:flex-none"
             value={department}
             onChange={(event) => setDepartment(event.target.value)}
             aria-label="Filter by department"
@@ -254,7 +254,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
 
           {scope === "all" && (
             <Select
-              className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
+              className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
               value={role}
               onChange={(event) => setRole(event.target.value)}
               aria-label="Filter by role"
@@ -268,7 +268,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
           )}
 
           <Select
-            className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-32 lg:flex-none"
+            className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-32 lg:flex-none"
             value={status}
             onChange={(event) => setStatus(event.target.value)}
             aria-label="Filter by status"
@@ -279,7 +279,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <option value="suspended">Suspended</option>
           </Select>
 
-          <Button className="h-11" onClick={() => setCreating(true)}>
+          <Button className="h-8" onClick={() => setCreating(true)}>
             {scope === "admins" ? <ShieldPlus className="size-4.5" /> : <UserPlus className="size-4.5" />}
             {scope === "admins" ? "Create Admin" : "Create User"}
           </Button>
@@ -894,7 +894,7 @@ function EditUserForm({
         <Field label="Full name" required htmlFor="edit-name">
           <Input
             id="edit-name"
-            className="h-11"
+            className="h-8"
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
@@ -904,7 +904,7 @@ function EditUserForm({
           <Input
             id="edit-email"
             type="email"
-            className="h-11"
+            className="h-8"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -913,7 +913,7 @@ function EditUserForm({
         <Field label="Status" htmlFor="edit-status">
           <Select
             id="edit-status"
-            className="h-11"
+            className="h-8"
             value={status}
             disabled={isSelf}
             onChange={(event) => setStatus(event.target.value as DirectoryUser["status"])}
@@ -932,7 +932,7 @@ function EditUserForm({
           ) : (
             <Select
               id="edit-role"
-              className="h-11"
+              className="h-8"
               value={role}
               disabled={isSelf}
               onChange={(event) => setRole(event.target.value as "admin" | "user")}
@@ -954,7 +954,7 @@ function EditUserForm({
         <Input
           id="edit-password"
           type={showPassword ? "text" : "password"}
-          className="h-11"
+          className="h-8"
           icon={<KeyRound className="text-ink-500" />}
           placeholder="At least 8 characters"
           value={password}

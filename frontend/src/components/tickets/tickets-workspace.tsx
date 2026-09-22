@@ -9,19 +9,21 @@ import {
   Inbox,
   MessagesSquare,
   Plus,
+  RefreshCw,
   Search,
   SlidersHorizontal,
   UserCheck,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
-import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
+import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/field";
 import {
   DeadlineVerdict,
   TicketDetailSheet,
   type SheetTab,
 } from "@/components/tickets/ticket-detail-sheet";
+import { StatusPicker } from "@/components/tickets/status-picker";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
@@ -46,7 +48,7 @@ const STATUSES: TicketStatus[] = [
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
-const COMPACT = "h-9 pr-7 pl-2.5 text-xs";
+const COMPACT = "h-7 pr-6 pl-2.5 text-[12px]";
 
 /** How often a live queue asks the API whether anything moved. */
 const REFRESH_MS = 7000;
@@ -104,7 +106,7 @@ function statsFor(tickets: TicketRecord[], scope: "mine" | "assigned"): Stat[] {
 }
 
 /** Every cell in this table, tight enough that the whole row fits on screen. */
-const CELL = "px-2 py-2 text-xs align-top";
+const CELL = "px-2 py-1.5 text-[12px] align-middle";
 
 /**
  * One row, held apart from the table so a refresh only repaints the tickets
@@ -172,7 +174,7 @@ const TicketRow = memo(function TicketRow({
         {/* The form stopped asking for this, so it rides under the subject on
             the tickets that still carry one instead of holding a column open. */}
         {ticket.requestType && (
-          <span className="mt-0.5 block text-[11px] font-normal text-ink-400">
+          <span className="block text-[10px] leading-tight font-normal text-ink-400">
             {ticket.requestType}
           </span>
         )}
@@ -203,14 +205,14 @@ const TicketRow = memo(function TicketRow({
             ticket.fromDepartments.map((item) => (
               <span
                 key={item.id}
-                className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-600"
+                className="rounded bg-ink-100 px-1 py-px text-[10px] font-medium text-ink-600"
               >
                 {item.name}
               </span>
             ))
           )}
           <ArrowRight className="size-3 shrink-0 text-ink-300" />
-          <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
+          <span className="rounded bg-brand-50 px-1 py-px text-[10px] font-semibold text-brand-700">
             {ticket.department.name}
           </span>
         </span>
@@ -222,20 +224,13 @@ const TicketRow = memo(function TicketRow({
 
       <TableCell className={CELL}>
         {scope === "assigned" ? (
-          <Select
-            onClick={(event) => event.stopPropagation()}
-            className={cn(
-              "h-7 w-[104px] border-transparent pr-6 pl-2 text-[11px] font-semibold",
-              statusToneClasses(ticket.status),
-            )}
-            value={ticket.status}
-            onChange={(event) => onStatus(ticket, event.target.value as TicketStatus)}
-            aria-label={`Status of ${ticket.number}`}
-          >
-            {STATUSES.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </Select>
+          <div className="w-[104px]">
+            <StatusPicker
+              value={ticket.status}
+              onChange={(next) => onStatus(ticket, next)}
+              label={`Status of ${ticket.number}`}
+            />
+          </div>
         ) : (
           <StatusBadge status={ticket.status} className="px-1.5 py-0.5 text-[11px]" />
         )}
@@ -243,7 +238,7 @@ const TicketRow = memo(function TicketRow({
 
       <TableCell className={cn(CELL, "whitespace-nowrap")}>
         <span className="block leading-tight">{formatDateOf(ticket.createdAt)}</span>
-        <span className="block text-[11px] leading-tight text-ink-400">
+        <span className="block text-[10px] leading-tight text-ink-400">
           {formatTime(ticket.createdAt)}
         </span>
       </TableCell>
@@ -254,7 +249,7 @@ const TicketRow = memo(function TicketRow({
         <span className="block leading-tight">
           {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "—"}
         </span>
-        <span className="mt-0.5 block text-[11px] leading-tight">
+        <span className="block text-[10px] leading-tight">
           <DeadlineVerdict requested={ticket.deadline} committed={ticket.committedDeadline} />
         </span>
       </TableCell>
@@ -276,7 +271,7 @@ const TicketRow = memo(function TicketRow({
                 : `Open the conversation on ${ticket.number}`
             }
             className={cn(
-              "inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[11px] font-bold transition-colors",
+              "inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-bold transition-colors",
               unreadMessages > 0
                 ? "bg-status-completed-fg text-white hover:bg-status-accepted-fg"
                 : "bg-status-completed-bg text-status-completed-fg hover:bg-status-completed-fg/20",
@@ -304,22 +299,35 @@ const TicketRow = memo(function TicketRow({
 });
 
 /** A quiet marker that the queue is keeping itself current. */
-function LiveTag({ syncedAt }: { syncedAt: number | null }) {
+/**
+ * Fetches now, rather than announcing that something else will.
+ *
+ * The queue still polls on its own; this is for the moment you know something
+ * changed and do not want to wait for the next tick. The spin is held for a
+ * beat even when the answer is instant, because a button that does nothing
+ * visible reads as broken.
+ */
+function RefreshButton({ onRefresh, syncedAt }: { onRefresh: () => void; syncedAt: number | null }) {
+  const [spinning, setSpinning] = useState(false);
+
   return (
-    <span
-      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[11px] font-semibold text-ink-500"
+    <button
+      type="button"
+      onClick={() => {
+        onRefresh();
+        setSpinning(true);
+        window.setTimeout(() => setSpinning(false), 600);
+      }}
       title={
         syncedAt
-          ? `Checks every ${REFRESH_MS / 1000}s · last change ${new Date(syncedAt).toLocaleTimeString()}`
-          : `Checks every ${REFRESH_MS / 1000}s`
+          ? `Refresh · checks itself every ${REFRESH_MS / 1000}s, last change ${new Date(syncedAt).toLocaleTimeString()}`
+          : `Refresh · checks itself every ${REFRESH_MS / 1000}s`
       }
+      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface px-2 text-[12px] font-semibold text-ink-600 transition-colors hover:bg-ink-50 hover:text-ink-900"
     >
-      <span className="relative flex size-2">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-status-completed-fg opacity-60" />
-        <span className="relative inline-flex size-2 rounded-full bg-status-completed-fg" />
-      </span>
-      Live
-    </span>
+      <RefreshCw className={cn("size-3.5", spinning && "animate-spin")} />
+      Refresh
+    </button>
   );
 }
 
@@ -338,7 +346,7 @@ export function TicketsWorkspace({
   scope: "mine" | "assigned";
   live?: boolean;
 }) {
-  const { tickets, setTickets, loading, error, syncedAt, hold } = useLiveTickets({
+  const { tickets, setTickets, loading, error, syncedAt, hold, refresh } = useLiveTickets({
     scope,
     intervalMs: live ? REFRESH_MS : null,
   });
@@ -515,10 +523,10 @@ export function TicketsWorkspace({
       <StatTiles stats={stats} loading={loading} />
 
       <Card className="mt-3 overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-9 pl-10 text-xs"
+              className="h-7 pl-8 text-[12px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search by ticket ID, subject or keyword..."
               value={query}
@@ -557,13 +565,13 @@ export function TicketsWorkspace({
               onClick={() => setMineOnly((current) => !current)}
               aria-pressed={mineOnly}
               className={cn(
-                "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors",
+                "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12px] font-semibold transition-colors",
                 mineOnly
                   ? "border-brand-600 bg-brand-50 text-brand-700"
                   : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
               )}
             >
-              <UserCheck className="size-4" />
+              <UserCheck className="size-3.5" />
               Assigned to me
               <span
                 className={cn(
@@ -576,14 +584,14 @@ export function TicketsWorkspace({
             </button>
           )}
 
-          {live && <LiveTag syncedAt={syncedAt} />}
+          {live && <RefreshButton onRefresh={refresh} syncedAt={syncedAt} />}
 
           {scope === "mine" && (
             <Link
               href="/create-ticket"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 text-[13px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
+              className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-brand-600 px-2.5 text-[12px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
             >
-              <Plus className="size-4" strokeWidth={2.5} />
+              <Plus className="size-3.5" strokeWidth={2.5} />
               Create Ticket
             </Link>
           )}
@@ -594,7 +602,7 @@ export function TicketsWorkspace({
               column fits and nothing scrolls sideways, and the min-width below
               only catches phones. */}
           <table className="w-full min-w-[820px] border-collapse">
-            <thead className="border-b border-line bg-ink-50/60">
+            <thead className="sticky top-0 z-10 border-b border-line bg-ink-50 shadow-[0_1px_0_var(--color-line)]">
               <tr>
                 <TableHead sortable className="px-2 py-2">
                   Ticket

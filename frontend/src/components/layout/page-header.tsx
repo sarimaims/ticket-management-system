@@ -1,15 +1,18 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
-import { useRegisterPageTitle } from "@/components/layout/page-title";
+import { useRegisterPage, type Crumb } from "@/components/layout/page-title";
 
-export type Crumb = { label: string; href?: string };
+export type { Crumb };
 
 /**
- * Breadcrumb and actions on one row. The page name itself is published to the
- * topbar rather than repeated here, which keeps the body starting higher.
+ * A page's identity and its actions, both of which live in the topbar.
+ *
+ * The name and its trail are published through context; the action buttons are
+ * portalled into the bar itself, so no page has a header row of its own and
+ * the content starts immediately under one thin bar.
  */
 export function PageHeader({
   title,
@@ -22,50 +25,18 @@ export function PageHeader({
   backHref?: string;
   actions?: React.ReactNode;
 }) {
-  useRegisterPageTitle(title);
+  useRegisterPage({ title, crumbs, backHref });
 
-  return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {backHref && (
-          <Link
-            href={backHref}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-600 transition-colors hover:text-brand-600"
-          >
-            <ArrowLeft className="size-4" />
-            Back
-          </Link>
-        )}
+  const [host, setHost] = useState<HTMLElement | null>(null);
 
-        {backHref && <span className="h-4 w-px bg-line-strong" />}
+  useEffect(() => {
+    // Finding the slot is a DOM read, not derived state: the topbar belongs to
+    // the layout above this page and is already mounted.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHost(document.getElementById("page-actions"));
+  }, []);
 
-        <nav aria-label="Breadcrumb">
-          <ol className="flex flex-wrap items-center gap-1.5 text-sm">
-            {crumbs.map((crumb, i) => {
-              const last = i === crumbs.length - 1;
-              return (
-                <li key={crumb.label} className="flex items-center gap-1.5">
-                  {crumb.href && !last ? (
-                    <Link
-                      href={crumb.href}
-                      className="text-ink-500 transition-colors hover:text-ink-800"
-                    >
-                      {crumb.label}
-                    </Link>
-                  ) : (
-                    <span className={last ? "font-semibold text-brand-600" : "text-ink-500"}>
-                      {crumb.label}
-                    </span>
-                  )}
-                  {!last && <ChevronRight className="size-4 text-ink-300" />}
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
-      </div>
+  if (!actions || !host) return null;
 
-      {actions}
-    </div>
-  );
+  return createPortal(actions, host);
 }

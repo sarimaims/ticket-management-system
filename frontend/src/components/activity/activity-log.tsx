@@ -130,7 +130,7 @@ export function ActivityLog() {
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-11 text-[13px]"
+              className="h-8 text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search by person, ticket or action..."
               value={query}
@@ -140,7 +140,7 @@ export function ActivityLog() {
           </div>
 
           <Select
-            className="h-11 w-48 shrink-0 pr-8 pl-3 text-[13px]"
+            className="h-8 w-48 shrink-0 pr-8 pl-3 text-[13px]"
             value={department}
             onChange={(event) => setDepartment(event.target.value)}
             aria-label="Filter by department"
@@ -158,7 +158,7 @@ export function ActivityLog() {
           {canClear && (
             <Button
               variant="outline"
-              className="h-11 text-brand-600"
+              className="h-8 text-brand-600"
               onClick={() => setConfirmClear(true)}
               disabled={entries.length === 0}
             >

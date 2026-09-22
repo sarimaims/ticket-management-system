@@ -2,9 +2,10 @@ import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
 import Message from '../models/Message.js';
+import ThreadRead from '../models/ThreadRead.js';
 import Ticket from '../models/Ticket.js';
 import { isRaiser, visibilityFilter } from '../services/ticketAccess.js';
-import { MANAGER_ROLES } from '../models/User.js';
+import User, { MANAGER_ROLES } from '../models/User.js';
 import { notifyNewMessage } from '../services/notify.js';
 import {
   ATTACHMENT_KINDS,
@@ -24,6 +25,75 @@ const MAX_BODY = 2000;
 /** How much of a message the bell and the toast quote. */
 const PREVIEW = 140;
 
+/** How much of a line is repeated in the quote above a reply. */
+const QUOTE = 160;
+
+/**
+ * Where these people sit in the org, as it stands today.
+ *
+ * Read live rather than snapshotted like the author's name: the menu on a
+ * message answers "who is this, and who do they answer to", which is only
+ * worth showing if it is current. One query covers a whole thread.
+ */
+async function affiliationsFor(authorIds) {
+  const unique = [...new Set(authorIds.filter(Boolean).map(String))];
+  if (unique.length === 0) return new Map();
+
+  const users = await User.find({ _id: { $in: unique } })
+    .select('memberships')
+    .populate({
+      path: 'memberships.department',
+      select: 'name unit',
+      populate: { path: 'unit', select: 'name' },
+    })
+    .lean();
+
+  return new Map(
+    users.map((user) => {
+      const departments = [];
+      const units = [];
+
+      for (const membership of user.memberships ?? []) {
+        const department = membership.department;
+        if (!department) continue;
+
+        departments.push({
+          id: String(department._id),
+          name: department.name,
+          role: membership.role,
+        });
+
+        // One unit can hold several of someone's departments; it is named once.
+        const unit = department.unit;
+        if (unit && !units.some((item) => item.id === String(unit._id))) {
+          units.push({ id: String(unit._id), name: unit.name });
+        }
+      }
+
+      return [String(user._id), { departments, units }];
+    }),
+  );
+}
+
+/** The originals quoted by these messages, in one query. */
+async function repliesFor(messages) {
+  const ids = [
+    ...new Set(
+      messages
+        .map((message) => message.replyTo)
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
+  if (ids.length === 0) return new Map();
+
+  const originals = await Message.find({ _id: { $in: ids } })
+    .select('author authorName body attachment deletedAt')
+    .lean();
+
+  return new Map(originals.map((original) => [String(original._id), original]));
+}
+
 /**
  * One line, as a particular reader may see it.
  *
@@ -32,16 +102,36 @@ const PREVIEW = 140;
  * in full, along with every earlier version of an edited line - a record that
  * can be quietly rewritten is not a record.
  */
-async function present(message, viewer) {
+async function present(message, viewer, context = {}) {
   const manager = MANAGER_ROLES.includes(viewer.role);
   const deleted = Boolean(message.deletedAt);
   const hidden = deleted && !manager;
   const attachment = hidden ? null : message.attachment;
 
+  const affiliation = context.affiliations?.get(String(message.author));
+  const original = message.replyTo ? context.replies?.get(String(message.replyTo)) : null;
+  const quoteHidden = Boolean(original?.deletedAt) && !manager;
+
   return {
     id: String(message._id),
     ticket: String(message.ticket),
     author: { id: String(message.author), name: message.authorName },
+    /** Who the author works for now - shown in the menu on their message. */
+    authorDepartments: affiliation?.departments ?? [],
+    authorUnits: affiliation?.units ?? [],
+    /**
+     * The line being answered, quoted. A reference rather than a copy, so a
+     * correction to the original shows through here too.
+     */
+    replyTo: original
+      ? {
+          id: String(original._id),
+          author: { id: String(original.author), name: original.authorName },
+          deleted: Boolean(original.deletedAt),
+          body: quoteHidden ? '' : (original.body ?? '').slice(0, QUOTE),
+          attachmentKind: quoteHidden ? null : (original.attachment?.kind ?? null),
+        }
+      : null,
     // What the author was when they wrote it, not what they are now.
     authorRole: message.authorRole,
     side: message.side,
@@ -78,6 +168,15 @@ async function present(message, viewer) {
       : null,
     createdAt: message.createdAt,
   };
+}
+
+/** The same, for an answer that carries one message rather than a thread. */
+async function presentOne(message, viewer) {
+  const [affiliations, replies] = await Promise.all([
+    affiliationsFor([message.author]),
+    repliesFor([message]),
+  ]);
+  return present(message, viewer, { affiliations, replies });
 }
 
 /** The message named in the URL, on the ticket named in the URL. */
@@ -143,9 +242,70 @@ async function fingerprint(ticketId) {
   return `W/"msg-${count}-${last}-${window}"`;
 }
 
+/**
+ * Notes that this reader has the thread open.
+ *
+ * Written on every read of the thread, including the ones that answer 304:
+ * the point is when someone last looked, and a poll that finds nothing new is
+ * still someone looking. Failures are swallowed - not knowing who has seen a
+ * message must never stop the message being delivered.
+ */
+async function markSeen(ticket, user) {
+  try {
+    await ThreadRead.updateOne(
+      { ticket: ticket._id, user: user._id },
+      { $set: { lastSeenAt: new Date(), userName: user.name } },
+      { upsert: true },
+    );
+  } catch {
+    // A racing upsert can collide on the unique key; the next poll settles it.
+  }
+}
+
+/**
+ * When one line was said, and who has had the thread open since.
+ *
+ * "Seen" here means the conversation was open after this was written, which is
+ * what a thread read top to bottom actually tells you. The author is left out
+ * of their own list.
+ */
+export async function messageInfo(req, res) {
+  const ticket = await readableTicket(req);
+  const message = await readableMessage(req, ticket);
+
+  const reads = await ThreadRead.find({
+    ticket: ticket._id,
+    user: { $ne: message.author },
+    lastSeenAt: { $gte: message.createdAt },
+  })
+    .sort({ lastSeenAt: 1 })
+    .lean();
+
+  // One row per person: the unique index is the guard, this is the belt.
+  const seen = [];
+  const counted = new Set();
+  for (const read of reads) {
+    const id = String(read.user);
+    if (counted.has(id)) continue;
+    counted.add(id);
+    seen.push({ id, name: read.userName || 'Someone', at: read.lastSeenAt });
+  }
+
+  res.json({
+    success: true,
+    info: {
+      sentAt: message.createdAt,
+      editedAt: message.editedAt ?? null,
+      deletedAt: message.deletedAt ?? null,
+      seenBy: seen,
+    },
+  });
+}
+
 /** The whole conversation, oldest first - the order a chat is read in. */
 export async function listMessages(req, res) {
   const ticket = await readableTicket(req);
+  await markSeen(ticket, req.user);
 
   const tag = await fingerprint(ticket._id);
   res.set('ETag', tag);
@@ -159,9 +319,17 @@ export async function listMessages(req, res) {
 
   const messages = await Message.find({ ticket: ticket._id }).sort({ createdAt: 1 });
 
+  // Two queries for the whole thread rather than two per line.
+  const [affiliations, replies] = await Promise.all([
+    affiliationsFor(messages.map((message) => message.author)),
+    repliesFor(messages),
+  ]);
+
   res.json({
     success: true,
-    messages: await Promise.all(messages.map((message) => present(message, req.user))),
+    messages: await Promise.all(
+      messages.map((message) => present(message, req.user, { affiliations, replies })),
+    ),
   });
 }
 
@@ -212,6 +380,7 @@ export async function createMessage(req, res) {
 
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
   const attachment = await resolveAttachment(req, ticket);
+  const replyTo = await resolveReply(req, ticket);
 
   // A photo or a voice note says something on its own; only a line with
   // neither is nothing at all.
@@ -228,6 +397,7 @@ export async function createMessage(req, res) {
     side: isRaiser(req.user, ticket) ? 'raiser' : 'department',
     body,
     attachment,
+    replyTo,
   });
 
   // The ticket carries the thread's size and its last line, so a list can show
@@ -247,7 +417,7 @@ export async function createMessage(req, res) {
     preview: trimmed || (attachment ? ATTACHMENT_KINDS[attachment.kind].label : ''),
   });
 
-  res.status(201).json({ success: true, message: await present(message, req.user) });
+  res.status(201).json({ success: true, message: await presentOne(message, req.user) });
 }
 
 /**
@@ -278,7 +448,7 @@ export async function updateMessage(req, res) {
     await message.save();
   }
 
-  res.json({ success: true, message: await present(message, req.user) });
+  res.json({ success: true, message: await presentOne(message, req.user) });
 }
 
 /**
@@ -304,7 +474,26 @@ export async function deleteMessage(req, res) {
     await Ticket.updateOne({ _id: ticket._id }, { $inc: { messageCount: -1 } });
   }
 
-  res.json({ success: true, message: await present(message, req.user) });
+  res.json({ success: true, message: await presentOne(message, req.user) });
+}
+
+/**
+ * The line being answered, checked to be on this same ticket.
+ *
+ * Without that check a reply could quote a message from a thread the reader
+ * cannot see, and the quote would carry its text into a place it does not
+ * belong.
+ */
+async function resolveReply(req, ticket) {
+  const value = req.body?.replyTo;
+  if (!value) return null;
+
+  if (!mongoose.isValidObjectId(value)) throw ApiError.badRequest('Invalid message id.');
+
+  const original = await Message.findOne({ _id: value, ticket: ticket._id }).select('_id');
+  if (!original) throw ApiError.badRequest('That message is not on this ticket.');
+
+  return original._id;
 }
 
 /**

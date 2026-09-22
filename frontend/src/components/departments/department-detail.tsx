@@ -24,9 +24,11 @@ import { Modal } from "@/components/ui/modal";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
+import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { initials, isAdmin, type DepartmentRole } from "@/lib/auth";
+import type { Stat } from "@/lib/types";
 import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
 import {
   addMember,
@@ -49,36 +51,6 @@ function Banner({ message }: { message: string }) {
       <AlertCircle className="mt-0.5 size-4 shrink-0" />
       {message}
     </div>
-  );
-}
-
-const PILL_TONES = {
-  members: "bg-pill-members-bg text-pill-members-fg",
-  heads: "bg-pill-heads-bg text-pill-heads-fg",
-  team: "bg-pill-team-bg text-pill-team-fg",
-} as const;
-
-function CountPill({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: keyof typeof PILL_TONES;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full py-1 pr-1.5 pl-3 text-xs font-semibold",
-        PILL_TONES[tone],
-      )}
-    >
-      {label}
-      <span className="rounded-full bg-surface/70 px-2 py-0.5 text-[13px] leading-none font-bold">
-        {value}
-      </span>
-    </span>
   );
 }
 
@@ -177,15 +149,6 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
           : []),
         { label: name },
       ]}
-      actions={
-        department && (
-          <div className="flex flex-wrap items-center gap-2">
-            <CountPill label="Members" value={department.memberCount} tone="members" />
-            <CountPill label="Heads" value={department.headCount} tone="heads" />
-            <CountPill label="Team" value={department.teamCount} tone="team" />
-          </div>
-        )
-      }
     />
   );
 
@@ -223,11 +186,22 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
 
       {error && <Banner message={error} />}
 
+      <StatTiles
+        stats={
+          [
+            { label: "Members", value: department.memberCount, caption: "", tone: "progress" },
+            { label: "Heads", value: department.headCount, caption: "", tone: "admin" },
+            { label: "Team", value: department.teamCount, caption: "", tone: "completed" },
+          ] satisfies Stat[]
+        }
+        className="mb-2"
+      />
+
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
           <div className="min-w-48 flex-1">
             <Input
-              className="h-10"
+              className="h-7 text-[12px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search members..."
               value={query}
@@ -236,8 +210,8 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
             />
           </div>
           {canManage && (
-            <Button size="sm" className="h-10" onClick={() => setAddOpen(true)}>
-              <UserPlus className="size-4" />
+            <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
+              <UserPlus className="size-3.5" />
               Add User
             </Button>
           )}
@@ -294,7 +268,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                       <span className="flex items-center gap-2">
                         {isHere ? (
                           <Select
-                            className="h-8 w-24 pr-7 pl-2.5 text-xs"
+                            className="h-7 w-[5.5rem] pr-6 pl-2 text-[11px]"
                             value={member.departmentRole}
                             onChange={(event) =>
                               changeRole(member, event.target.value as DepartmentRole)
@@ -450,7 +424,7 @@ function AddMemberModal({
           <Input
             id="member-email"
             type="email"
-            className="h-11"
+            className="h-8"
             icon={<Mail className="text-ink-500" />}
             placeholder="name@flowdesk.com"
             value={email}
@@ -467,7 +441,7 @@ function AddMemberModal({
           <Field label="Full name" htmlFor="member-name">
             <Input
               id="member-name"
-              className="h-11"
+              className="h-8"
               icon={<UserRound className="text-ink-500" />}
               placeholder="New accounts only"
               value={name}
@@ -482,7 +456,7 @@ function AddMemberModal({
           <Field label="Role" required htmlFor="member-role">
             <Select
               id="member-role"
-              className="h-11"
+              className="h-8"
               value={role}
               onChange={(event) => setRole(event.target.value as DepartmentRole)}
             >
@@ -496,7 +470,7 @@ function AddMemberModal({
           <Input
             id="member-password"
             type={showPassword ? "text" : "password"}
-            className="h-11"
+            className="h-8"
             icon={<Lock className="text-ink-500" />}
             placeholder="At least 8 characters"
             value={password}

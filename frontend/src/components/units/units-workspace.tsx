@@ -13,9 +13,11 @@ import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
+import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import type { Stat } from "@/lib/types";
 import { createUnit, deleteUnit, listUnits, type Unit } from "@/lib/units";
 
 function Banner({ message }: { message: string }) {
@@ -83,6 +85,12 @@ export function UnitsWorkspace() {
     { departments: 0, members: 0 },
   );
 
+  const stats: Stat[] = [
+    { label: "Units", value: units.length, caption: "", tone: "new" },
+    { label: "Departments", value: totals.departments, caption: "", tone: "progress" },
+    { label: "Members", value: totals.members, caption: "", tone: "completed" },
+  ];
+
   if (session && !canManage) return null;
 
   return (
@@ -90,36 +98,31 @@ export function UnitsWorkspace() {
       <PageHeader
         title="Units"
         crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Units" }]}
-        actions={
-          <div className="flex items-center gap-4">
-            <p className="hidden text-sm text-ink-500 sm:block">
-              <span className="font-semibold text-ink-900">{units.length}</span> units ·{" "}
-              <span className="font-semibold text-ink-900">{totals.departments}</span> departments ·{" "}
-              <span className="font-semibold text-ink-900">{totals.members}</span> members
-            </p>
-
-            {canManage && (
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus className="size-4" strokeWidth={2.5} />
-                New Unit
-              </Button>
-            )}
-          </div>
-        }
       />
 
       {error && <Banner message={error} />}
 
+      <StatTiles stats={stats} loading={loading} className="mb-2" />
+
       <Card className="overflow-hidden">
-        <div className="border-b border-line p-2.5">
-          <Input
-            className="h-10"
-            icon={<Search className="text-ink-400" />}
-            placeholder="Search units..."
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            aria-label="Search units"
-          />
+        <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
+          <div className="min-w-44 flex-1">
+            <Input
+              className="h-7 text-[12px]"
+              icon={<Search className="text-ink-400" />}
+              placeholder="Search units..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label="Search units"
+            />
+          </div>
+
+          {canManage && (
+            <Button size="sm" className="h-7 shrink-0" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-3.5" strokeWidth={2.5} />
+              New Unit
+            </Button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -285,7 +288,7 @@ function CreateUnitModal({
         <Field label="Unit name" required htmlFor="unit-name">
           <Input
             id="unit-name"
-            className="h-11"
+            className="h-8"
             icon={<Building className="text-ink-500" />}
             placeholder="e.g. Aims Healthcare"
             value={name}

@@ -91,6 +91,7 @@ model User {
   ticketsCommitted   Ticket[]     @relation("TicketCommittedBy")
   notifications      Notification[]
   activities         Activity[]
+  threadReads        ThreadRead[]
 
   @@index([memberships.departmentId])
   @@map("users")
@@ -181,6 +182,7 @@ model Ticket {
   updatedAt DateTime  @updatedAt
 
   notifications Notification[]
+  threadReads   ThreadRead[]
 
   @@index([departmentId])
   @@index([raisedById])
@@ -236,6 +238,29 @@ model Activity {
   @@index([departmentId])
   @@index([createdAt(sort: Desc)])
   @@map("activities")
+}
+
+/// When someone last had a ticket's conversation open.
+///
+/// One row per reader per ticket, not a receipt per message: a thread is read
+/// top to bottom, so one timestamp answers "who has seen this line?" for every
+/// line written before it.
+model ThreadRead {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  ticketId String @map("ticket") @db.ObjectId
+  ticket   Ticket @relation(fields: [ticketId], references: [id])
+
+  userId String @map("user") @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// Snapshot, so the list still reads after a rename.
+  userName   String   @default("")
+  lastSeenAt DateTime @default(now())
+
+  @@unique([ticketId, userId])
+  @@index([ticketId, lastSeenAt(sort: Desc)])
+  @@map("threadreads")
 }
 
 /// One sequence per name, bumped atomically to hand out ticket numbers.

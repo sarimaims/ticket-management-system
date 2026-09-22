@@ -85,6 +85,16 @@ const messageSchema = new mongoose.Schema(
       default: '',
     },
     /**
+     * The line this one answers, WhatsApp-style. A reference rather than a
+     * copy: the quote then follows the original if its author corrects it,
+     * and a withdrawn original is quoted as withdrawn.
+     */
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Message',
+      default: null,
+    },
+    /**
      * A photo or a voice note living in S3. Only the key is stored: the URL is
      * signed fresh on every read, so the bucket can stay private and a link
      * copied out of the page stops working before long.

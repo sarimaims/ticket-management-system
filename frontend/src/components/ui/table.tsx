@@ -19,7 +19,7 @@ export function TableHead({
       scope="col"
       title={title}
       className={cn(
-        "px-2.5 py-2.5 text-left text-xs font-semibold whitespace-nowrap text-ink-600",
+        "px-2.5 py-1.5 text-left text-[11px] font-semibold whitespace-nowrap text-ink-500",
         className,
       )}
     >
@@ -44,7 +44,7 @@ export function TableCell({
   className?: string;
 }) {
   return (
-    <td className={cn("px-2.5 py-2.5 text-[13px] whitespace-nowrap text-ink-600", className)}>
+    <td className={cn("px-2.5 py-1.5 text-[12px] whitespace-nowrap text-ink-600", className)}>
       {children}
     </td>
   );

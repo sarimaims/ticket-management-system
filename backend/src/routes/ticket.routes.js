@@ -14,6 +14,7 @@ import {
   createUploadTarget,
   deleteMessage,
   listMessages,
+  messageInfo,
   updateMessage,
 } from '../controllers/message.controller.js';
 
@@ -32,6 +33,9 @@ router.get('/:id/messages', asyncHandler(listMessages));
 router.post('/:id/messages', asyncHandler(createMessage));
 // A URL the browser PUTs a photo or a voice note to, before saying anything.
 router.post('/:id/messages/upload-url', asyncHandler(createUploadTarget));
+
+// When a line was said, and who has had the thread open since.
+router.get('/:id/messages/:messageId/info', asyncHandler(messageInfo));
 
 // An author corrects or withdraws their own line; the controller checks that.
 router.patch('/:id/messages/:messageId', asyncHandler(updateMessage));

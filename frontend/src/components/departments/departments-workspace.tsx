@@ -13,9 +13,11 @@ import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
+import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import type { Stat } from "@/lib/types";
 import {
   createDepartment,
   deleteDepartment,
@@ -87,40 +89,34 @@ export function DepartmentsWorkspace() {
     (sum, department) => ({
       members: sum.members + department.memberCount,
       heads: sum.heads + department.headCount,
+      team: sum.team + department.teamCount,
     }),
-    { members: 0, heads: 0 },
+    { members: 0, heads: 0, team: 0 },
   );
+
+  const stats: Stat[] = [
+    { label: "Departments", value: departments.length, caption: "", tone: "new" },
+    { label: "Members", value: totals.members, caption: "", tone: "progress" },
+    { label: "Heads", value: totals.heads, caption: "", tone: "admin" },
+    { label: "Team", value: totals.team, caption: "", tone: "completed" },
+  ];
 
   return (
     <>
       <PageHeader
         title="Departments"
         crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Departments" }]}
-        actions={
-          <div className="flex items-center gap-4">
-            <p className="hidden text-sm text-ink-500 sm:block">
-              <span className="font-semibold text-ink-900">{departments.length}</span> departments ·{" "}
-              <span className="font-semibold text-ink-900">{totals.members}</span> members ·{" "}
-              <span className="font-semibold text-ink-900">{totals.heads}</span> heads
-            </p>
-
-            {canManage && (
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus className="size-4" strokeWidth={2.5} />
-                New Department
-              </Button>
-            )}
-          </div>
-        }
       />
 
       {error && <Banner message={error} />}
 
+      <StatTiles stats={stats} loading={loading} className="mb-2" />
+
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-10"
+              className="h-7 text-[12px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search departments..."
               value={query}
@@ -130,7 +126,7 @@ export function DepartmentsWorkspace() {
           </div>
 
           <Select
-            className="h-10 w-52 shrink-0 pr-8 pl-3 text-[13px]"
+            className="h-7 w-40 shrink-0 pr-7 pl-2.5 text-[12px]"
             value={unitFilter}
             onChange={(event) => setUnitFilter(event.target.value)}
             aria-label="Filter by unit"
@@ -142,6 +138,13 @@ export function DepartmentsWorkspace() {
               </option>
             ))}
           </Select>
+
+          {canManage && (
+            <Button size="sm" className="h-7 shrink-0" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-3.5" strokeWidth={2.5} />
+              New Department
+            </Button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -350,7 +353,7 @@ function CreateDepartmentModal({
           ) : (
             <Select
               id="department-unit"
-              className="h-11"
+              className="h-8"
               icon={<Building className="text-ink-500" />}
               value={unit}
               onChange={(event) => setUnit(event.target.value)}
@@ -368,7 +371,7 @@ function CreateDepartmentModal({
         <Field label="Department name" required htmlFor="department-name">
           <Input
             id="department-name"
-            className="h-11"
+            className="h-8"
             icon={<Building2 className="text-ink-500" />}
             placeholder="e.g. Human Resources"
             value={name}
