@@ -38,6 +38,12 @@ export async function listUsers(req, res) {
 async function cleanMemberships(memberships) {
   if (!Array.isArray(memberships)) throw ApiError.badRequest('Memberships must be a list.');
 
+  // A member with no department has nowhere to raise from and appears in
+  // nobody's queue, so the account would exist without being usable.
+  if (memberships.length === 0) {
+    throw ApiError.badRequest('Give this person at least one role: a unit, a department and what they are in it.');
+  }
+
   const cleaned = [];
   const seen = new Set();
 
@@ -92,12 +98,9 @@ export async function createUser(req, res) {
     throw ApiError.conflict('An account with this email already exists.');
   }
 
-  // A manager sits above the org chart and belongs to no department, so the
-  // picker's value is not applied to one.
-  const cleaned =
-    memberships !== undefined && !MANAGER_ROLES.includes(role)
-      ? await cleanMemberships(memberships)
-      : [];
+  // A manager sits above the org chart, so the picker's value is not applied
+  // to one; everybody else is required to hold at least one role.
+  const cleaned = MANAGER_ROLES.includes(role) ? [] : await cleanMemberships(memberships ?? []);
 
   const user = await User.create({
     name: name.trim(),
@@ -178,6 +181,12 @@ export async function updateUser(req, res) {
   // A manager has no departments, so the picker's value is simply not applied.
   if (memberships !== undefined && !MANAGER_ROLES.includes(user.role)) {
     user.memberships = await cleanMemberships(memberships);
+  }
+
+  // Also catches the way in through the side door: an admin demoted to member
+  // without a list being sent would otherwise land in no department at all.
+  if (!MANAGER_ROLES.includes(user.role) && user.memberships.length === 0) {
+    throw ApiError.badRequest('Give this person at least one role: a unit, a department and what they are in it.');
   }
 
   await user.save({ validateBeforeSave: true });

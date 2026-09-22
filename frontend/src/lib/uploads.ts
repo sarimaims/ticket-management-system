@@ -93,6 +93,45 @@ export async function uploadAttachment(
   return target.key;
 }
 
+/** What a ticket itself can carry, mirroring the rules the API enforces. */
+export const TICKET_FILE_LIMITS = {
+  maxBytes: 10 * 1024 * 1024,
+  maxCount: 5,
+  accept: ".pdf,.doc,.docx,.jpg,.jpeg,.png",
+  types: [
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg",
+    "image/png",
+  ],
+};
+
+/**
+ * Uploads one file attached to a request being written.
+ *
+ * There is no ticket to name yet - the form is still open - so the key is
+ * owned by the person uploading and checked against them again when the ticket
+ * is written. The bytes go straight to storage; only the key passes through
+ * our API.
+ */
+export async function uploadTicketFile(
+  file: File,
+  {
+    onProgress,
+    signal,
+  }: { onProgress?: (percent: number) => void; signal?: AbortSignal } = {},
+) {
+  const target = await api<UploadTarget>("/tickets/attachments/upload-url", {
+    method: "POST",
+    body: { contentType: file.type, size: file.size, filename: file.name },
+    signal,
+  });
+
+  await putToStorage(target, file, { onProgress, signal });
+  return { key: target.key, filename: file.name };
+}
+
 /** "2.4 MB" - what a person needs to know about a file's size. */
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

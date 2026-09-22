@@ -176,6 +176,69 @@ export async function listMemberOptions(req, res) {
   });
 }
 
+/**
+ * Everyone a ticket can be addressed at, across the whole org chart.
+ *
+ * One entry per membership rather than per person: somebody who sits in two
+ * departments can be asked in either, and the ticket that results belongs to
+ * whichever one was picked - so the two are different answers, not a
+ * duplicate. Each carries its department and unit so the caller can say which
+ * is which without a second lookup.
+ *
+ * `unit` and `department` narrow it. Same policy as the per-department list
+ * above: names and roles only, open to anyone signed in, because addressing a
+ * ticket is something every user does.
+ */
+export async function listAllMemberOptions(req, res) {
+  const { unit, department } = req.query;
+
+  const scope = { isActive: true };
+  if (department) {
+    assertObjectId(department, 'department id');
+    scope._id = department;
+  }
+  if (unit) {
+    assertObjectId(unit, 'unit id');
+    scope.unit = unit;
+  }
+
+  const departments = await Department.find(scope).select('_id name unit').populate('unit', 'name');
+
+  if (departments.length === 0) {
+    res.json({ success: true, members: [] });
+    return;
+  }
+
+  const byId = new Map(departments.map((item) => [String(item._id), item]));
+
+  const users = await User.find({
+    'memberships.department': { $in: departments.map((item) => item._id) },
+    status: { $ne: 'suspended' },
+  })
+    .select('name memberships')
+    .sort({ name: 1 });
+
+  const members = [];
+  for (const user of users) {
+    for (const membership of user.memberships ?? []) {
+      const held = byId.get(String(membership.department));
+      // A membership in a department outside the filter, or in one that has
+      // been deactivated, is simply not on offer.
+      if (!held) continue;
+
+      members.push({
+        id: String(user._id),
+        name: user.name,
+        departmentRole: membership.role,
+        department: { id: String(held._id), name: held.name },
+        unit: held.unit ? { id: String(held.unit._id), name: held.unit.name } : null,
+      });
+    }
+  }
+
+  res.json({ success: true, members });
+}
+
 export async function createDepartment(req, res) {
   const { name, description, code, unit } = req.body ?? {};
 

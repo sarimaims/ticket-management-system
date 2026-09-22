@@ -34,6 +34,27 @@ export const ATTACHMENT_KINDS = {
   },
 };
 
+/**
+ * What a ticket itself may carry, as opposed to what its chat may.
+ *
+ * A different folder and a different rule set: a chat holds photos and voice
+ * notes, a request holds the paperwork that came with it.
+ */
+export const TICKET_FILE = {
+  folder: 'files',
+  types: [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg',
+    'image/png',
+  ],
+  maxBytes: 10 * 1024 * 1024,
+  label: 'File',
+  /** No more than this on one request; the form stops before the API has to. */
+  maxCount: 5,
+};
+
 /** How long a browser has to finish a PUT, and to load what it reads back. */
 const UPLOAD_URL_TTL = 5 * 60;
 const DOWNLOAD_URL_TTL = 60 * 60;
@@ -124,6 +145,43 @@ export function buildKey({ ticketId, kind, filename, contentType }) {
 /** The start every key for this ticket and kind must have. */
 export function keyPrefixFor({ ticketId, kind }) {
   return `${env.s3.prefix}chat/${ATTACHMENT_KINDS[kind].folder}/${ticketId}-`;
+}
+
+/**
+ * The object key for one file attached to a ticket:
+ *
+ *   upload/ticket/files/<userId>-<date>-<random>.pdf
+ *
+ * Keyed by the person uploading rather than by the ticket, because the file is
+ * chosen before the ticket exists - the form uploads while it is being filled
+ * in, and the ticket is written at the end. The owner leads the name so the
+ * key can be checked against whoever is claiming it.
+ */
+export function buildTicketKey({ ownerId, filename, contentType }) {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const random = crypto.randomBytes(8).toString('hex');
+  return `${env.s3.prefix}ticket/${TICKET_FILE.folder}/${ownerId}-${stamp}-${random}${safeExtension(filename, contentType)}`;
+}
+
+/** The start every key uploaded by this person must have. */
+export function ticketKeyPrefixFor(ownerId) {
+  return `${env.s3.prefix}ticket/${TICKET_FILE.folder}/${ownerId}-`;
+}
+
+/** Checks a proposed ticket attachment against what a request may carry. */
+export function validateTicketUpload({ contentType, size }) {
+  const type = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  if (!TICKET_FILE.types.includes(type)) {
+    return 'Attachments must be a PDF, a Word document, a JPG or a PNG.';
+  }
+
+  const bytes = Number(size);
+  if (!Number.isFinite(bytes) || bytes <= 0) return 'The file size is missing.';
+  if (bytes > TICKET_FILE.maxBytes) {
+    return `A file cannot be larger than ${Math.round(TICKET_FILE.maxBytes / (1024 * 1024))} MB.`;
+  }
+
+  return null;
 }
 
 /** Checks a proposed upload against what this kind of attachment allows. */

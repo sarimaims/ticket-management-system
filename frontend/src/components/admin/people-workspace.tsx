@@ -525,6 +525,8 @@ function CreatePersonModal({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [memberships, setMemberships] = useState<MembershipInput[]>([]);
+  /** Set once they try to submit without one, cleared as soon as one lands. */
+  const [rolesMissing, setRolesMissing] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const toast = useToast();
@@ -538,6 +540,7 @@ function CreatePersonModal({
     setPassword("");
     setShowPassword(false);
     setMemberships([]);
+    setRolesMissing(false);
     setError("");
     onClose();
   };
@@ -550,6 +553,12 @@ function CreatePersonModal({
       return setError("Enter a valid email address.");
     }
     if (password.length < 8) return setError("Password must be at least 8 characters.");
+    // A member with no department cannot raise from anywhere or be asked for
+    // anything, so the account would be created unusable.
+    if (role === "user" && memberships.length === 0) {
+      setRolesMissing(true);
+      return setError("Add at least one role: a unit, a department and what they are in it.");
+    }
 
     setPending(true);
     try {
@@ -652,6 +661,7 @@ function CreatePersonModal({
           <div>
             <p className="mb-1.5 text-sm font-semibold text-ink-800">
               Roles
+              <span className="text-brand-600">*</span>
               <span className="ml-1 font-normal text-ink-400">
                 (a unit, a department, and what they are in it
                 {memberships.length > 0 ? ` · ${memberships.length} added` : ""})
@@ -660,11 +670,15 @@ function CreatePersonModal({
             <MembershipRows
               departments={departments}
               value={memberships}
-              onChange={setMemberships}
+              onChange={(next) => {
+                setMemberships(next);
+                if (next.length > 0) setRolesMissing(false);
+              }}
+              invalid={rolesMissing}
             />
             <p className="mt-1.5 text-xs text-ink-400">
-              Optional now - they can be filed later from this page. Add a row for each posting:
-              several departments in one unit, or across units, both work.
+              At least one is required. Add a row for each posting: several departments in one
+              unit, or across units, both work.
             </p>
           </div>
         )}
@@ -867,6 +881,8 @@ function EditUserForm({
   );
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  /** Set once they try to save without one, cleared as soon as one lands. */
+  const [rolesMissing, setRolesMissing] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -888,6 +904,13 @@ function EditUserForm({
     }
     if (password && password.length < 8) {
       setError("Password must be at least 8 characters.");
+      return;
+    }
+    // Managers hold none by design; everybody else must hold at least one, or
+    // they belong to no department and no queue can reach them.
+    if (!isManager && memberships.length === 0) {
+      setRolesMissing(true);
+      setError("Add at least one role: a unit, a department and what they are in it.");
       return;
     }
 
@@ -1013,6 +1036,7 @@ function EditUserForm({
         <div>
           <p className="mb-1.5 text-sm font-semibold text-ink-800">
             Roles
+            <span className="text-brand-600">*</span>
             <span className="ml-1.5 font-normal text-ink-400">
               (a unit, a department, and what they are in it · {memberships.length} added)
             </span>
@@ -1020,7 +1044,11 @@ function EditUserForm({
           <MembershipRows
             departments={departments}
             value={memberships}
-            onChange={setMemberships}
+            onChange={(next) => {
+              setMemberships(next);
+              if (next.length > 0) setRolesMissing(false);
+            }}
+            invalid={rolesMissing}
           />
         </div>
       )}

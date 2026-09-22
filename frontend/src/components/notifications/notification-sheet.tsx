@@ -64,43 +64,40 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
         className={cn(
           // Full height, like the ticket sheet: a panel that opens over the
           // bar rather than under it.
-          "fixed inset-y-0 right-0 z-50 flex w-full max-w-[25rem] flex-col border-l border-line bg-canvas shadow-2xl shadow-ink-900/10 transition-transform duration-200",
+          "fixed inset-y-0 right-0 z-50 flex w-full max-w-[23rem] flex-col border-l border-line bg-surface shadow-2xl shadow-ink-900/10 transition-transform duration-200",
           open ? "translate-x-0" : "translate-x-full",
         )}
       >
-        <div className="flex items-center gap-2 border-b border-line bg-surface px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <h2 className="flex items-center gap-2 text-base font-bold text-ink-900">
-              Notifications
-              {unread > 0 && (
-                <span className="rounded-full bg-brand-600 px-2 py-0.5 text-[11px] font-bold text-white">
-                  {unread} new
-                </span>
-              )}
-            </h2>
-          </div>
+        <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
+          <h2 className="min-w-0 flex-1 truncate text-[13px] font-bold text-ink-900">
+            Notifications
+            {unread > 0 && (
+              <span className="ml-1.5 text-[11px] font-semibold text-brand-600">{unread} new</span>
+            )}
+          </h2>
 
           <button
             type="button"
             onClick={() => toggleSound(muted, setMuted)}
-            className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            className="grid size-6 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
             aria-label={muted ? "Turn the sound on" : "Turn the sound off"}
             title={muted ? "Sound off" : "Sound on"}
           >
-            {muted ? <VolumeX className="size-4.5" /> : <Volume2 className="size-4.5" />}
+            {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            className="grid size-6 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
             aria-label="Close notifications"
           >
-            <X className="size-5" />
+            <X className="size-4" />
           </button>
         </div>
 
-        {/* Filter pills, the way a phone lets you narrow a busy centre. */}
-        <div className="flex items-center gap-1.5 overflow-x-auto border-b border-line bg-surface px-4 py-2.5">
+        {/* One track, one raised segment: four filled pills read as four
+            buttons of equal weight, none of which looked chosen. */}
+        <div className="flex items-center gap-0.5 overflow-x-auto border-b border-line px-3 py-2">
           {FILTERS.map((entry) => {
             const count =
               entry.key === "unread"
@@ -118,17 +115,17 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
                 onClick={() => setFilter(entry.key)}
                 aria-pressed={filter === entry.key}
                 className={cn(
-                  "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-semibold transition-colors",
+                  "flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors",
                   filter === entry.key
                     ? "bg-ink-900 text-white"
-                    : "bg-ink-100 text-ink-600 hover:bg-ink-200",
+                    : "text-ink-500 hover:bg-ink-100 hover:text-ink-900",
                 )}
               >
                 {entry.label}
                 <span
                   className={cn(
-                    "text-[11px]",
-                    filter === entry.key ? "text-white/70" : "text-ink-400",
+                    "text-[10px] tabular-nums",
+                    filter === entry.key ? "text-white/60" : "text-ink-400",
                   )}
                 >
                   {count}
@@ -138,16 +135,16 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
           })}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="flex-1 overflow-y-auto">
           {groups.length === 0 ? (
-            <div className="px-4 py-16 text-center">
-              <span className="mx-auto grid size-12 place-items-center rounded-full bg-ink-100">
-                <Bell className="size-5 text-ink-400" />
+            <div className="px-4 py-14 text-center">
+              <span className="mx-auto grid size-9 place-items-center rounded-full bg-ink-100">
+                <Bell className="size-4 text-ink-400" />
               </span>
-              <p className="mt-3 text-sm font-semibold text-ink-700">
+              <p className="mt-2 text-[12px] font-semibold text-ink-700">
                 {filter === "all" ? "Nothing yet" : "Nothing here"}
               </p>
-              <p className="mt-0.5 text-sm text-ink-400">
+              <p className="mt-0.5 text-[11px] text-ink-400">
                 {filter === "all"
                   ? "Tickets raised to your department show up here."
                   : "Try another filter."}
@@ -155,11 +152,11 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
             </div>
           ) : (
             groups.map((group) => (
-              <section key={group.label} className="mb-4 last:mb-0">
-                <h3 className="px-1 pb-1.5 text-[11px] font-bold tracking-wide text-ink-400 uppercase">
+              <section key={group.label}>
+                <h3 className="sticky top-0 z-10 border-b border-line bg-ink-50/90 px-3.5 py-1 text-[10px] font-semibold tracking-[0.08em] text-ink-400 uppercase backdrop-blur">
                   {group.label}
                 </h3>
-                <div className="space-y-1.5">
+                <div className="divide-y divide-line">
                   {group.items.map((item) => (
                     <NotificationCard
                       key={item.id}
@@ -175,22 +172,22 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
         </div>
 
         {items.length > 0 && (
-          <div className="flex items-center gap-2 border-t border-line bg-surface px-4 py-3">
+          <div className="flex items-center gap-2 border-t border-line px-3.5 py-2">
             <button
               type="button"
               onClick={() => void markAllRead()}
               disabled={unread === 0}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-line-strong px-3 py-2 text-[13px] font-semibold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-50"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11.5px] font-semibold text-ink-600 transition-colors hover:bg-ink-100 hover:text-ink-900 disabled:opacity-40"
             >
-              <CheckCheck className="size-4" />
+              <CheckCheck className="size-3.5" />
               Mark all read
             </button>
             <button
               type="button"
               onClick={() => void clearAll()}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-line-strong px-3 py-2 text-[13px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+              className="flex items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11.5px] font-semibold text-ink-500 transition-colors hover:bg-brand-50 hover:text-brand-600"
             >
-              <Trash2 className="size-4" />
+              <Trash2 className="size-3.5" />
               Clear
             </button>
           </div>

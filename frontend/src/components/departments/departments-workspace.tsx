@@ -118,7 +118,7 @@ export function DepartmentsWorkspace() {
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-7 text-[12px]"
+              className="text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search departments..."
               value={query}
@@ -129,7 +129,6 @@ export function DepartmentsWorkspace() {
 
           <div className="w-44 shrink-0">
             <MultiSelect
-              className="h-7 [&>span]:text-[12px]"
               options={units.map((unit) => ({ value: unit.id, label: unit.name }))}
               value={unitFilter}
               onChange={setUnitFilter}
@@ -140,8 +139,8 @@ export function DepartmentsWorkspace() {
           </div>
 
           {canManage && (
-            <Button size="sm" className="h-7 shrink-0" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-3.5" strokeWidth={2.5} />
+            <Button className="shrink-0" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" strokeWidth={2.5} />
               New Department
             </Button>
           )}

@@ -2,46 +2,43 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  ArrowRight,
-  Building,
-  Building2,
-  CheckCircle2,
-  Inbox,
-  Paperclip,
-  ShieldCheck,
-  UserRound,
-  Users,
-  X,
-} from "lucide-react";
+import { Building, CheckCircle2, Paperclip, Search, UserPlus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Label, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { Pagination } from "@/components/ui/table";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { SearchSelect } from "@/components/ui/search-select";
 import { useToast } from "@/components/ui/toast";
 import { DateField } from "@/components/tickets/date-field";
+import { PriorityPicker } from "@/components/tickets/priority-picker";
 import {
-  listDepartmentMembers,
   listDepartmentOptions,
+  listPeopleOptions,
   type DepartmentOption,
-  type MemberOption,
+  type PersonOption,
 } from "@/lib/departments";
 import { listUnitOptions, type UnitOption } from "@/lib/units";
 import { createTicket, type TicketRecord } from "@/lib/tickets";
 import { useAuth } from "@/components/auth/auth-provider";
-import { isAdmin, ROLE_LABEL } from "@/lib/auth";
+import { initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
 import { errorMessage } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { formatBytes, TICKET_FILE_LIMITS, uploadTicketFile } from "@/lib/uploads";
+import { PriorityBadge } from "@/components/ui/badge";
+import { cn, formatDate } from "@/lib/utils";
 import type { TicketPriority } from "@/lib/types";
 
-const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High", "Critical"];
-
-/** The boxes that must be filled, in the order they appear on the page. */
+/**
+ * The boxes that must be filled, in the order they appear on the page.
+ *
+ * Naming a person is not among them: a request reaches the department either
+ * way, and being made to pick a stranger out of a list before you can ask a
+ * question is a worse failure than an unaddressed ticket.
+ */
 const REQUIRED = [
   { key: "target", label: "To — Department", id: "target-departments" },
-  { key: "person", label: "To — Person", id: "target-departments" },
   { key: "subject", label: "Subject", id: "subject" },
   { key: "description", label: "Description", id: "description" },
   { key: "completionDate", label: "Deadline", id: "completion-date" },
@@ -49,133 +46,114 @@ const REQUIRED = [
 
 type RequiredKey = (typeof REQUIRED)[number]["key"];
 
-const PRIORITY_TONE: Record<TicketPriority, { dot: string; selected: string }> = {
-  Low: { dot: "bg-priority-low-dot", selected: "bg-priority-low-bg text-priority-low-fg" },
-  Medium: {
-    dot: "bg-priority-medium-dot",
-    selected: "bg-priority-medium-bg text-priority-medium-fg",
-  },
-  High: { dot: "bg-priority-high-dot", selected: "bg-priority-high-bg text-priority-high-fg" },
-  Critical: {
-    dot: "bg-priority-critical-dot",
-    selected: "bg-priority-critical-bg text-priority-critical-fg",
-  },
+/** One named person, carrying the department they were picked out of. */
+type Picked = {
+  id: string;
+  name: string;
+  departmentId: string;
+  departmentName: string;
 };
 
 /**
- * Four choices, so they are all on show: one click instead of open-read-pick,
- * and the colour of the answer is visible before it is given.
+ * What identifies a choice: the person *and* the department. Somebody in two
+ * departments can be asked in either, and those are two different requests.
  */
-function PriorityPicker({
-  value,
-  onChange,
-}: {
-  value: TicketPriority;
-  onChange: (value: TicketPriority) => void;
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Priority"
-      className="flex w-full gap-1 rounded-field border border-line-strong bg-surface p-0.5 sm:w-auto"
-    >
-      {PRIORITIES.map((level) => {
-        const selected = value === level;
-        return (
-          <button
-            key={level}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={() => onChange(level)}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors sm:flex-none sm:px-3.5",
-              selected ? PRIORITY_TONE[level].selected : "text-ink-500 hover:bg-ink-50",
-            )}
-          >
-            <span className={cn("size-2 shrink-0 rounded-full", PRIORITY_TONE[level].dot)} />
-            {level}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+const pickKey = (personId: string, departmentId: string) => `${personId}:${departmentId}`;
 
 /**
- * Each step of the form is its own box, so the page reads as three decisions.
- * A step whose contents name themselves takes no title.
+ * People shown at once in the Add people modal, before it pages.
+ *
+ * Enough that most workspaces are one page and the pager never appears; the
+ * list scrolls inside its own box, so the number does not decide how tall the
+ * dialog is.
  */
-function Step({
+const PEOPLE_PER_PAGE = 30;
+
+/**
+ * One numbered stop on the way down the page.
+ *
+ * The number is the whole point of the design: three of them in a column say
+ * how much there is to do and in what order, before a single label has been
+ * read.
+ */
+function StepCard({
+  step,
   title,
+  hint,
   optional,
   children,
 }: {
-  title?: string;
+  step: number;
+  title: string;
+  hint?: string;
   optional?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Card className={cn("p-3.5", optional && "border-dashed bg-ink-50/50 shadow-none")}>
-      {title && (
-        <div className="mb-2.5 flex items-center gap-2">
-          <h2 className="text-sm font-bold text-ink-900">{title}</h2>
-          {optional && (
-            <span className="rounded-full bg-ink-200/70 px-2 py-0.5 text-[11px] font-semibold text-ink-500">
-              Optional
-            </span>
+    <Card className={cn("p-4", optional && "border-dashed bg-ink-50/40 shadow-none")}>
+      <div className="mb-3 flex items-center gap-2.5">
+        <span
+          className={cn(
+            "grid size-6 shrink-0 place-items-center rounded-full text-[12px] font-bold",
+            optional ? "bg-ink-200 text-ink-600" : "bg-brand-600 text-white",
           )}
-        </div>
-      )}
+        >
+          {step}
+        </span>
+        <h2 className="text-sm font-bold text-ink-900">{title}</h2>
+        {optional && (
+          <span className="rounded-full bg-ink-200/70 px-2 py-0.5 text-[11px] font-semibold text-ink-500">
+            Optional
+          </span>
+        )}
+        {hint && <span className="truncate text-[12px] text-ink-400">{hint}</span>}
+      </div>
       {children}
     </Card>
   );
 }
 
 /**
- * The two ends of a request are the same three questions asked twice, so they
- * are told apart by colour rather than by reading the labels: the side you are
- * asking from is neutral, the side being asked wears the brand.
+ * One question, its name on the left and its answer on the right.
+ *
+ * Three of these in a column is the whole of step one. The panels this
+ * replaced put a border, a tint, a badge and a title around each half of a
+ * two-part question, which is four kinds of decoration to say "From" - and
+ * nesting a bordered box inside a bordered card inside a bordered field is
+ * what made the section read as busy. A hairline between rows says the same
+ * thing and leaves the words as the loudest part.
  */
-const ROUTE_TONE = {
-  from: { panel: "border-line-strong bg-ink-50/70", badge: "bg-ink-600 text-white" },
-  to: { panel: "border-brand-200 bg-brand-50/40", badge: "bg-brand-600 text-white" },
-} as const;
-
-function RoutePanel({
-  tone,
+function FormRow({
   label,
-  caption,
-  icon: Icon,
+  hint,
+  required,
+  action,
   children,
 }: {
-  tone: keyof typeof ROUTE_TONE;
   label: string;
-  caption: string;
-  icon: React.ComponentType<{ className?: string }>;
+  hint?: string;
+  required?: boolean;
+  /** A control that belongs to the row's title rather than to its answer. */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const style = ROUTE_TONE[tone];
-
   return (
-    <section className={cn("rounded-card border p-2.5", style.panel)}>
-      <p className="mb-2 flex items-center gap-1.5">
-        <span className={cn("grid size-6 shrink-0 place-items-center rounded-md", style.badge)}>
-          <Icon className="size-3.5" />
-        </span>
-        <span className="text-[13px] font-bold text-ink-900">{label}</span>
-        <span className="truncate text-[11px] text-ink-400">{caption}</span>
-      </p>
-      <div className="space-y-2">{children}</div>
-    </section>
-  );
-}
+    <div className="grid gap-x-5 gap-y-2 border-t border-line py-4 first:border-t-0 first:pt-0 last:pb-0 sm:grid-cols-[8.5rem_1fr]">
+      <div className="flex items-baseline justify-between gap-3 sm:block">
+        {/* The hint sits beside the name, not under it: stacked, a one-word
+            aside looked like a second field. */}
+        <p className="flex flex-wrap items-baseline gap-x-1.5 text-[13px] font-semibold text-ink-900">
+          {label}
+          {required && <span className="-ml-1 text-brand-600">*</span>}
+          {hint && <span className="text-[11px] font-normal text-ink-400">{hint}</span>}
+        </p>
+        {action && <div className="sm:hidden">{action}</div>}
+      </div>
 
-/** Which way the request travels, said in as little height as it takes. */
-function Connector() {
-  return (
-    <div aria-hidden className="flex justify-center py-0.5 text-ink-300">
-      <ArrowRight className="size-3.5 rotate-90" />
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="min-w-0 flex-1">{children}</div>
+        {action && <div className="hidden shrink-0 sm:block">{action}</div>}
+      </div>
     </div>
   );
 }
@@ -201,9 +179,275 @@ function ownUnitOptions(session: ReturnType<typeof useAuth>["session"]) {
   return [...byId].map(([id, name]) => ({ id, name }));
 }
 
+/**
+ * Browse the organisation and hand the request to somebody by name.
+ *
+ * It opens on everybody, because most of the time you know the person and not
+ * their department. Unit narrows it to everyone underneath, department narrows
+ * it further, and each row carries where they sit so two people with the same
+ * first name are still told apart. It stays open while you pick, because
+ * naming two people from two departments is one errand, not two.
+ */
+function AddPeopleModal({
+  onClose,
+  departments,
+  units,
+  picked,
+  onAdd,
+  onRemove,
+}: {
+  onClose: () => void;
+  departments: DepartmentOption[];
+  units: UnitOption[];
+  picked: Picked[];
+  onAdd: (person: PersonOption) => void;
+  onRemove: (key: string) => void;
+}) {
+  const [unitId, setUnitId] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [term, setTerm] = useState("");
+  /** Page one of the results. Narrowing the list always returns here. */
+  const [page, setPage] = useState(1);
+  /**
+   * The people, stamped with the filter they answer. Holding the two together
+   * is what makes "still loading" a comparison rather than a flag that has to
+   * be cleared before every fetch.
+   */
+  const [fetched, setFetched] = useState<{
+    scope: string;
+    list: PersonOption[];
+  } | null>(null);
+
+  const scope = `${unitId}:${departmentId}`;
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    listPeopleOptions(
+      { unit: unitId || undefined, department: departmentId || undefined },
+      controller.signal,
+    )
+      .then((list) => setFetched({ scope, list }))
+      .catch(() => {
+        if (!controller.signal.aborted) setFetched({ scope, list: [] });
+      });
+
+    return () => controller.abort();
+  }, [scope, unitId, departmentId]);
+
+  const people = fetched?.scope === scope ? fetched.list : null;
+
+  const inUnit = departments.filter((department) =>
+    inAny(unitId ? [unitId] : [], department.unit?.id),
+  );
+
+  /** Changing unit drops a department the new unit does not hold. */
+  const chooseUnit = (next: string) => {
+    setUnitId(next);
+    setPage(1);
+    if (next && departments.find((item) => item.id === departmentId)?.unit?.id !== next) {
+      setDepartmentId("");
+    }
+  };
+
+  // Name, department and unit all match: the thing you remember about somebody
+  // is not always their name.
+  const needle = term.trim().toLowerCase();
+  const shown = (people ?? []).filter((person) =>
+    needle
+      ? `${person.name} ${person.department.name} ${person.unit?.name ?? ""}`
+          .toLowerCase()
+          .includes(needle)
+      : true,
+  );
+
+  /**
+   * A department of thirty is one scroll; a workspace of three hundred is not.
+   * The list is cut into pages so the modal keeps its height whatever it holds.
+   */
+  const pages = Math.max(1, Math.ceil(shown.length / PEOPLE_PER_PAGE));
+  // Removing people can shorten the list under the page you were on.
+  const current = Math.min(page, pages);
+  const from = (current - 1) * PEOPLE_PER_PAGE;
+  const rows = shown.slice(from, from + PEOPLE_PER_PAGE);
+
+  const unitName = units.find((unit) => unit.id === unitId)?.name;
+  const departmentName = departments.find((item) => item.id === departmentId)?.name;
+
+  const caption = departmentName
+    ? departmentName
+    : unitName
+      ? `Everyone in ${unitName}`
+      : "Everyone, across every unit";
+
+  const pickedKeys = new Set(picked.map((person) => pickKey(person.id, person.departmentId)));
+
+  /** Turning the page, or narrowing the list, starts it at the top again. */
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [current, scope, term]);
+
+  return (
+    <Modal open onClose={onClose} title="Add people" className="max-w-xl">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Unit" htmlFor="modal-unit">
+          <SearchSelect
+            id="modal-unit"
+            icon={<Building className="text-ink-500" />}
+            options={units.map((unit) => ({
+              value: unit.id,
+              label: unit.name,
+            }))}
+            value={unitId}
+            onChange={chooseUnit}
+            placeholder="All units"
+            clearLabel="All units"
+            emptyMessage="No units yet"
+          />
+        </Field>
+
+        <Field label="Department" htmlFor="modal-department">
+          <SearchSelect
+            id="modal-department"
+            options={inUnit.map((department) => ({
+              value: department.id,
+              label: department.name,
+              hint: department.unit?.name,
+            }))}
+            value={departmentId}
+            onChange={(value) => {
+              setDepartmentId(value);
+              setPage(1);
+            }}
+            placeholder="All departments"
+            clearLabel="All departments"
+            emptyMessage={unitId ? "Nothing in that unit" : "No departments yet"}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3">
+        <Input
+          icon={<Search className="text-ink-400" />}
+          placeholder="Search by name, department or unit..."
+          aria-label="Search people"
+          value={term}
+          onChange={(event) => {
+            setTerm(event.target.value);
+            setPage(1);
+          }}
+        />
+
+        <p className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-ink-400">
+          <span className="truncate font-semibold text-ink-500">{caption}</span>
+          {people && <span className="shrink-0">{shown.length} shown</span>}
+        </p>
+
+        <div className="mt-1 rounded-field border border-line">
+          {/* The rows scroll inside the box rather than stretching it, so a
+              page of thirty and a page of three are the same dialog, and the
+              pager below stays where the eye last left it. */}
+          <div ref={listRef} className="max-h-[min(26rem,50vh)] overflow-y-auto overscroll-contain">
+            {people === null ? (
+              <p className="flex items-center justify-center gap-2 px-3 py-8 text-[13px] text-ink-400">
+                <span className="size-3 animate-spin rounded-full border-2 border-ink-200 border-t-ink-400" />
+                Loading people…
+              </p>
+            ) : shown.length === 0 ? (
+              <p className="px-3 py-8 text-center text-[13px] text-ink-400">
+                {people.length === 0 ? "Nobody here yet." : `Nobody matches “${term}”.`}
+              </p>
+            ) : (
+              <ul className="divide-y divide-line">
+                {rows.map((person) => {
+                  const key = pickKey(person.id, person.department.id);
+                  const already = pickedKeys.has(key);
+
+                  return (
+                    <li key={key}>
+                      <button
+                        type="button"
+                        onClick={() => (already ? onRemove(key) : onAdd(person))}
+                        aria-pressed={already}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
+                          already ? "bg-brand-50/70" : "hover:bg-ink-50",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold",
+                            already ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-600",
+                          )}
+                        >
+                          {initials(person.name)}
+                        </span>
+
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="truncate text-[13px] font-semibold text-ink-900">
+                              {person.name}
+                            </span>
+                            <span className="shrink-0 text-[11px] text-ink-400 capitalize">
+                              {person.departmentRole}
+                            </span>
+                          </span>
+
+                          {/* Where they sit, small enough to skim past and
+                            precise enough to tell two Intizars apart. */}
+                          <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                            {person.unit && (
+                              <span className="rounded bg-ink-100 px-1.5 py-px text-[10px] font-semibold text-ink-500">
+                                {person.unit.name}
+                              </span>
+                            )}
+                            <span className="rounded bg-brand-50 px-1.5 py-px text-[10px] font-semibold text-brand-700">
+                              {person.department.name}
+                            </span>
+                          </span>
+                        </span>
+
+                        {already ? (
+                          <CheckCircle2 className="size-4 shrink-0 text-brand-600" />
+                        ) : (
+                          <UserPlus className="size-4 shrink-0 text-ink-300" />
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {pages > 1 && (
+            <Pagination
+              summary={`${from + 1}-${from + rows.length} of ${shown.length}`}
+              pages={pages}
+              current={current}
+              onPage={setPage}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3.5">
+        <p className="text-xs text-ink-500">
+          {picked.length > 0 &&
+            `${picked.length} ${picked.length === 1 ? "person" : "people"} added`}
+        </p>
+        <Button type="button" size="sm" onClick={onClose}>
+          Done
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 export function TicketForm() {
   const toast = useToast();
-  const { session } = useAuth();
+  const { session, features } = useAuth();
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [units, setUnits] = useState<UnitOption[]>([]);
 
@@ -235,13 +479,12 @@ export function TicketForm() {
   });
   const [targetDepts, setTargetDepts] = useState<string[]>([]);
   /**
-   * Who should pick it up, per department: `{ departmentId: [userId, ...] }`.
-   * More than one, because a department often puts two people on one request
-   * rather than splitting it into two.
+   * Who should pick it up. A flat list rather than a map per department: it is
+   * what the chips render, and the map the API wants is built from it once, at
+   * submit.
    */
-  const [people, setPeople] = useState<Record<string, string[]>>({});
-  /** Who is in each department being asked, keyed the same way. */
-  const [teams, setTeams] = useState<Record<string, MemberOption[]>>({});
+  const [picked, setPicked] = useState<Picked[]>([]);
+  const [peopleOpen, setPeopleOpen] = useState(false);
 
   const [priority, setPriority] = useState<TicketPriority>("Medium");
   const [subject, setSubject] = useState("");
@@ -253,6 +496,8 @@ export function TicketForm() {
   const [missing, setMissing] = useState<RequiredKey[]>([]);
   const [pending, setPending] = useState(false);
   const [raised, setRaised] = useState<TicketRecord[] | null>(null);
+  /** The read-it-back step between filling the form and sending it. */
+  const [reviewing, setReviewing] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   /** Until this clears, "no departments" would be a lie rather than a fact. */
   const [loadingOptions, setLoadingOptions] = useState(true);
@@ -268,47 +513,54 @@ export function TicketForm() {
     return () => controller.abort();
   }, []);
 
-  /**
-   * The people in every department being asked, fetched together and written
-   * in one go.
-   *
-   * A run that has been superseded is dropped rather than merged, so the
-   * pickers can never show a department that is no longer selected - and
-   * because the whole map is replaced, nothing has to be cleaned up when one
-   * is removed.
-   */
-  const teamsRun = useRef(0);
-
-  useEffect(() => {
-    const run = (teamsRun.current += 1);
-    const controller = new AbortController();
-
-    Promise.all(
-      targetDepts.map((id) =>
-        listDepartmentMembers(id, controller.signal)
-          .then((list) => [id, list] as const)
-          .catch(() => [id, [] as MemberOption[]] as const),
-      ),
-    ).then((entries) => {
-      if (run === teamsRun.current) setTeams(Object.fromEntries(entries));
-    });
-
-    return () => controller.abort();
-  }, [targetDepts]);
-
   const clear = (key: RequiredKey) =>
     setMissing((current) => current.filter((item) => item !== key));
 
+  /**
+   * Checked here as well as at the API: a file the bucket would refuse is
+   * better refused before it is carried across the network.
+   */
   const addFiles = (list: FileList | null) => {
-    if (list) setFiles((current) => [...current, ...Array.from(list)]);
+    if (!list) return;
+
+    const rejected: string[] = [];
+    const accepted: File[] = [];
+
+    for (const file of Array.from(list)) {
+      if (file.size > TICKET_FILE_LIMITS.maxBytes) {
+        rejected.push(`${file.name} is ${formatBytes(file.size)}`);
+      } else if (file.type && !TICKET_FILE_LIMITS.types.includes(file.type)) {
+        rejected.push(`${file.name} is not a PDF, DOC, JPG or PNG`);
+      } else {
+        accepted.push(file);
+      }
+    }
+
+    setFiles((current) => {
+      const room = TICKET_FILE_LIMITS.maxCount - current.length;
+      if (accepted.length > room) {
+        rejected.push(`only ${TICKET_FILE_LIMITS.maxCount} files can be attached`);
+      }
+      return [...current, ...accepted.slice(0, Math.max(0, room))];
+    });
+
+    if (rejected.length > 0) toast.error("Some files were not attached", rejected.join(" · "));
   };
+
+  /** 0-100 while the files are going up, null when nothing is in flight. */
+  const [uploading, setUploading] = useState<number | null>(null);
 
   const selected = departments.filter((department) => targetDepts.includes(department.id));
 
   // You can only ask on behalf of a department you are actually in.
   const myUnits = ownUnitOptions(session);
   const myDepartments = (session?.departments ?? [])
-    .filter((membership) => inAny(fromUnits, membership.unit?.id))
+    // Anything already picked stays on the list even when the unit filter
+    // would hide it: an option that disappears takes its name with it, and
+    // the chip left behind can only show the raw id.
+    .filter(
+      (membership) => inAny(fromUnits, membership.unit?.id) || fromDepts.includes(membership.id),
+    )
     .map((membership) => ({
       value: membership.id,
       // Their own departments can sit in different units, so once more than
@@ -319,7 +571,12 @@ export function TicketForm() {
           : (membership.name ?? "Department"),
     }));
 
-  const inUnit = departments.filter((department) => inAny(targetUnits, department.unit?.id));
+  // Same again for the side being asked, where it bites harder: naming a
+  // person also picks their department, and that department can sit in a unit
+  // the filter is not showing.
+  const inUnit = departments.filter(
+    (department) => inAny(targetUnits, department.unit?.id) || targetDepts.includes(department.id),
+  );
 
   const allDepartments = inUnit.map((department) => ({
     value: department.id,
@@ -363,27 +620,48 @@ export function TicketForm() {
   const chooseTargets = (value: string[]) => {
     setTargetDepts(value);
     // A name belongs to the department it was picked from, so anything no
-    // longer being asked takes its name with it.
-    setPeople((current) =>
-      Object.fromEntries(
-        value.filter((id) => current[id]?.length).map((id) => [id, current[id]]),
-      ),
-    );
+    // longer being asked takes its names with it.
+    setPicked((current) => current.filter((person) => value.includes(person.departmentId)));
     if (value.length > 0) clear("target");
   };
 
-  /** What a department is called, for the label above its own picker. */
-  const departmentName = (id: string) =>
-    departments.find((department) => department.id === id)?.name ?? "That department";
+  /** Naming somebody is also a way of choosing their department. */
+  const addPerson = (person: PersonOption) => {
+    const departmentId = person.department.id;
+
+    setTargetDepts((current) =>
+      current.includes(departmentId) ? current : [...current, departmentId],
+    );
+    setPicked((current) =>
+      current.some(
+        (item) => pickKey(item.id, item.departmentId) === pickKey(person.id, departmentId),
+      )
+        ? current
+        : [
+            ...current,
+            {
+              id: person.id,
+              name: person.name,
+              departmentId,
+              departmentName: person.department.name,
+            },
+          ],
+    );
+    clear("target");
+  };
+
+  const removePerson = (key: string) =>
+    setPicked((current) =>
+      current.filter((person) => pickKey(person.id, person.departmentId) !== key),
+    );
 
   const manager = isAdmin(session);
   const hasOwnDepartments = (session?.departments ?? []).length > 0;
-  const single = targetDepts.length === 1;
 
   const reset = () => {
     setTargetDepts([]);
     setTargetUnits(ownUnit(session) ? [ownUnit(session)!] : []);
-    setPeople({});
+    setPicked([]);
     setFromUnits(ownUnit(session) ? [ownUnit(session)!] : []);
     setFromDepts((session?.departments ?? []).map((membership) => membership.id));
     setPriority("Medium");
@@ -395,13 +673,26 @@ export function TicketForm() {
     setMissing([]);
   };
 
-  const submit = async (event: React.FormEvent) => {
+  /**
+   * Checks the form and opens the review. Nothing is sent yet: a request that
+   * reaches four departments and names six people is worth reading back once,
+   * and the only honest place to read it is after it has been filled in.
+   */
+  /** A department of mine, by name: what the review shows instead of an id. */
+  const nameOfMine = (id: string) =>
+    (session?.departments ?? []).find((membership) => membership.id === id)?.name ?? "Department";
+
+  const nameOfDepartment = (id: string) => {
+    const found = departments.find((department) => department.id === id);
+    if (!found) return "Department";
+    return found.unit?.name ? `${found.name} · ${found.unit.name}` : found.name;
+  };
+
+  const submit = (event: React.FormEvent) => {
     event.preventDefault();
 
     const filled: Record<RequiredKey, boolean> = {
       target: targetDepts.length > 0,
-      // Every department being asked has to be handed to somebody by name.
-      person: targetDepts.length > 0 && targetDepts.every((id) => people[id]?.length),
       subject: Boolean(subject.trim()),
       description: Boolean(description.trim()),
       completionDate: Boolean(completionDate),
@@ -417,35 +708,64 @@ export function TicketForm() {
         // Naming them only helps when there is more than one.
         gaps.length === 1 ? undefined : gaps.map((field) => field.label).join(", "),
       );
-      // Put the reader in front of the first empty box. A missing person is
-      // one of several pickers, so it resolves to the first one left empty.
-      const unnamed = targetDepts.find((id) => !people[id]?.length);
-      const firstId =
-        gaps[0].key === "person" && unnamed ? `person-${unnamed}` : gaps[0].id;
-
-      const first = document.getElementById(firstId);
+      // Put the reader in front of the first empty box.
+      const first = document.getElementById(gaps[0].id);
       first?.scrollIntoView({ behavior: "smooth", block: "center" });
       first?.focus({ preventScroll: true });
       return;
     }
 
     setMissing([]);
+    setReviewing(true);
+  };
+
+  /** The review's own button: uploads, creates, and hands back the tickets. */
+  const raise = async () => {
     setPending(true);
     try {
+      // The files go straight to storage first; only their keys reach the API,
+      // and a ticket is never written pointing at an upload that failed.
+      let attachments: { key: string; filename?: string }[] = [];
+      if (files.length > 0) {
+        if (!features.attachments) {
+          throw new Error("File storage is not configured yet, so files cannot be attached.");
+        }
+
+        setUploading(0);
+        const stored = [];
+        for (const [index, file] of files.entries()) {
+          // Sequentially, so the percentage means something: one bar for the
+          // whole set reads better than four racing each other.
+          stored.push(
+            await uploadTicketFile(file, {
+              onProgress: (percent) =>
+                setUploading(Math.round(((index + percent / 100) / files.length) * 100)),
+            }),
+          );
+        }
+        attachments = stored;
+      }
+
+      // `{ departmentId: [userId, ...] }`, and only for the departments that
+      // were actually named somebody.
+      const assignees: Record<string, string[]> = {};
+      for (const person of picked) {
+        if (!targetDepts.includes(person.departmentId)) continue;
+        (assignees[person.departmentId] ??= []).push(person.id);
+      }
+
       const tickets = await createTicket({
         departments: targetDepts,
         fromDepartments: fromDepts,
-        // Only the departments actually being asked, and only the ones a
-        // name was given for.
-        assignees: Object.fromEntries(
-          targetDepts.filter((id) => people[id]?.length).map((id) => [id, people[id]]),
-        ),
+        assignees,
         subject: subject.trim(),
         description: description.trim(),
         priority,
         deadline: completionDate,
         project: project.trim() || undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
+      setReviewing(false);
       setRaised(tickets);
       reset();
       toast.success(
@@ -458,369 +778,516 @@ export function TicketForm() {
       toast.error("Could not create the ticket", errorMessage(caught));
     } finally {
       setPending(false);
+      setUploading(null);
     }
   };
 
   return (
-    <form className="space-y-3" onSubmit={submit} noValidate>
-      <Step>
-        {/* From -> To reads as one sentence, so the two ends sit side by side
-            with the direction drawn between them. */}
-        {/* Stacked, because each end is a row of its own fields: side by side
-            they were two narrow columns, and the side being asked grows a
-            picker per department while the side asking never does. */}
-        <div>
-          <RoutePanel tone="from" label="From" caption="who is asking" icon={Building2}>
-            {hasOwnDepartments ? (
-              <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
-                <Field label="Unit" hint="(one or more)" htmlFor="from-unit">
-                  <MultiSelect
-                    id="from-unit"
-                    icon={<Building className="text-ink-500" />}
-                    options={myUnits.map((unit) => ({ value: unit.id, label: unit.name }))}
-                    value={fromUnits}
-                    onChange={chooseFromUnits}
-                    placeholder="All my units"
-                    emptyMessage="You are not in a unit yet"
-                    disabled={myUnits.length < 2}
-                  />
-                </Field>
+    <form className="mx-auto w-full max-w-3xl space-y-3 pb-2" onSubmit={submit} noValidate>
+      <StepCard step={1} title="Where it goes">
+        <FormRow label="From">
+          {hasOwnDepartments ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <MultiSelect
+                id="from-unit"
+                ariaLabel="Unit you are asking from"
+                chipTone="neutral"
+                icon={<Building className="text-ink-500" />}
+                options={myUnits.map((unit) => ({
+                  value: unit.id,
+                  label: unit.name,
+                }))}
+                value={fromUnits}
+                onChange={chooseFromUnits}
+                placeholder="All my units"
+                emptyMessage="You are not in a unit yet"
+                disabled={myUnits.length < 2}
+              />
 
-                <Field label="Department" hint="(yours)" htmlFor="from-departments">
-                  <MultiSelect
-                    id="from-departments"
-                    options={myDepartments}
-                    value={fromDepts}
-                    onChange={setFromDepts}
-                    placeholder="Select one or more"
-                    emptyMessage="Nothing in this unit"
-                  />
-                </Field>
-              </div>
-            ) : (
-              /* A manager belongs to no department, so there is nothing to ask
-                 from and the two fields would only be empty boxes. */
-              <p className="flex items-start gap-2 rounded-field bg-surface px-3 py-2 text-xs text-ink-500">
-                <ShieldCheck className="mt-px size-4 shrink-0 text-ink-400" />
-                {manager ? (
-                  <span>
-                    Raised at{" "}
-                    <span className="font-semibold text-ink-700">
-                      {ROLE_LABEL[session?.role ?? "admin"]}
-                    </span>{" "}
-                    level. The department you pick sees where it came from.
-                  </span>
-                ) : (
-                  <span>
-                    You are not in a department yet, so this goes out in your name only.
-                  </span>
-                )}
-              </p>
-            )}
-          </RoutePanel>
-
-          <Connector />
-
-          <RoutePanel tone="to" label="To" caption="who should handle it" icon={Inbox}>
-            <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
-              <Field label="Unit" hint="(one or more)" htmlFor="target-unit">
-                <MultiSelect
-                  id="target-unit"
-                  icon={<Building className="text-ink-500" />}
-                  options={units.map((unit) => ({ value: unit.id, label: unit.name }))}
-                  value={targetUnits}
-                  onChange={chooseTargetUnits}
-                  placeholder="All units"
-                  emptyMessage="No units yet"
-                />
-              </Field>
-
-              <Field label="Department" required htmlFor="target-departments">
-                <MultiSelect
-                  id="target-departments"
-                  options={allDepartments}
-                  value={targetDepts}
-                  onChange={chooseTargets}
-                  placeholder="Select one or more"
-                  emptyMessage={
-                    targetUnits.length > 0 ? "Nothing in those units yet" : "No departments yet"
-                  }
-                  invalid={missing.includes("target")}
-                />
-
-                {/* Until the lists arrive, an empty picker means "not here
-                    yet", not "nothing exists". */}
-                {loadingOptions && (
-                  <p className="mt-1.5 flex items-center gap-2 text-xs text-ink-400">
-                    <span className="size-3 animate-spin rounded-full border-2 border-ink-200 border-t-ink-400" />
-                    Loading departments…
-                  </p>
-                )}
-
-                {!loadingOptions && allDepartments.length === 0 && targetUnits.length > 0 && (
-                  <p className="mt-1.5 text-xs text-ink-400">
-                    {targetUnits.length === 1 ? "That unit has" : "Those units have"} no departments
-                    yet. Pick another, or clear the unit to see them all.
-                  </p>
-                )}
-
-                {!loadingOptions && departments.length === 0 && (
-                  <p className="mt-1.5 text-xs text-ink-400">
-                    No departments exist yet.{" "}
-                    {manager ? (
-                      <Link
-                        href="/departments"
-                        className="font-semibold text-brand-600 underline underline-offset-2"
-                      >
-                        Create one first
-                      </Link>
-                    ) : (
-                      "Ask an admin to create one."
-                    )}
-                  </p>
-                )}
-              </Field>
+              <MultiSelect
+                id="from-departments"
+                ariaLabel="Departments you are asking from"
+                chipTone="neutral"
+                options={myDepartments}
+                value={fromDepts}
+                onChange={setFromDepts}
+                placeholder="Your departments"
+                emptyMessage="Nothing in this unit"
+              />
             </div>
-
-            {/* Named per department, because each of them gets its own ticket:
-                somebody in Finance cannot hold the copy that went to IT. */}
-            {targetDepts.length > 0 && (
-              <div>
-                <Label required htmlFor={`person-${targetDepts[0]}`}>
-                  {single ? "People" : "People, per department"}
-                </Label>
-
-                <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
-                  {targetDepts.map((id) => {
-                    const name = departmentName(id);
-                    // Undefined while it is still being fetched; empty once it
-                    // has arrived and there is nobody in there.
-                    const list = teams[id];
-
-                    return (
-                      <div key={id}>
-                        {!single && (
-                          <p className="mb-1 truncate text-xs font-semibold text-ink-500">{name}</p>
-                        )}
-                        <MultiSelect
-                          id={`person-${id}`}
-                          icon={<UserRound className="text-ink-500" />}
-                          options={(list ?? []).map((member) => ({
-                            value: member.id,
-                            label: `${member.name} (${member.departmentRole})`,
-                          }))}
-                          value={people[id] ?? []}
-                          onChange={(next) => {
-                            setPeople((current) => ({ ...current, [id]: next }));
-                            clear("person");
-                          }}
-                          placeholder={
-                            list === undefined ? "Loading..." : "Choose one or more people"
-                          }
-                          emptyMessage={`Nobody in ${name} yet`}
-                          invalid={missing.includes("person") && !people[id]?.length}
-                          disabled={!list || list.length === 0}
-                        />
-
-                        {list?.length === 0 && (
-                          <p className="mt-1 text-xs font-medium text-brand-600">
-                            Nobody is in {name} yet, so it cannot be asked. Remove it above, or add
-                            someone to the department first.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <p className="mt-1.5 text-xs text-ink-400">
-                  It lands on them - one person or several. Whoever holds it can hand it to
-                  someone else in the department, and every handover is kept on the ticket.
-                </p>
-              </div>
-            )}
-          </RoutePanel>
-        </div>
-
-        <div className="mt-2.5">
-          <Label required>Priority</Label>
-          <PriorityPicker value={priority} onChange={setPriority} />
-        </div>
-
-        {/* Who can see it is a property of the department, so say so up front. */}
-        {selected.length > 0 && (
-          <div className="mt-2.5 rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
-            <p className="flex items-center gap-2">
-              <Users className="size-4 shrink-0 text-ink-400" />
-              {selected.length === 1
-                ? "One ticket will be raised, visible only to:"
-                : `${selected.length} separate tickets will be raised, each visible only to:`}
+          ) : (
+            /* A manager belongs to no department, so there is nothing to ask
+               from and the two fields would only be empty boxes. */
+            <p className="text-[13px] text-ink-500">
+              {manager ? (
+                <>
+                  Raised at{" "}
+                  <span className="font-semibold text-ink-700">
+                    {ROLE_LABEL[session?.role ?? "admin"]}
+                  </span>{" "}
+                  level. The department you pick sees where it came from.
+                </>
+              ) : (
+                "You are not in a department yet, so this goes out in your name only."
+              )}
             </p>
-            <ul className="mt-1.5 space-y-0.5 pl-6">
-              {selected.map((department) => {
-                const picked = people[department.id] ?? [];
-                const who = (teams[department.id] ?? [])
-                  .filter((member) => picked.includes(member.id))
-                  .map((member) => member.name)
-                  .join(", ");
+          )}
+        </FormRow>
 
+        <FormRow label="To" required>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MultiSelect
+              id="target-unit"
+              ariaLabel="Unit to ask"
+              chipTone="neutral"
+              icon={<Building className="text-ink-500" />}
+              options={units.map((unit) => ({
+                value: unit.id,
+                label: unit.name,
+              }))}
+              value={targetUnits}
+              onChange={chooseTargetUnits}
+              placeholder="All units"
+              emptyMessage="No units yet"
+            />
+
+            <MultiSelect
+              id="target-departments"
+              ariaLabel="Departments to ask"
+              options={allDepartments}
+              value={targetDepts}
+              onChange={chooseTargets}
+              placeholder="Choose departments"
+              emptyMessage={
+                targetUnits.length > 0 ? "Nothing in those units yet" : "No departments yet"
+              }
+              invalid={missing.includes("target")}
+            />
+          </div>
+
+          {/* Until the lists arrive, an empty picker means "not here yet",
+              not "nothing exists". */}
+          {loadingOptions && (
+            <p className="mt-2 flex items-center gap-2 text-[11px] text-ink-400">
+              <span className="size-3 animate-spin rounded-full border-2 border-ink-200 border-t-ink-400" />
+              Loading departments…
+            </p>
+          )}
+
+          {!loadingOptions && departments.length === 0 && (
+            <p className="mt-2 text-[11px] text-ink-400">
+              No departments exist yet.{" "}
+              {manager ? (
+                <Link
+                  href="/departments"
+                  className="font-semibold text-brand-600 underline underline-offset-2"
+                >
+                  Create one first
+                </Link>
+              ) : (
+                "Ask an admin to create one."
+              )}
+            </p>
+          )}
+        </FormRow>
+
+        {/* Naming somebody is a shortcut, not a gate: the department sees it
+            either way, and this only decides whose desk it starts on. */}
+        <FormRow
+          label="People"
+          hint="optional"
+          action={
+            <button
+              type="button"
+              onClick={() => setPeopleOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+            >
+              <UserPlus className="size-3.5" />
+              Add
+            </button>
+          }
+        >
+          {picked.length === 0 ? (
+            <p className="text-[13px] text-ink-400">Anyone in the department can pick it up.</p>
+          ) : (
+            <ul className="flex flex-wrap gap-1.5">
+              {picked.map((person) => {
+                const key = pickKey(person.id, person.departmentId);
                 return (
-                  <li key={department.id}>
-                    <span className="font-semibold text-ink-700">{department.name}</span> · its head
-                    and team
-                    {who ? (
-                      <>
-                        , landing on <span className="font-semibold text-ink-700">{who}</span>
-                      </>
-                    ) : (
-                      <span className="text-brand-600">, nobody chosen yet</span>
+                  <li
+                    key={key}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-ink-100 py-1 pr-1.5 pl-1 text-[12px] font-medium text-ink-800"
+                  >
+                    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-ink-300 text-[10px] font-bold text-ink-700">
+                      {initials(person.name)}
+                    </span>
+                    {person.name}
+                    {targetDepts.length > 1 && (
+                      <span className="text-ink-400">· {person.departmentName}</span>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => removePerson(key)}
+                      aria-label={`Remove ${person.name}`}
+                      className="grid size-4 place-items-center rounded-full text-ink-400 transition-colors hover:bg-ink-200 hover:text-ink-700"
+                    >
+                      <X className="size-3" strokeWidth={3} />
+                    </button>
                   </li>
                 );
               })}
             </ul>
-          </div>
-        )}
-      </Step>
+          )}
+        </FormRow>
 
-      <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
-        <Step title="What you need">
-          <div className="space-y-3">
-            {/* The two short answers share a row; the long one gets its own. */}
-            <div className="grid gap-3 sm:grid-cols-[1fr_12rem]">
-              <Field label="Subject" required htmlFor="subject">
-                <Input
-                  id="subject"
-                  placeholder="e.g. Web developer required"
-                  invalid={missing.includes("subject")}
-                  value={subject}
-                  onChange={(event) => {
-                    setSubject(event.target.value);
-                    clear("subject");
-                  }}
-                />
-              </Field>
+        {/* Who can see it is a property of the department, so say so up front -
+            as one quiet line, because it is a consequence of the answers above
+            rather than a fourth thing to fill in. */}
+        {selected.length > 0 && (
+          <p className="border-t border-line pt-3 text-[12px] leading-relaxed text-ink-400">
+            {selected.length === 1
+              ? "One ticket, seen by "
+              : `${selected.length} separate tickets, each seen by `}
+            {selected.map((department, index) => {
+              const who = picked
+                .filter((person) => person.departmentId === department.id)
+                .map((person) => person.name)
+                .join(", ");
 
-              <Field label="Deadline" required hint="(needed by)" htmlFor="completion-date">
-                <DateField
-                  id="completion-date"
-                  value={completionDate}
-                  onChange={(value) => {
-                    setCompletionDate(value);
-                    if (value) clear("completionDate");
-                  }}
-                  clearable={false}
-                  placeholder="Select a date"
-                  invalid={missing.includes("completionDate")}
-                />
-              </Field>
-            </div>
-
-            <Field label="Description" required htmlFor="description">
-              <Textarea
-                id="description"
-                maxLength={1000}
-                className="min-h-24"
-                invalid={missing.includes("description")}
-                placeholder="We need a Node.js developer for the customer portal. Please start the hiring process and share a timeline for candidate availability."
-                value={description}
-                onChange={(event) => {
-                  setDescription(event.target.value);
-                  clear("description");
-                }}
-              />
-            </Field>
-          </div>
-        </Step>
-
-        <Step title="Extra details" optional>
-          <div className="space-y-3">
-            <Field label="Related project" htmlFor="project">
-              <Input
-                id="project"
-                placeholder="e.g. FlowDesk Portal"
-                value={project}
-                onChange={(event) => setProject(event.target.value)}
-              />
-            </Field>
-
-            <div>
-              <p className="mb-1.5 text-sm font-semibold text-ink-800">Attachments</p>
-
-              <div
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDragging(true);
-                }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setDragging(false);
-                  addFiles(event.dataTransfer.files);
-                }}
-                className={cn(
-                  "flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-field border border-dashed px-4 py-3 text-center text-sm transition-colors",
-                  dragging ? "border-brand-400 bg-brand-50" : "border-line-strong bg-surface",
-                )}
-              >
-                <Paperclip className="size-4 text-ink-400" />
-                <span className="text-ink-600">
-                  Drag files here or{" "}
-                  <button
-                    type="button"
-                    onClick={() => fileInput.current?.click()}
-                    className="font-semibold text-brand-600 underline underline-offset-2 hover:text-brand-700"
-                  >
-                    browse
-                  </button>
+              return (
+                <span key={department.id}>
+                  {index > 0 && " · "}
+                  <span className="font-semibold text-ink-600">{department.name}</span>
+                  {who && <> — starting with {who}</>}
                 </span>
-                <span className="text-xs text-ink-400">PDF, DOC, JPG, PNG · max 10MB</span>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                  onChange={(event) => addFiles(event.target.files)}
-                />
-              </div>
+              );
+            })}
+          </p>
+        )}
+      </StepCard>
 
-              {files.length > 0 && (
-                <ul className="mt-2 space-y-1.5">
-                  {files.map((file, index) => (
-                    <li
-                      key={file.name + index}
-                      className="flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-1.5 text-sm"
-                    >
-                      <span className="truncate font-medium text-ink-700">{file.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
-                        className="text-ink-400 transition-colors hover:text-brand-600"
-                        aria-label={"Remove " + file.name}
-                      >
-                        <X className="size-4" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+      <StepCard step={2} title="What you need">
+        <div className="space-y-3">
+          {/* The three short answers share a row; the long one gets its own.
+              Priority is a dropdown here rather than four segments: beside a
+              subject box it was the widest thing in the row and the least
+              important question on the form. */}
+          <div className="grid gap-3 sm:grid-cols-[1fr_8.5rem_9.5rem]">
+            <Field label="Subject" required htmlFor="subject">
+              <Input
+                id="subject"
+                placeholder="e.g. Web developer required"
+                invalid={missing.includes("subject")}
+                value={subject}
+                onChange={(event) => {
+                  setSubject(event.target.value);
+                  clear("subject");
+                }}
+              />
+            </Field>
+
+            <Field label="Priority" required htmlFor="priority">
+              <PriorityPicker id="priority" value={priority} onChange={setPriority} />
+            </Field>
+
+            <Field label="Deadline" required htmlFor="completion-date">
+              <DateField
+                id="completion-date"
+                value={completionDate}
+                onChange={(value) => {
+                  setCompletionDate(value);
+                  if (value) clear("completionDate");
+                }}
+                clearable={false}
+                placeholder="Select a date"
+                invalid={missing.includes("completionDate")}
+              />
+            </Field>
           </div>
-        </Step>
-      </div>
+
+          <Field label="Description" required htmlFor="description">
+            <Textarea
+              id="description"
+              maxLength={1000}
+              className="min-h-24"
+              invalid={missing.includes("description")}
+              placeholder="We need a Node.js developer for the customer portal. Please start the hiring process and share a timeline for candidate availability."
+              value={description}
+              onChange={(event) => {
+                setDescription(event.target.value);
+                clear("description");
+              }}
+            />
+          </Field>
+        </div>
+      </StepCard>
+
+      <StepCard step={3} title="Extra details" optional>
+        <div className="grid gap-3 sm:grid-cols-2 sm:items-start">
+          <Field label="Related project" htmlFor="project">
+            <Input
+              id="project"
+              placeholder="e.g. FlowDesk Portal"
+              value={project}
+              onChange={(event) => setProject(event.target.value)}
+            />
+          </Field>
+
+          <div>
+            <Label hint="PDF, DOC, JPG, PNG · max 10MB">Attachments</Label>
+
+            <div
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragging(false);
+                addFiles(event.dataTransfer.files);
+              }}
+              className={cn(
+                // The same height as the box beside it: the two halves of this
+                // step are one question each and should look like it.
+                "flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 text-center text-[12px] transition-colors",
+                dragging ? "border-brand-400 bg-brand-50" : "border-line-strong bg-surface",
+              )}
+            >
+              <Paperclip className="size-3.5 shrink-0 text-ink-400" />
+              <span className="truncate text-ink-500">
+                {features.attachments ? (
+                  <>
+                    Drag files here or{" "}
+                    <button
+                      type="button"
+                      onClick={() => fileInput.current?.click()}
+                      className="font-semibold text-brand-600 underline underline-offset-2 hover:text-brand-700"
+                    >
+                      browse
+                    </button>
+                  </>
+                ) : (
+                  "File storage is not configured yet"
+                )}
+              </span>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                className="hidden"
+                accept={TICKET_FILE_LIMITS.accept}
+                onChange={(event) => addFiles(event.target.files)}
+              />
+            </div>
+
+            {files.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {files.map((file, index) => (
+                  <li
+                    key={file.name + index}
+                    className="flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-1.5 text-sm"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium text-ink-700">
+                      {file.name}
+                      <span className="ml-1.5 font-normal text-ink-400">
+                        {formatBytes(file.size)}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
+                      className="text-ink-400 transition-colors hover:text-brand-600"
+                      aria-label={"Remove " + file.name}
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </StepCard>
 
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={reset}>
           Cancel
         </Button>
         <Button type="submit" disabled={pending}>
-          {pending ? "Creating..." : "Create Ticket"}
+          Create Ticket
         </Button>
       </div>
 
+      {/* Mounted only while it is open, so each visit starts on a clean
+          search rather than on yesterday's. */}
+      {peopleOpen && (
+        <AddPeopleModal
+          onClose={() => setPeopleOpen(false)}
+          departments={departments}
+          units={units}
+          picked={picked}
+          onAdd={addPerson}
+          onRemove={removePerson}
+        />
+      )}
+
+      {reviewing && (
+        <ReviewModal
+          onClose={() => setReviewing(false)}
+          onRaise={raise}
+          pending={pending}
+          uploading={uploading}
+          from={fromDepts.map((id) => nameOfMine(id))}
+          to={targetDepts.map((id) => nameOfDepartment(id))}
+          people={picked}
+          priority={priority}
+          subject={subject.trim()}
+          description={description.trim()}
+          deadline={completionDate}
+          project={project.trim()}
+          files={files}
+        />
+      )}
+
       <TicketRaisedModal tickets={raised} onClose={() => setRaised(null)} />
     </form>
+  );
+}
+
+/** One line of the read-back: a label on the left, the answer on the right. */
+function ReviewRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-2">
+      <dt className="shrink-0 text-ink-500">{label}</dt>
+      <dd className="min-w-0 text-right font-semibold text-ink-900">{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * The request as it will be sent, before it is sent.
+ *
+ * One submit can open several tickets and put named people on them, so the
+ * last thing between filling the form and doing that is reading it back. The
+ * form is still standing behind this: closing it changes nothing.
+ */
+function ReviewModal({
+  onClose,
+  onRaise,
+  pending,
+  uploading,
+  from,
+  to,
+  people,
+  priority,
+  subject,
+  description,
+  deadline,
+  project,
+  files,
+}: {
+  onClose: () => void;
+  onRaise: () => void;
+  pending: boolean;
+  uploading: number | null;
+  from: string[];
+  to: string[];
+  people: Picked[];
+  priority: TicketPriority;
+  subject: string;
+  description: string;
+  deadline: string;
+  project: string;
+  files: File[];
+}) {
+  const many = to.length > 1;
+
+  return (
+    <Modal
+      open
+      onClose={pending ? () => {} : onClose}
+      title="Review this request"
+      description={
+        many
+          ? `${to.length} departments are being asked, and each gets its own ticket.`
+          : "This is what the department will see."
+      }
+      className="max-w-lg"
+    >
+      <div className="rounded-field bg-ink-50 px-3.5 py-3">
+        <p className="text-sm font-bold text-ink-900">{subject}</p>
+        <p className="mt-1 text-[13px] whitespace-pre-wrap text-ink-600">{description}</p>
+      </div>
+
+      <dl className="mt-3 divide-y divide-line text-[13px]">
+        {from.length > 0 && <ReviewRow label="From">{from.join(", ")}</ReviewRow>}
+
+        <ReviewRow label={many ? "To" : "To department"}>
+          <span className="flex flex-wrap justify-end gap-1">
+            {to.map((name) => (
+              <span
+                key={name}
+                className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700"
+              >
+                {name}
+              </span>
+            ))}
+          </span>
+        </ReviewRow>
+
+        <ReviewRow label="Addressed to">
+          {people.length === 0 ? (
+            <span className="font-normal text-ink-400">Anyone in the department</span>
+          ) : (
+            people.map((person) => person.name).join(", ")
+          )}
+        </ReviewRow>
+
+        <ReviewRow label="Priority">
+          <PriorityBadge priority={priority} />
+        </ReviewRow>
+
+        <ReviewRow label="Deadline">{formatDate(deadline)}</ReviewRow>
+
+        {project && <ReviewRow label="Related project">{project}</ReviewRow>}
+
+        {files.length > 0 && (
+          <ReviewRow label="Attachments">
+            <span className="flex flex-col items-end gap-0.5">
+              {files.map((file, index) => (
+                <span key={file.name + index} className="truncate">
+                  {file.name}
+                  <span className="ml-1.5 font-normal text-ink-400">{formatBytes(file.size)}</span>
+                </span>
+              ))}
+            </span>
+          </ReviewRow>
+        )}
+      </dl>
+
+      {many && (
+        <p className="mt-3 rounded-md bg-ink-50 px-3 py-2 text-[11px] text-ink-500">
+          {to.length} separate tickets are raised, one per department. Each has its own number and
+          is resolved on its own.
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:justify-end">
+        <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
+          Back to the form
+        </Button>
+        <Button type="button" size="sm" onClick={onRaise} disabled={pending}>
+          {uploading !== null
+            ? `Uploading ${uploading}%`
+            : pending
+              ? "Raising..."
+              : many
+                ? `Raise ${to.length} tickets`
+                : "Raise ticket"}
+        </Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -839,61 +1306,59 @@ function TicketRaisedModal({
       open={tickets !== null && tickets.length > 0}
       onClose={onClose}
       title={many ? "Tickets raised" : "Ticket raised"}
-      description={
-        many
-          ? "Each department got its own ticket and can resolve it independently."
-          : "It is now in that department's queue."
-      }
-      className="max-w-md"
+      className="max-w-sm"
     >
       {tickets && tickets.length > 0 && (
         <>
-          <div className="flex items-start gap-3 rounded-field bg-status-completed-bg px-3.5 py-3">
-            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-status-completed-fg" />
+          {/* The numbers and the subject: proof it exists, and which one it
+              was. Everything else about it is on the list behind. */}
+          <div className="flex items-start gap-2 rounded-field bg-status-completed-bg px-3 py-2">
+            <CheckCircle2 className="mt-px size-4 shrink-0 text-status-completed-fg" />
             <div className="min-w-0">
-              <p className="text-sm font-bold text-status-completed-fg">
+              <p className="text-[13px] leading-snug font-semibold text-status-completed-fg">
                 {tickets.map((ticket) => ticket.number).join(", ")} created
               </p>
-              <p className="mt-0.5 text-sm text-ink-600">{tickets[0].subject}</p>
+              <p className="truncate text-[12px] text-ink-600">{tickets[0].subject}</p>
             </div>
           </div>
 
-          <dl className="mt-4 divide-y divide-line text-sm">
+          <dl className="mt-3 divide-y divide-line text-[12px]">
             {tickets.map((ticket) => (
-              <div key={ticket.id} className="flex justify-between gap-4 py-2">
+              <div key={ticket.id} className="flex justify-between gap-4 py-1.5">
                 <dt className="text-ink-500">{ticket.number}</dt>
                 <dd className="font-semibold text-ink-900">{ticket.department.name}</dd>
               </div>
             ))}
             {tickets[0].fromDepartments.length > 0 && (
-              <div className="flex justify-between gap-4 py-2">
-                <dt className="text-ink-500">Raised on behalf of</dt>
+              <div className="flex justify-between gap-4 py-1.5">
+                <dt className="shrink-0 text-ink-500">On behalf of</dt>
                 <dd className="text-right font-semibold text-ink-900">
                   {tickets[0].fromDepartments.map((item) => item.name).join(", ")}
                 </dd>
               </div>
             )}
             {tickets[0].assignees.length > 0 && (
-              <div className="flex justify-between gap-4 py-2">
-                <dt className="text-ink-500">Addressed to</dt>
+              <div className="flex justify-between gap-4 py-1.5">
+                <dt className="shrink-0 text-ink-500">Addressed to</dt>
                 <dd className="text-right font-semibold text-ink-900">
                   {tickets[0].assignees.map((person) => person.name).join(", ")}
                 </dd>
               </div>
             )}
-            <div className="flex justify-between gap-4 py-2">
+            <div className="flex justify-between gap-4 py-1.5">
               <dt className="text-ink-500">Priority</dt>
               <dd className="font-semibold text-ink-900">{tickets[0].priority}</dd>
             </div>
           </dl>
 
-          <div className="mt-4 flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:justify-end">
+          <div className="mt-3 flex flex-col-reverse gap-2 border-t border-line pt-3 sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" size="sm" onClick={onClose}>
               Raise another
             </Button>
+            {/* Matches Button's `sm`, so the pair reads as one row of controls. */}
             <Link
               href="/my-requests"
-              className="inline-flex h-9 items-center justify-center rounded-lg bg-brand-600 px-3.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+              className="inline-flex h-7 items-center justify-center rounded-md bg-brand-600 px-2.5 text-[12px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
             >
               View my requests
             </Link>
