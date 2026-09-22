@@ -116,7 +116,7 @@ export function SettingsForm() {
           {/* Membership is owned by the super admin on the Departments page,
               so it is shown here, not edited here. */}
           <Field label="Departments" hint="(managed by your super admin)">
-            <div className="flex min-h-12 flex-wrap items-center gap-2 rounded-field border border-line-strong bg-ink-50 px-3 py-2.5">
+            <div className="flex min-h-11 flex-wrap items-center gap-2 rounded-field border border-line-strong bg-ink-50 px-3 py-2">
               <Building2 className="size-4.5 shrink-0 text-ink-400" />
               {memberships.length === 0 ? (
                 <span className="text-sm text-ink-400">Not in a department yet</span>

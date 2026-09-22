@@ -25,7 +25,7 @@ export function PageHeader({
   useRegisterPageTitle(title);
 
   return (
-    <div className="mb-4 flex min-h-9 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {backHref && (
           <Link

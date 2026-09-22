@@ -70,7 +70,7 @@ export function MultiSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         className={cn(
-          "flex min-h-12 w-full items-center gap-3 rounded-field border bg-surface px-4 py-2 text-left transition-colors",
+          "flex min-h-11 w-full items-center gap-3 rounded-field border bg-surface px-4 py-1.5 text-left transition-colors",
           "focus:ring-4 focus:ring-brand-500/10 focus:outline-none",
           invalid ? "border-brand-400" : "border-line-strong focus:border-brand-400",
           disabled && "cursor-not-allowed bg-ink-50 text-ink-400",

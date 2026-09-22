@@ -141,6 +141,41 @@ export async function getDepartment(req, res) {
   });
 }
 
+/**
+ * Who is in one department, names only.
+ *
+ * The same trust as listing the departments themselves: anyone may raise a
+ * request to any department, so anyone may see who is in it to address the
+ * request at a person. Everything else about them - email, standing, when
+ * they were last here - stays behind getDepartment above, which only its own
+ * members and a manager can read.
+ *
+ * Suspended accounts are left out: a ticket addressed at one would sit
+ * unanswered.
+ */
+export async function listMemberOptions(req, res) {
+  assertObjectId(req.params.id, 'department id');
+
+  const department = await Department.findById(req.params.id).select('_id');
+  if (!department) throw ApiError.notFound('Department not found.');
+
+  const members = await User.find({
+    'memberships.department': department._id,
+    status: { $ne: 'suspended' },
+  })
+    .select('name memberships')
+    .sort({ name: 1 });
+
+  res.json({
+    success: true,
+    members: members.map((member) => ({
+      id: String(member._id),
+      name: member.name,
+      departmentRole: member.roleInDepartment(department._id),
+    })),
+  });
+}
+
 export async function createDepartment(req, res) {
   const { name, description, code, unit } = req.body ?? {};
 

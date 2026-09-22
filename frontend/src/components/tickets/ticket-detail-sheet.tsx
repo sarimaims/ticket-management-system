@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CalendarCheck,
   CheckCircle2,
+  History,
   Lock,
   MessagesSquare,
   PencilLine,
@@ -15,6 +16,7 @@ import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/comp
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { DateField } from "@/components/tickets/date-field";
 import { TicketChat } from "@/components/tickets/ticket-chat";
+import { TicketHistory } from "@/components/tickets/ticket-history";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
@@ -218,14 +220,15 @@ function RequestEditor({
   );
 }
 
-export type SheetTab = "details" | "chat";
+export type SheetTab = "details" | "chat" | "history";
 
 /**
- * Two panes on one ticket: what it says, and what is being said about it.
+ * Three panes on one ticket: what it says, what is being said about it, and
+ * who has held it.
  *
- * The badge prefers unread over total, because "two you have not read" is the
- * thing worth walking across the room for; a quiet thread just says how long
- * it is.
+ * The chat badge prefers unread over total, because "two you have not read" is
+ * the thing worth walking across the room for; a quiet thread just says how
+ * long it is.
  */
 function Tabs({
   tab,
@@ -240,7 +243,7 @@ function Tabs({
 }) {
   const style = (value: SheetTab) =>
     cn(
-      "flex-1 border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors",
+      "flex-1 border-b-2 px-2 py-2.5 text-[13px] font-semibold transition-colors",
       tab === value
         ? "border-brand-600 text-brand-700"
         : "border-transparent text-ink-500 hover:text-ink-800",
@@ -277,6 +280,18 @@ function Tabs({
               {unread > 0 ? unread : count}
             </span>
           )}
+        </span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "history"}
+        onClick={() => onTab("history")}
+        className={style("history")}
+      >
+        <span className="inline-flex items-center justify-center gap-1.5">
+          <History className="size-4" />
+          History
         </span>
       </button>
     </div>
@@ -345,7 +360,7 @@ export function TicketDetailSheet({
     <>
       {ticket && (
         <div
-          className="fixed inset-x-0 top-16 bottom-0 z-40 bg-ink-900/30 xl:hidden"
+          className="fixed inset-x-0 top-14 bottom-0 z-40 bg-ink-900/30 xl:hidden"
           onClick={onClose}
           aria-hidden="true"
         />
@@ -355,7 +370,7 @@ export function TicketDetailSheet({
         aria-hidden={!ticket}
         aria-label="Ticket details"
         className={cn(
-          "fixed top-16 right-0 bottom-0 z-50 flex w-full max-w-md flex-col border-l border-line bg-surface transition-transform duration-200",
+          "fixed top-14 right-0 bottom-0 z-50 flex w-full max-w-md flex-col border-l border-line bg-surface transition-transform duration-200",
           ticket ? "translate-x-0" : "translate-x-full",
         )}
       >
@@ -567,8 +582,9 @@ function SheetBody({
           polling. The details below are hidden rather than unmounted, so an
           edit in progress survives a look at the conversation. */}
       {tab === "chat" && <TicketChat ticket={ticket} onCount={setChatCount} />}
+      {tab === "history" && <TicketHistory ticket={ticket} />}
 
-      <div className={cn("flex-1 overflow-y-auto px-5 py-4", tab === "chat" && "hidden")}>
+      <div className={cn("flex-1 overflow-y-auto px-5 py-4", tab !== "details" && "hidden")}>
         {editing && (
           <RequestEditor
             draft={draft}
@@ -668,13 +684,19 @@ function SheetBody({
                 value={assignee}
                 onChange={(event) => setAssignee(event.target.value)}
               >
-                <option value="">Nobody yet</option>
+                {/* Only offered while nobody holds it, which only a ticket
+                    raised before that rule can be. */}
+                {!ticket.assignee && <option value="">Nobody yet</option>}
                 {members.map((member) => (
                   <option key={member.id} value={member.id}>
                     {member.name} ({member.departmentRole})
                   </option>
                 ))}
               </Select>
+              <p className="mt-1.5 text-xs text-ink-400">
+                Anyone in {departmentName} can take it on, or hand it to someone else. Every
+                handover is listed under History.
+              </p>
             </Field>
 
             {/* The ask is shown, locked: a department answers it, it does not
@@ -684,7 +706,7 @@ function SheetBody({
                 Deadline requested
                 <Lock className="size-3.5 text-ink-400" />
               </p>
-              <div className="flex h-12 items-center rounded-field border border-line bg-ink-50 px-4 text-sm font-medium text-ink-500">
+              <div className="flex h-11 items-center rounded-field border border-line bg-ink-50 px-4 text-sm font-medium text-ink-500">
                 {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "None given"}
               </div>
               <p className="mt-1.5 text-xs text-ink-400">

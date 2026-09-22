@@ -33,6 +33,8 @@ export type TicketRecord = {
 export function createTicket(input: {
   departments: string[];
   fromDepartments?: string[];
+  /** Who should pick it up, one name per department: `{ departmentId: userId }`. */
+  assignees?: Record<string, string>;
   subject: string;
   description: string;
   /** Optional: the form no longer asks, older tickets still carry one. */

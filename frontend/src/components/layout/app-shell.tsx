@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
         <div className="flex min-h-screen min-w-0 flex-col lg:pl-60">
           <Topbar onMenu={() => setNavOpen(true)} />
-          <main className="min-w-0 flex-1 px-4 py-4 sm:px-6 lg:px-8 lg:py-5">{children}</main>
+          <main className="min-w-0 flex-1 px-3 py-3 sm:px-4 lg:px-5 lg:py-4">{children}</main>
         </div>
       </div>
       </NotificationProvider>

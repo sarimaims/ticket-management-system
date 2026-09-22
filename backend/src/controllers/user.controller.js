@@ -29,11 +29,54 @@ export async function listUsers(req, res) {
 }
 
 /**
- * Creates a management account. Both a super admin and an admin may do this;
- * the super admin role itself is never handed out here.
+ * Turns whatever was sent into a clean membership list: one entry per
+ * department, a valid role on each, and every department checked to exist.
+ *
+ * Shared by creating and editing an account, so the two cannot drift into
+ * disagreeing about what a valid membership is.
+ */
+async function cleanMemberships(memberships) {
+  if (!Array.isArray(memberships)) throw ApiError.badRequest('Memberships must be a list.');
+
+  const cleaned = [];
+  const seen = new Set();
+
+  for (const entry of memberships) {
+    const departmentId = entry?.department ?? entry?.id;
+    assertObjectId(departmentId, 'department id');
+
+    const membershipRole = entry?.role ?? 'team';
+    if (!DEPARTMENT_ROLES.includes(membershipRole)) {
+      throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
+    }
+
+    // Last entry wins rather than erroring, so a duplicated pick is harmless.
+    if (seen.has(String(departmentId))) {
+      const existing = cleaned.find((item) => String(item.department) === String(departmentId));
+      existing.role = membershipRole;
+      continue;
+    }
+
+    seen.add(String(departmentId));
+    cleaned.push({ department: departmentId, role: membershipRole });
+  }
+
+  const found = await Department.countDocuments({ _id: { $in: [...seen] } });
+  if (found !== seen.size) throw ApiError.badRequest('One or more departments are invalid.');
+
+  return cleaned;
+}
+
+/**
+ * Creates an account. Both a super admin and an admin may do this; the super
+ * admin role itself is never handed out here.
+ *
+ * A member can be placed in their departments as they are created - any unit,
+ * any department, with a role in each - rather than being made first and
+ * filed afterwards.
  */
 export async function createUser(req, res) {
-  const { name, email, password, role = 'admin' } = req.body ?? {};
+  const { name, email, password, role = 'admin', memberships } = req.body ?? {};
 
   if (!name?.trim()) throw ApiError.badRequest('Name is required.');
   if (!email?.trim()) throw ApiError.badRequest('Email is required.');
@@ -49,15 +92,26 @@ export async function createUser(req, res) {
     throw ApiError.conflict('An account with this email already exists.');
   }
 
+  // A manager sits above the org chart and belongs to no department, so the
+  // picker's value is not applied to one.
+  const cleaned =
+    memberships !== undefined && !MANAGER_ROLES.includes(role)
+      ? await cleanMemberships(memberships)
+      : [];
+
   const user = await User.create({
     name: name.trim(),
     email: normalisedEmail,
     password,
     role,
     status: 'active',
+    memberships: cleaned,
   });
 
-  res.status(201).json({ success: true, user: presentUser(user) });
+  // Populated, so the new row arrives with department and unit names on it
+  // rather than bare ids the directory cannot label.
+  const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
+  res.status(201).json({ success: true, user: presentUser(populated) });
 }
 
 /**
@@ -123,35 +177,7 @@ export async function updateUser(req, res) {
 
   // A manager has no departments, so the picker's value is simply not applied.
   if (memberships !== undefined && !MANAGER_ROLES.includes(user.role)) {
-    if (!Array.isArray(memberships)) throw ApiError.badRequest('Memberships must be a list.');
-
-    const cleaned = [];
-    const seen = new Set();
-
-    for (const entry of memberships) {
-      const departmentId = entry?.department ?? entry?.id;
-      assertObjectId(departmentId, 'department id');
-
-      const membershipRole = entry?.role ?? 'team';
-      if (!DEPARTMENT_ROLES.includes(membershipRole)) {
-        throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
-      }
-
-      // Last entry wins rather than erroring, so a duplicated pick is harmless.
-      if (seen.has(String(departmentId))) {
-        const existing = cleaned.find((item) => String(item.department) === String(departmentId));
-        existing.role = membershipRole;
-        continue;
-      }
-
-      seen.add(String(departmentId));
-      cleaned.push({ department: departmentId, role: membershipRole });
-    }
-
-    const found = await Department.countDocuments({ _id: { $in: [...seen] } });
-    if (found !== seen.size) throw ApiError.badRequest('One or more departments are invalid.');
-
-    user.memberships = cleaned;
+    user.memberships = await cleanMemberships(memberships);
   }
 
   await user.save({ validateBeforeSave: true });

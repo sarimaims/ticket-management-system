@@ -27,6 +27,8 @@ export function createUser(input: {
   email: string;
   password: string;
   role?: Extract<Role, "admin" | "user">;
+  /** Where they sit from day one. Ignored for an admin, who belongs nowhere. */
+  memberships?: MembershipInput[];
 }) {
   return api<{ user: DirectoryUser }>("/users", { method: "POST", body: input }).then(
     (data) => data.user,
