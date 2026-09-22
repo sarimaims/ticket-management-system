@@ -41,6 +41,35 @@ export type MemberOption = {
 };
 
 /**
+ * One person as they sit in one department. Somebody in two departments comes
+ * back twice - the two are different people to address, because the ticket
+ * follows the department they were picked from.
+ */
+export type PersonOption = MemberOption & {
+  department: { id: string; name: string };
+  unit: { id: string; name: string } | null;
+};
+
+/**
+ * Everyone a ticket can be addressed at. Both filters are optional: no unit
+ * and no department means the whole org chart, a unit alone means everyone
+ * under it.
+ */
+export function listPeopleOptions(
+  filter: { unit?: string; department?: string } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (filter.unit) query.set("unit", filter.unit);
+  if (filter.department) query.set("department", filter.department);
+  const suffix = query.toString() ? `?${query}` : "";
+
+  return api<{ members: PersonOption[] }>(`/departments/members/options${suffix}`, { signal }).then(
+    (data) => data.members,
+  );
+}
+
+/**
  * Who is in one department, names only. Open to anyone signed in, on the same
  * footing as listing the departments themselves: you may send a request to a
  * department, so you may address it at somebody in it. Reading the department

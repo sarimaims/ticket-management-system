@@ -8,6 +8,7 @@ import {
   listDepartmentOptions,
   deleteDepartment,
   getDepartment,
+  listAllMemberOptions,
   listDepartments,
   listMemberOptions,
   removeMember,
@@ -22,6 +23,9 @@ router.use(requireAuth);
 router.get('/', asyncHandler(listDepartments));
 // Any signed-in user may list the names, so they can address a ticket.
 router.get('/options', asyncHandler(listDepartmentOptions));
+// Everyone who can be addressed, across departments. Declared before `/:id`
+// so "members" is never read as a department id.
+router.get('/members/options', asyncHandler(listAllMemberOptions));
 router.get('/:id', asyncHandler(getDepartment));
 // Names only, so a ticket can be addressed at a person rather than a queue.
 // Reading the department itself stays restricted; this does not.

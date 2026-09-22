@@ -41,10 +41,13 @@ export function MembershipRows({
   departments,
   value,
   onChange,
+  invalid,
 }: {
   departments: Department[];
   value: MembershipInput[];
   onChange: (value: MembershipInput[]) => void;
+  /** Saving was refused for want of a role: say so where the row would go. */
+  invalid?: boolean;
 }) {
   // Seeded from what is already held - editing an account opens on its
   // postings - and owned from then on, because a row being filled in has no
@@ -95,7 +98,11 @@ export function MembershipRows({
     );
 
   if (departments.length === 0) {
-    return <p className="text-sm text-ink-400">No departments yet.</p>;
+    return (
+      <p className={cn("text-sm text-ink-400", invalid && "font-semibold text-brand-600")}>
+        No departments yet — create one before this person can hold a role.
+      </p>
+    );
   }
 
   return (
@@ -126,7 +133,11 @@ export function MembershipRows({
           </Select>
 
           <Select
-            className={cn("h-8 text-[13px]", !row.department && "text-ink-400")}
+            className={cn(
+              "h-8 text-[13px]",
+              !row.department && "text-ink-400",
+              invalid && !row.department && "border-brand-400 bg-brand-50/40",
+            )}
             value={row.department}
             aria-label="Department"
             onChange={(event) => update(row.key, { department: event.target.value })}
@@ -168,6 +179,7 @@ export function MembershipRows({
         className={cn(
           "flex w-full items-center justify-center gap-1.5 rounded-field border border-dashed border-line-strong py-2 text-[13px] font-semibold text-ink-500 transition-colors hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-700",
           rows.length === 0 && "py-3",
+          invalid && "border-brand-400 bg-brand-50/40 text-brand-700",
         )}
       >
         <Plus className="size-4" />

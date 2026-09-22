@@ -21,6 +21,27 @@ const SEARCH_FROM = 7;
 export type MultiSelectDisplay = "chips" | "summary";
 
 /**
+ * How loud the chips are.
+ *
+ * `brand` is the default and marks an answer as the accent of the page.
+ * `neutral` is for a form that asks several of these in a row: four red chips
+ * stacked down a panel read as four warnings, and the colour stops meaning
+ * anything once everything wears it.
+ */
+export type ChipTone = "brand" | "neutral";
+
+const CHIP_TONE: Record<ChipTone, { chip: string; remove: string }> = {
+  brand: {
+    chip: "bg-brand-50 text-brand-700",
+    remove: "text-brand-500 hover:bg-brand-100 hover:text-brand-700",
+  },
+  neutral: {
+    chip: "bg-ink-100 text-ink-700",
+    remove: "text-ink-400 hover:bg-ink-200 hover:text-ink-700",
+  },
+};
+
+/**
  * A dropdown of checkboxes. Picked options stay visible as chips on the
  * control, so a multi-choice is readable without opening it.
  *
@@ -41,6 +62,8 @@ export function MultiSelect({
   disabled,
   searchable,
   display = "chips",
+  chipTone = "brand",
+  ariaLabel,
   className,
 }: {
   options: Option[];
@@ -54,6 +77,9 @@ export function MultiSelect({
   disabled?: boolean;
   searchable?: boolean;
   display?: MultiSelectDisplay;
+  chipTone?: ChipTone;
+  /** For a control whose label is a heading beside it rather than a `<label>`. */
+  ariaLabel?: string;
   /** Size and spacing, for a toolbar whose controls are shorter than the default. */
   className?: string;
 }) {
@@ -115,6 +141,7 @@ export function MultiSelect({
         onClick={() => (open ? close() : setOpen(true))}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={ariaLabel}
         className={cn(
           "flex w-full items-center gap-2 rounded-md border bg-surface px-2.5 text-left transition-colors",
           "focus:ring-4 focus:ring-brand-500/10 focus:outline-none",
@@ -142,7 +169,10 @@ export function MultiSelect({
             {value.map((item) => (
               <span
                 key={item}
-                className="inline-flex items-center gap-1 rounded bg-brand-50 py-0.5 pr-1 pl-1.5 text-[11px] font-semibold text-brand-700"
+                className={cn(
+                  "inline-flex items-center gap-1 rounded py-0.5 pr-1 pl-1.5 text-[11px] font-semibold",
+                  CHIP_TONE[chipTone].chip,
+                )}
               >
                 {labelFor(item)}
                 <span
@@ -153,7 +183,10 @@ export function MultiSelect({
                     event.stopPropagation();
                     onChange(value.filter((option) => option !== item));
                   }}
-                  className="grid size-4 place-items-center rounded-full text-brand-500 hover:bg-brand-100 hover:text-brand-700"
+                  className={cn(
+                    "grid size-4 place-items-center rounded-full",
+                    CHIP_TONE[chipTone].remove,
+                  )}
                 >
                   <X className="size-3" strokeWidth={3} />
                 </span>

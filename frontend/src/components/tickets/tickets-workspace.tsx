@@ -409,7 +409,7 @@ function RefreshButton({ onRefresh, syncedAt }: { onRefresh: () => void; syncedA
           ? `Refresh · checks itself every ${REFRESH_MS / 1000}s, last change ${new Date(syncedAt).toLocaleTimeString()}`
           : `Refresh · checks itself every ${REFRESH_MS / 1000}s`
       }
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface px-2 text-[12px] font-semibold text-ink-600 transition-colors hover:bg-ink-50 hover:text-ink-900"
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface px-2.5 text-[13px] font-semibold text-ink-600 transition-colors hover:bg-ink-50 hover:text-ink-900"
     >
       <RefreshCw className={cn("size-3.5", spinning && "animate-spin")} />
       Refresh
@@ -724,7 +724,7 @@ export function TicketsWorkspace({
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-7 pl-8 text-[12px]"
+              className="pl-8 text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search by ticket ID, subject or keyword..."
               value={query}
@@ -736,7 +736,6 @@ export function TicketsWorkspace({
           <div className="w-40 shrink-0">
             <MultiSelect
               display="summary"
-              className="h-7 [&>span]:text-[12px]"
               id="filter-status"
               options={STATUSES.map((item) => ({ value: item, label: item }))}
               value={statuses}
@@ -748,7 +747,6 @@ export function TicketsWorkspace({
           <div className="w-40 shrink-0">
             <MultiSelect
               display="summary"
-              className="h-7 [&>span]:text-[12px]"
               id="filter-priority"
               options={PRIORITIES.map((item) => ({ value: item, label: item }))}
               value={priorities}
@@ -760,7 +758,6 @@ export function TicketsWorkspace({
           <div className="w-48 shrink-0">
             <MultiSelect
               display="summary"
-              className="h-7 [&>span]:text-[12px]"
               id="filter-department"
               options={departmentOptions.map((item) => ({ value: item.id, label: item.label }))}
               value={departmentIds}
@@ -805,7 +802,7 @@ export function TicketsWorkspace({
               onClick={() => setMineOnly((current) => !current)}
               aria-pressed={mineOnly}
               className={cn(
-                "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12px] font-semibold transition-colors",
+                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[13px] font-semibold transition-colors",
                 mineOnly
                   ? "border-brand-600 bg-brand-50 text-brand-700"
                   : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
@@ -826,7 +823,7 @@ export function TicketsWorkspace({
 
           {unitName && (
             <span
-              className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-brand-200 bg-brand-50 px-2 text-[11px] font-semibold text-brand-700"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-brand-200 bg-brand-50 px-2.5 text-[12px] font-semibold text-brand-700"
               title="Set on your profile, at the foot of the sidebar"
             >
               <Building className="size-3.5" />
@@ -839,7 +836,7 @@ export function TicketsWorkspace({
           {scope === "mine" && (
             <Link
               href="/create-ticket"
-              className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-brand-600 px-2.5 text-[12px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-[13px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
             >
               <Plus className="size-3.5" strokeWidth={2.5} />
               Create Ticket

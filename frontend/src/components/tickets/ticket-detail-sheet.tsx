@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CalendarCheck,
   CheckCircle2,
+  Download,
   History,
   MessagesSquare,
+  Paperclip,
   PencilLine,
   X,
 } from "lucide-react";
@@ -21,7 +23,8 @@ import { StatusPicker } from "@/components/tickets/status-picker";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
-import { updateTicket, type TicketRecord } from "@/lib/tickets";
+import { attachmentHref, updateTicket, type TicketRecord } from "@/lib/tickets";
+import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { TicketPriority, TicketStatus } from "@/lib/types";
@@ -191,7 +194,7 @@ function RequestEditor({
       <Field label="Priority" required htmlFor="edit-priority">
         <Select
           id="edit-priority"
-          className="h-7"
+          className="h-8"
           value={draft.priority}
           onChange={(event) => set("priority", event.target.value as TicketPriority)}
         >
@@ -770,6 +773,38 @@ function SheetBody({
             </Fact>
           </Group>
 
+          {/* What came with the request. Each link goes to the API, which
+              redirects to a URL signed at that moment - so nothing here can go
+              stale in a list that was loaded an hour ago. */}
+          {ticket.attachments.length > 0 && (
+            <section className="mt-2.5">
+              <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
+                Attachments
+              </p>
+              <ul className="mt-1 divide-y divide-line rounded-md border border-line">
+                {ticket.attachments.map((file) => (
+                  <li key={file.index}>
+                    <a
+                      href={attachmentHref(ticket.id, file.index)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group flex items-center gap-2 px-2 py-1.5 transition-colors hover:bg-ink-50"
+                    >
+                      <Paperclip className="size-3.5 shrink-0 text-ink-400" />
+                      <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink-800">
+                        {file.filename}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-ink-400">
+                        {formatBytes(file.size)}
+                      </span>
+                      <Download className="size-3.5 shrink-0 text-ink-300 transition-colors group-hover:text-brand-600" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {/* Only when there is something in it: two empty rows are worse than
               no section at all. */}
           {(ticket.requestType || ticket.project) && (
@@ -793,7 +828,7 @@ function SheetBody({
                   value={status}
                   onChange={setStatus}
                   label={`Status for #${ticket.number}`}
-                  className="h-7 justify-between px-2 text-[12px]"
+                  className="h-8 justify-between px-2.5 text-[13px]"
                 />
               </div>
 
@@ -831,7 +866,7 @@ function SheetBody({
                   value={committed}
                   onChange={setCommitted}
                   placeholder="Pick a date"
-                  className="h-7 gap-1.5 px-2 [&>span]:text-[12px]"
+                  className="gap-1.5 px-2.5 [&>span]:text-[13px]"
                 />
               </div>
             </div>

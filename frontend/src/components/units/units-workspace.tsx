@@ -108,7 +108,7 @@ export function UnitsWorkspace() {
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-7 text-[12px]"
+              className="text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search units..."
               value={query}
@@ -118,7 +118,7 @@ export function UnitsWorkspace() {
           </div>
 
           {canManage && (
-            <Button size="sm" className="h-7 shrink-0" onClick={() => setCreateOpen(true)}>
+            <Button className="shrink-0" onClick={() => setCreateOpen(true)}>
               <Plus className="size-3.5" strokeWidth={2.5} />
               New Unit
             </Button>

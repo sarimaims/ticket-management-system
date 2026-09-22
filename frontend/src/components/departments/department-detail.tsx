@@ -201,7 +201,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
           <div className="min-w-48 flex-1">
             <Input
-              className="h-7 text-[12px]"
+              className="text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search members..."
               value={query}
@@ -210,7 +210,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
             />
           </div>
           {canManage && (
-            <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
+            <Button className="shrink-0" onClick={() => setAddOpen(true)}>
               <UserPlus className="size-3.5" />
               Add User
             </Button>

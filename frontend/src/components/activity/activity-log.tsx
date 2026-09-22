@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Modal } from "@/components/ui/modal";
 import { ListSkeleton } from "@/components/ui/skeleton";
+import { dayLabel } from "@/components/notifications/notification-shared";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/ui/toast";
 import { clearActivity, listActivity, type ActivityEntry } from "@/lib/activity";
@@ -18,18 +19,23 @@ import { errorMessage } from "@/lib/api";
 import { initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-/** Colour follows what happened, using the same tokens as the status badges. */
-const ACTION_TONES: Record<string, string> = {
-  "ticket.created": "bg-status-new-bg text-status-new-fg",
-  "ticket.updated": "bg-status-progress-bg text-status-progress-fg",
-  "member.added": "bg-status-completed-bg text-status-completed-fg",
-  "member.removed": "bg-status-overdue-bg text-status-overdue-fg",
-  "member.role_changed": "bg-status-waiting-bg text-status-waiting-fg",
-  "department.created": "bg-tile-admin-bg text-tile-admin-fg",
-  "department.moved": "bg-status-waiting-bg text-status-waiting-fg",
-  "unit.created": "bg-tile-admin-bg text-tile-admin-fg",
-  "unit.updated": "bg-status-progress-bg text-status-progress-fg",
-  "unit.deleted": "bg-status-overdue-bg text-status-overdue-fg",
+/**
+ * Colour follows what happened - as a dot, not a filled chip.
+ *
+ * Every row in this log carries one, and forty tinted chips down a page read as
+ * decoration rather than as meaning. A dot says the same thing quietly.
+ */
+const ACTION_DOTS: Record<string, string> = {
+  "ticket.created": "bg-status-new-fg",
+  "ticket.updated": "bg-status-progress-fg",
+  "member.added": "bg-status-completed-fg",
+  "member.removed": "bg-status-overdue-fg",
+  "member.role_changed": "bg-status-waiting-fg",
+  "department.created": "bg-tile-admin-fg",
+  "department.moved": "bg-status-waiting-fg",
+  "unit.created": "bg-tile-admin-fg",
+  "unit.updated": "bg-status-progress-fg",
+  "unit.deleted": "bg-status-overdue-fg",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -65,6 +71,20 @@ function timeAgo(iso: string) {
     unit = name;
   }
   return `${value} ${unit}${value === 1 ? "" : "s"} ago`;
+}
+
+/** Today / Yesterday / a date, above each run of entries from one day. */
+function byDay(entries: ActivityEntry[]) {
+  const groups: { label: string; items: ActivityEntry[] }[] = [];
+
+  for (const entry of entries) {
+    const label = dayLabel(entry.createdAt);
+    const last = groups.at(-1);
+    if (last?.label === label) last.items.push(entry);
+    else groups.push({ label, items: [entry] });
+  }
+
+  return groups;
 }
 
 export function ActivityLog() {
@@ -121,20 +141,22 @@ export function ActivityLog() {
     );
   }, [entries, query]);
 
+  const days = useMemo(() => byDay(rows), [rows]);
+
   return (
     <>
       {error && (
         <div
           role="alert"
-          className="mb-4 flex items-start gap-2.5 rounded-field border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-sm font-medium text-brand-700"
+          className="mb-2.5 flex items-start gap-2 rounded-md border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-[12px] font-medium text-brand-700"
         >
-          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <AlertCircle className="mt-px size-3.5 shrink-0" />
           {error}
         </div>
       )}
 
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
           <div className="min-w-44 flex-1">
             <Input
               className="h-8 text-[13px]"
@@ -160,11 +182,11 @@ export function ActivityLog() {
           {canClear && (
             <Button
               variant="outline"
-              className="h-8 text-brand-600"
+              className="text-brand-600"
               onClick={() => setConfirmClear(true)}
               disabled={entries.length === 0}
             >
-              <Trash2 className="size-4" />
+              <Trash2 className="size-3.5" />
               Clear log
             </Button>
           )}
@@ -173,57 +195,67 @@ export function ActivityLog() {
         {loading && <ListSkeleton rows={5} />}
 
         {!loading && rows.length === 0 && (
-          <div className="px-5 py-14 text-center">
-            <History className="mx-auto size-6 text-ink-300" />
-            <p className="mt-2 text-sm font-semibold text-ink-700">Nothing logged yet</p>
-            <p className="mt-0.5 text-sm text-ink-400">
+          <div className="px-4 py-10 text-center">
+            <History className="mx-auto size-5 text-ink-300" />
+            <p className="mt-1.5 text-[13px] font-semibold text-ink-700">Nothing logged yet</p>
+            <p className="mt-0.5 text-[11px] text-ink-400">
               Raising a ticket, working one, or changing a department&apos;s members shows up here.
             </p>
           </div>
         )}
 
-        {!loading && rows.length > 0 && (
-          <ul className="divide-y divide-line">
-            {rows.map((entry) => (
-              <li key={entry.id} className="flex items-start gap-3 px-4 py-3">
-                <Avatar
-                  initials={initials(entry.actor.name)}
-                  tone={entry.actor.role === "user" ? "team" : "head"}
-                  className="mt-0.5 size-8 text-[11px]"
-                />
+        {/* One line per entry, under the day it happened. What matters when
+            scanning a log is when and who; the rest is one quiet line. */}
+        {!loading &&
+          days.map((day) => (
+            <section key={day.label}>
+              <p className="sticky top-0 z-10 border-b border-line bg-ink-50/90 px-3 py-1 text-[10px] font-semibold tracking-[0.08em] text-ink-400 uppercase backdrop-blur">
+                {day.label}
+              </p>
 
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-ink-700">
-                    <span className="font-semibold text-ink-900">{entry.actor.name}</span>{" "}
-                    {entry.summary}
-                  </p>
+              <ul className="divide-y divide-line">
+                {day.items.map((entry) => (
+                  <li key={entry.id} className="flex items-start gap-2.5 px-3 py-2">
+                    <Avatar
+                      initials={initials(entry.actor.name)}
+                      tone={entry.actor.role === "user" ? "team" : "head"}
+                      className="mt-px size-6 text-[10px]"
+                    />
 
-                  <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span
-                      className={cn(
-                        "rounded-md px-1.5 py-0.5 font-semibold",
-                        ACTION_TONES[entry.action] ?? "bg-ink-100 text-ink-600",
-                      )}
-                    >
-                      {ACTION_LABELS[entry.action] ?? entry.action}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] leading-snug text-ink-700">
+                        <span className="font-semibold text-ink-900">{entry.actor.name}</span>{" "}
+                        {entry.summary}
+                      </p>
+
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-400">
+                        <span className="inline-flex items-center gap-1 font-medium text-ink-500">
+                          <span
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              ACTION_DOTS[entry.action] ?? "bg-ink-300",
+                            )}
+                          />
+                          {ACTION_LABELS[entry.action] ?? entry.action}
+                        </span>
+                        {/* Only what is actually there: a department without a
+                            name left a bullet pointing at nothing. */}
+                        {entry.department?.name && <span>· {entry.department.name}</span>}
+                        {entry.actor.role !== "user" && (
+                          <span>· {ROLE_LABEL[entry.actor.role]}</span>
+                        )}
+                      </p>
+                    </div>
+
+                    <span className="shrink-0 pt-0.5 text-[10px] whitespace-nowrap text-ink-400">
+                      {timeAgo(entry.createdAt)}
                     </span>
-                    {entry.department && (
-                      <span className="rounded-md bg-ink-100 px-1.5 py-0.5 font-medium text-ink-600">
-                        {entry.department.name}
-                      </span>
-                    )}
-                    {entry.actor.role !== "user" && (
-                      <span className="rounded-md bg-brand-50 px-1.5 py-0.5 font-bold text-brand-700 uppercase">
-                        {ROLE_LABEL[entry.actor.role]}
-                      </span>
-                    )}
-                    <span className="text-ink-400">{timeAgo(entry.createdAt)}</span>
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+
       </Card>
 
       <ClearLogModal

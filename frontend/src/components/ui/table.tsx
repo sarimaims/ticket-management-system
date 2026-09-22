@@ -50,29 +50,53 @@ export function TableCell({
   );
 }
 
+/** More numbers than this and the control grows wider than what it pages. */
+const MAX_PAGE_BUTTONS = 5;
+
+/** The run of page numbers around the current one, clamped to what exists. */
+function pageWindow(current: number, pages: number) {
+  const size = Math.min(MAX_PAGE_BUTTONS, pages);
+  const first = Math.max(1, Math.min(current - Math.floor(size / 2), pages - size + 1));
+  return Array.from({ length: size }, (_, index) => first + index);
+}
+
 export function Pagination({
   summary,
   pages = 1,
   current = 1,
+  onPage,
 }: {
   summary: string;
   pages?: number;
   current?: number;
+  /** Without this the control is a label: the numbers render but do nothing. */
+  onPage?: (page: number) => void;
 }) {
   const btn =
     "grid size-8 place-items-center rounded-lg border border-line-strong bg-surface text-ink-500 transition-colors hover:bg-ink-50 disabled:opacity-40 disabled:hover:bg-surface";
+
+  const go = (page: number) => {
+    if (onPage && page >= 1 && page <= pages && page !== current) onPage(page);
+  };
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-3 py-2">
       <p className="text-xs text-ink-500">{summary}</p>
       <div className="flex items-center gap-2">
-        <button type="button" className={btn} disabled={current === 1} aria-label="Previous page">
+        <button
+          type="button"
+          className={btn}
+          disabled={current === 1}
+          onClick={() => go(current - 1)}
+          aria-label="Previous page"
+        >
           <ChevronLeft className="size-4" />
         </button>
-        {Array.from({ length: pages }, (_, i) => i + 1).map((page) => (
+        {pageWindow(current, pages).map((page) => (
           <button
             key={page}
             type="button"
+            onClick={() => go(page)}
             aria-current={page === current ? "page" : undefined}
             className={cn(
               "grid size-8 place-items-center rounded-lg text-[13px] font-semibold transition-colors",
@@ -88,6 +112,7 @@ export function Pagination({
           type="button"
           className={btn}
           disabled={current === pages}
+          onClick={() => go(current + 1)}
           aria-label="Next page"
         >
           <ChevronRight className="size-4" />
