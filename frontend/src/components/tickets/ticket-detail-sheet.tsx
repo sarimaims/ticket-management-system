@@ -241,11 +241,13 @@ function Tabs({
   onTab,
   count,
   unread,
+  onClose,
 }: {
   tab: SheetTab;
   onTab: (tab: SheetTab) => void;
   count: number;
   unread: number;
+  onClose: () => void;
 }) {
   const style = (value: SheetTab) =>
     cn(
@@ -260,7 +262,7 @@ function Tabs({
     );
 
   return (
-    <div role="tablist" className="flex border-b border-line px-1.5">
+    <div role="tablist" className="flex border-b border-line px-1.5 pt-2">
       <button
         type="button"
         role="tab"
@@ -303,6 +305,17 @@ function Tabs({
           <History className="size-3.5" />
           History
         </span>
+      </button>
+
+      {/* The way out lives here now that the band above it is gone. Escape
+          still closes the sheet too. */}
+      <button
+        type="button"
+        onClick={onClose}
+        className="my-auto ml-1 grid size-6 shrink-0 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+        aria-label="Close details"
+      >
+        <X className="size-4" />
       </button>
     </div>
   );
@@ -635,43 +648,17 @@ function SheetBody({
 
   return (
     <>
-      {/* The subject on the left, and beside it the two things a reader needs
-          before the subject means anything: what state it is in, and whose
-          desk it is on. The number and how urgent it is sit under them, where
-          they are available without competing for the first glance. */}
-      <div className="border-b border-line px-3 py-2">
-        <div className="flex items-start gap-2">
-          <h2 className="min-w-0 flex-1 text-[14px] leading-snug font-bold break-words text-ink-900">
-            {ticket.subject}
-          </h2>
-
-          {/* Its name, and whose desk it is on. Both sit beside the subject
-              rather than on a row of their own, which the subject then has to
-              be read past. */}
-          <span className="flex shrink-0 flex-col items-end gap-0.5">
-            <span className="text-[11px] font-semibold text-brand-600">#{ticket.number}</span>
-            <span className="text-right text-[10px] leading-tight text-ink-400">
-              {ticket.department.unit?.name && (
-                <span className="block truncate">{ticket.department.unit.name}</span>
-              )}
-              <span className="block truncate font-semibold text-ink-600">
-                {ticket.department.name}
-              </span>
-            </span>
-          </span>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid size-6 shrink-0 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-            aria-label="Close details"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      </div>
-
-      <Tabs tab={tab} onTab={onTab} count={chatCount ?? ticket.messageCount} unread={unread} />
+      {/* No header band: the sheet opens straight onto its tabs. What the
+          band carried has moved into the panes, where it is read rather than
+          skipped - the subject onto the description card, the way out onto
+          the tab row. */}
+      <Tabs
+        tab={tab}
+        onTab={onTab}
+        count={chatCount ?? ticket.messageCount}
+        unread={unread}
+        onClose={onClose}
+      />
 
       {/* Mounted only while it is being read, so a closed thread costs no
           polling. The details below are hidden rather than unmounted, so an
@@ -691,16 +678,19 @@ function SheetBody({
 
         <div className={cn(editing && "hidden")}>
           <section className="rounded-lg bg-ink-50 px-2.5 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-bold tracking-wider text-ink-400 uppercase">
-                Description
-              </p>
+            <div className="flex items-start justify-between gap-2">
+              <span className="min-w-0">
+                <span className="text-[10px] font-semibold text-brand-600">#{ticket.number}</span>
+                <h2 className="text-[13px] leading-snug font-bold break-words text-ink-900">
+                  {ticket.subject}
+                </h2>
+              </span>
               <span className="flex shrink-0 items-center gap-1">
                 <StatusBadge status={ticket.status} className="px-1.5 py-0.5 text-[10px]" />
                 <PriorityBadge priority={ticket.priority} className="px-1.5 py-0.5 text-[10px]" />
               </span>
             </div>
-            <p className="mt-1 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-700">
+            <p className="mt-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-700">
               {ticket.description}
             </p>
           </section>
