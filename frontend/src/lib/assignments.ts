@@ -17,9 +17,23 @@ export type AssignmentRecord = {
   createdAt: string;
 };
 
-/** Who has held this ticket, oldest first. */
-export function listAssignments(ticketId: string, signal?: AbortSignal) {
-  return api<{ assignments: AssignmentRecord[] }>(`/tickets/${ticketId}/assignments`, {
-    signal,
-  }).then((data) => data.assignments);
+/**
+ * Something that happened to the ticket other than a handover: it was raised,
+ * retitled, re-dated. Handovers are in {@link AssignmentRecord} instead, where
+ * they carry who it moved between.
+ */
+export type TicketEvent = {
+  id: string;
+  event: "raised" | "edited" | "assignment" | null;
+  body: string;
+  by: { name: string; role: Role };
+  createdAt: string;
+};
+
+/** Everything that has happened to this ticket, oldest first. */
+export function listHistory(ticketId: string, signal?: AbortSignal) {
+  return api<{ assignments: AssignmentRecord[]; events: TicketEvent[] }>(
+    `/tickets/${ticketId}/assignments`,
+    { signal },
+  );
 }

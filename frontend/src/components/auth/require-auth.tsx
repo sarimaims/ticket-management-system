@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import type { Role } from "@/lib/auth";
+import type { Role, Session } from "@/lib/auth";
 
 function Splash() {
   return (
@@ -23,15 +23,23 @@ function Splash() {
 export function RequireAuth({
   children,
   role,
+  allow,
 }: {
   children: React.ReactNode;
   /** when set, the session must carry one of these roles or it is bounced */
   role?: Role | Role[];
+  /**
+   * For rights that are not a workspace role. Running a department is held on
+   * a membership, not on the account, so it cannot be spelled as a role.
+   */
+  allow?: (session: Session) => boolean;
 }) {
   const { session, ready } = useAuth();
   const router = useRouter();
 
-  const permitted = role === undefined || [role].flat().includes(session?.role as Role);
+  const byRole = role === undefined || [role].flat().includes(session?.role as Role);
+  const byRule = allow === undefined || (session !== null && allow(session));
+  const permitted = byRole && byRule;
   const allowed = session !== null && permitted;
 
   useEffect(() => {

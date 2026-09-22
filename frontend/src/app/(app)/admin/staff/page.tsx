@@ -4,19 +4,15 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PeopleWorkspace } from "@/components/admin/people-workspace";
 
 export const metadata: Metadata = {
-  title: "Staff — FlowDesk",
+  title: "Admin Access — FlowDesk",
 };
 
 export default function AdminStaffPage() {
   return (
     <>
       <PageHeader
-        title="Staff"
-        crumbs={[
-          { label: "Home", href: "/dashboard" },
-          { label: "Administration" },
-          { label: "Staff" },
-        ]}
+        title="Admin Access"
+        crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Admin Access" }]}
       />
       <PeopleWorkspace scope="admins" />
     </>

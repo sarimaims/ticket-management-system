@@ -241,11 +241,13 @@ function Tabs({
   onTab,
   count,
   unread,
+  onClose,
 }: {
   tab: SheetTab;
   onTab: (tab: SheetTab) => void;
   count: number;
   unread: number;
+  onClose: () => void;
 }) {
   const style = (value: SheetTab) =>
     cn(
@@ -260,7 +262,7 @@ function Tabs({
     );
 
   return (
-    <div role="tablist" className="flex border-b border-line px-1.5">
+    <div role="tablist" className="flex border-b border-line px-1.5 pt-2">
       <button
         type="button"
         role="tab"
@@ -304,9 +306,39 @@ function Tabs({
           History
         </span>
       </button>
+
+      {/* The way out lives here now that the band above it is gone. Escape
+          still closes the sheet too. */}
+      <button
+        type="button"
+        onClick={onClose}
+        className="my-auto ml-1 grid size-6 shrink-0 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+        aria-label="Close details"
+      >
+        <X className="size-4" />
+      </button>
     </div>
   );
 }
+
+/**
+ * A tint per kind of fact.
+ *
+ * The pane is a stack of short sections that all look alike, and a reader
+ * scanning for one of them is looking for a position on the page rather than
+ * reading the headings. Colour makes that position findable: the same section
+ * is the same colour on every ticket, so the eye learns where "when is it due"
+ * lives and stops re-reading the labels.
+ */
+const GROUP_TONE = {
+  route: { card: "bg-status-progress-bg/50", label: "text-status-progress-fg" },
+  who: { card: "bg-tile-admin-bg", label: "text-tile-admin-fg" },
+  dates: { card: "bg-status-accepted-bg/70", label: "text-status-accepted-fg" },
+  work: { card: "bg-status-waiting-bg/45", label: "text-status-waiting-fg" },
+  plain: { card: "bg-ink-50", label: "text-ink-400" },
+} as const;
+
+type GroupTone = keyof typeof GROUP_TONE;
 
 /**
  * A few related facts under one heading.
@@ -315,11 +347,21 @@ function Tabs({
  * to read when the question in your head is usually just one of "who has it",
  * "where is it going" or "when is it due".
  */
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+function Group({
+  title,
+  tone = "plain",
+  children,
+}: {
+  title: string;
+  tone?: GroupTone;
+  children: React.ReactNode;
+}) {
+  const style = GROUP_TONE[tone];
+
   return (
-    <section className="mt-2.5">
-      <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">{title}</p>
-      <dl className="mt-1 divide-y divide-line rounded-md border border-line">{children}</dl>
+    <section className={cn("mt-2 rounded-lg px-2.5 py-2", style.card)}>
+      <p className={cn("text-[10px] font-bold tracking-wider uppercase", style.label)}>{title}</p>
+      <dl className="mt-1">{children}</dl>
     </section>
   );
 }
@@ -327,7 +369,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 /** One fact: its name on the left, its value on the right. */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 px-2 py-1.5">
+    <div className="flex items-baseline justify-between gap-3 py-1">
       <dt className="shrink-0 text-[11px] text-ink-500">{label}</dt>
       <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 text-right text-[12px] font-semibold break-words text-ink-900">
         {children}
@@ -606,33 +648,17 @@ function SheetBody({
 
   return (
     <>
-      {/* What it is, then what it is called. The old order put four coloured
-          chips above the subject, which made the one line that says what the
-          ticket is about the hardest thing on the page to find. */}
-      <div className="border-b border-line px-3 py-2">
-        <div className="flex items-start gap-2">
-          <h2 className="min-w-0 flex-1 text-[14px] leading-snug font-bold break-words text-ink-900">
-            {ticket.subject}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid size-6 shrink-0 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-            aria-label="Close details"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
-        <p className="mt-1 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-semibold text-ink-400">#{ticket.number}</span>
-          <span className="h-3 w-px bg-line-strong" />
-          <StatusBadge status={ticket.status} />
-          <PriorityBadge priority={ticket.priority} />
-        </p>
-      </div>
-
-      <Tabs tab={tab} onTab={onTab} count={chatCount ?? ticket.messageCount} unread={unread} />
+      {/* No header band: the sheet opens straight onto its tabs. What the
+          band carried has moved into the panes, where it is read rather than
+          skipped - the subject onto the description card, the way out onto
+          the tab row. */}
+      <Tabs
+        tab={tab}
+        onTab={onTab}
+        count={chatCount ?? ticket.messageCount}
+        unread={unread}
+        onClose={onClose}
+      />
 
       {/* Mounted only while it is being read, so a closed thread costs no
           polling. The details below are hidden rather than unmounted, so an
@@ -651,19 +677,30 @@ function SheetBody({
         )}
 
         <div className={cn(editing && "hidden")}>
-          <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
-            Description
-          </p>
-          <p className="mt-1 rounded-md bg-ink-50 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-700">
-            {ticket.description}
-          </p>
+          <section className="rounded-lg bg-ink-50 px-2.5 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <span className="min-w-0">
+                <span className="text-[10px] font-semibold text-brand-600">#{ticket.number}</span>
+                <h2 className="text-[13px] leading-snug font-bold break-words text-ink-900">
+                  {ticket.subject}
+                </h2>
+              </span>
+              <span className="flex shrink-0 items-center gap-1">
+                <StatusBadge status={ticket.status} className="px-1.5 py-0.5 text-[10px]" />
+                <PriorityBadge priority={ticket.priority} className="px-1.5 py-0.5 text-[10px]" />
+              </span>
+            </div>
+            <p className="mt-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-700">
+              {ticket.description}
+            </p>
+          </section>
         </div>
 
         {/* Grouped rather than gridded: "where it goes", "who", "when" are the
             three questions actually being asked of this pane, and a label beside
             its value reads faster than a label above it. */}
         <div className={cn(editing && "hidden")}>
-          <Group title="Where it goes">
+          <Group title="Where it goes" tone="route">
             <Fact label="From">
               {ticket.fromDepartments.length > 0 ? (
                 <Chips items={ticket.fromDepartments} />
@@ -678,7 +715,7 @@ function SheetBody({
             </Fact>
           </Group>
 
-          <Group title="Who">
+          <Group title="Who" tone="who">
             <Fact label="Raised by">
               {ticket.raisedBy.name}
               <OriginTag role={ticket.raisedByRole} />
@@ -694,7 +731,7 @@ function SheetBody({
             </Fact>
           </Group>
 
-          <Group title="Dates">
+          <Group title="Dates" tone="dates">
             <Fact label="Raised on">
               {formatDateOf(ticket.createdAt)}
               <span className="font-normal text-ink-400">{formatTime(ticket.createdAt)}</span>
@@ -769,8 +806,8 @@ function SheetBody({
         </div>
 
         {canWork && !editing && (
-          <div className="mt-3 border-t border-line pt-2.5">
-            <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
+          <div className="mt-2 rounded-lg bg-status-waiting-bg/45 px-2.5 py-2">
+            <p className="text-[10px] font-bold tracking-wider text-status-waiting-fg uppercase">
               Work this ticket
             </p>
 

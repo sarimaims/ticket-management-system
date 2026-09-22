@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { errorMessage } from "@/lib/api";
-import { revalidateTickets, type TicketRecord } from "@/lib/tickets";
+import { revalidateTickets, type TicketRecord, type TicketScope } from "@/lib/tickets";
 
 /** How long a run of failures is allowed to stretch the interval. */
 const MAX_BACKOFF = 8;
@@ -38,7 +38,7 @@ function reconcile(previous: TicketRecord[], next: TicketRecord[]) {
 }
 
 type Options = {
-  scope: "mine" | "assigned";
+  scope: TicketScope;
   /** Milliseconds between polls, or null to load once and stop. */
   intervalMs?: number | null;
 };

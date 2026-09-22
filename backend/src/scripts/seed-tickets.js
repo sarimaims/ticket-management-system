@@ -129,6 +129,80 @@ const TICKETS = [
   },
 
   // --- into Dubai Clinic ---------------------------------------------------
+  // A queue for one head to work through: everything below lands on Intizar
+  // Shah in Digital Marketing, so a head's own list has something in it to
+  // hand on.
+  {
+    to: 'Digital Marketing',
+    from: 'Reception',
+    by: 'rabia.anwar@flowdesk.com',
+    assignee: 'intizar.shah@flowdesk.com',
+    subject: 'Reprint the new patient welcome pack',
+    description:
+      'The welcome pack still lists the old opening hours and the previous parking arrangement. We hand out about forty a week.',
+    priority: 'Medium',
+    status: 'New',
+    deadline: 6,
+  },
+  {
+    to: 'Digital Marketing',
+    from: 'Pharmacy',
+    by: 'adnan.qureshi@flowdesk.com',
+    assignee: 'intizar.shah@flowdesk.com',
+    subject: 'Landing page for the walk-in flu clinic',
+    description:
+      'We want a single page people can be sent to: times, which sites, what to bring, and whether they need to book.',
+    priority: 'High',
+    status: 'Accepted',
+    deadline: 8,
+    committed: 9,
+    project: 'Winter Vaccinations',
+    messages: [
+      ['assignee', 'Copy is drafted. Do the Dubai and Abu Dhabi sites run the same hours?'],
+      ['raiser', 'Dubai is 8 to 6, Abu Dhabi closes at 4. Worth showing both.'],
+    ],
+  },
+  {
+    to: 'Digital Marketing',
+    from: 'Physiotherapy',
+    by: 'omar.siddique@flowdesk.com',
+    assignee: 'intizar.shah@flowdesk.com',
+    subject: 'Social posts for the rehab open day',
+    description:
+      'Four or five posts in the fortnight before the open day, with the booking link and a couple of the team photos.',
+    priority: 'Low',
+    status: 'In Progress',
+    deadline: 11,
+    committed: 11,
+  },
+  {
+    to: 'Digital Marketing',
+    from: 'Finance',
+    by: 'usman.javed@flowdesk.com',
+    assignee: 'intizar.shah@flowdesk.com',
+    subject: 'Quarterly spend report on paid advertising',
+    description:
+      'A breakdown of the quarter by channel and by site, so the spend can be split across the two cost centres properly.',
+    priority: 'Medium',
+    status: 'Waiting',
+    deadline: 4,
+    messages: [
+      ['assignee', 'The platform export does not split by site. Is a share by booking volume acceptable?'],
+      ['raiser', 'That works, as long as the method is written down with the figures.'],
+    ],
+  },
+  {
+    to: 'Digital Marketing',
+    from: 'Laboratory',
+    by: 'tariq.mehmood@flowdesk.com',
+    assignee: 'intizar.shah@flowdesk.com',
+    subject: 'Correct the turnaround times on the website',
+    description:
+      'The site still promises 48 hours on cultures. It has not been 48 hours for months and patients are quoting it back to us.',
+    priority: 'Critical',
+    status: 'Overdue',
+    deadline: -5,
+  },
   {
     to: 'Reception',
     from: 'Radiology',

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ChevronDown,
   CornerUpLeft,
   Mic,
   MessagesSquare,
@@ -19,6 +20,7 @@ import { useNotifications } from "@/components/notifications/notification-provid
 import { dayLabel } from "@/components/notifications/notification-shared";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import { listDepartmentMembers, type MemberOption } from "@/lib/departments";
 import {
   deleteMessage,
   editMessage,
@@ -31,7 +33,7 @@ import { ChatMessage } from "@/components/tickets/chat-message";
 import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
 import { DraftPreview, useVoiceRecorder, type Draft } from "@/components/tickets/chat-attachments";
 import type { TicketRecord } from "@/lib/tickets";
-import { cn } from "@/lib/utils";
+import { cn, formatTime } from "@/lib/utils";
 
 /** How often an open thread asks whether anything has been said. */
 const REFRESH_MS = 5000;
@@ -98,6 +100,135 @@ function groupByDay(messages: MessageRecord[]) {
  * carries the tag of the last answer, so a quiet thread costs a 304 with no
  * body and repaints nothing.
  */
+/**
+ * Why somebody is in this conversation.
+ *
+ * Ordered by how much the thread is theirs: the person who asked, then whoever
+ * is actually holding it, then the rest of the department who can read it and
+ * join in.
+ */
+type Standing = "requester" | "holding" | "head" | "team";
+
+const STANDING: Record<Standing, { label: string; chip: string }> = {
+  requester: { label: "Requester", chip: "bg-brand-50 text-brand-700" },
+  holding: { label: "Holding it", chip: "bg-status-completed-bg text-status-completed-fg" },
+  head: { label: "Head", chip: "bg-role-head-bg text-role-head-fg" },
+  team: { label: "Team", chip: "bg-ink-100 text-ink-600" },
+};
+
+type Participant = {
+  id: string;
+  name: string;
+  standing: Standing;
+  /** Where they sit, as "Unit · Department". Empty for a manager, who sits above both. */
+  where: string;
+};
+
+/**
+ * The group, the way a messaging app shows one: a row of faces and a count,
+ * opening into the list with each person's part in it.
+ *
+ * It is not a guest list anybody chose - it is everybody the ticket is already
+ * visible to, which is the raiser plus the department being asked. Two people
+ * in the same thread should not have to guess who else is reading it.
+ */
+function People({
+  people,
+  raiser,
+  holders,
+  meId,
+  open,
+  onToggle,
+}: {
+  people: Participant[];
+  raiser: string;
+  holders: string[];
+  meId?: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (people.length === 0) return null;
+
+  return (
+    <div className="shrink-0 border-b border-line px-3 py-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        {/* The two names that answer the questions people actually open a
+            thread with: who wants this, and who has it. The rest of the room
+            is a tap away. */}
+        <span className="min-w-0 flex-1 leading-tight">
+          <span className="block truncate text-[11px] text-ink-400">
+            Raised by <span className="font-semibold text-ink-700">{raiser}</span>
+          </span>
+          <span className="block truncate text-[11px] text-ink-400">
+            Handled by{" "}
+            {holders.length > 0 ? (
+              <span className="font-semibold text-ink-700">{holders.join(", ")}</span>
+            ) : (
+              <span className="font-semibold text-ink-400">nobody yet</span>
+            )}
+          </span>
+        </span>
+
+        <span className="shrink-0 text-[11px] font-semibold text-ink-400">{people.length}</span>
+
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-ink-400 transition-transform", open && "rotate-180")}
+        />
+      </button>
+
+      {open && (
+        <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
+          {people.map((person) => (
+            <li key={person.id} className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate">
+                <span className="text-[13px] font-medium text-ink-800">{person.name}</span>
+                {person.id === meId && <span className="ml-1 text-[13px] text-ink-400">(you)</span>}
+                {/* Where they sit. A thread can span units now, so "who is
+                    this" is half the question and "from where" is the other. */}
+                {person.where && (
+                  <span className="ml-1.5 text-[11px] text-ink-400">{person.where}</span>
+                )}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
+                  STANDING[person.standing].chip,
+                )}
+              >
+                {STANDING[person.standing].label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Something that happened, sitting in the thread among the things that were
+ * said: raised, retitled, handed on.
+ *
+ * Centred and quiet, the way a messaging app marks its own announcements, so
+ * it reads as part of the story without pretending somebody said it.
+ */
+function SystemLine({ message }: { message: MessageRecord }) {
+  return (
+    <p className="px-6 text-center text-[11px] leading-relaxed text-ink-400">
+      <span className="rounded-full bg-ink-100 px-2.5 py-1">
+        <span className="font-semibold text-ink-600">{message.author.name}</span>{" "}
+        {message.body}
+        <span className="ml-1.5 text-ink-400">{formatTime(message.createdAt)}</span>
+      </span>
+    </p>
+  );
+}
+
 export function TicketChat({
   ticket,
   onCount,
@@ -112,6 +243,9 @@ export function TicketChat({
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [pending, setPending] = useState<MessageRecord[]>([]);
   const [draft, setDraft] = useState("");
+  /** Everyone in the department being asked; the raiser comes off the ticket. */
+  const [team, setTeam] = useState<MemberOption[] | null>(null);
+  const [peopleOpen, setPeopleOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -198,6 +332,62 @@ export function TicketChat({
       window.removeEventListener("online", wake);
     };
   }, [fetchNow]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    listDepartmentMembers(ticket.department.id, controller.signal)
+      .then(setTeam)
+      .catch(() => setTeam([]));
+
+    return () => controller.abort();
+  }, [ticket.department.id]);
+
+  /**
+   * Everyone this thread is visible to, most involved first.
+   *
+   * The strongest reason wins: somebody who raised the ticket and also works
+   * in the department is listed once, as the requester.
+   */
+  const people = useMemo<Participant[]>(() => {
+    const holders = new Set(ticket.assignees.map((person) => person.id));
+    const seen = new Set<string>();
+    const out: Participant[] = [];
+
+    const place = (unit?: string, department?: string) =>
+      [unit, department].filter(Boolean).join(" · ");
+
+    // Everyone on the receiving side sits in the one department being asked;
+    // the raiser sits wherever they raised it from.
+    const receiving = place(ticket.department.unit?.name, ticket.department.name);
+    const asking = ticket.fromDepartments
+      .map((item) => place(item.unit?.name, item.name))
+      .filter(Boolean)
+      .join(", ");
+
+    const add = (id: string, name: string, standing: Standing, where: string) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      out.push({ id, name, standing, where });
+    };
+
+    add(ticket.raisedBy.id, ticket.raisedBy.name ?? "Requester", "requester", asking);
+
+    for (const member of team ?? []) {
+      if (holders.has(member.id)) add(member.id, member.name, "holding", receiving);
+    }
+    // A manager can hold a ticket without being in the department, so anyone
+    // still unaccounted for is taken from the ticket itself - and sits above
+    // the org chart rather than in it.
+    for (const person of ticket.assignees) {
+      add(person.id, person.name ?? "Someone", "holding", "");
+    }
+    for (const member of team ?? []) {
+      add(member.id, member.name, member.departmentRole, receiving);
+    }
+
+    return out;
+  }, [ticket.raisedBy, ticket.assignees, ticket.department, ticket.fromDepartments, team]);
 
   /**
    * Reading the thread is what marks its bell entries read. The feed is the
@@ -342,6 +532,8 @@ export function TicketChat({
     const placeholder: MessageRecord = {
       id: `${PENDING}${nextPendingId.current}`,
       ticket: ticketId,
+      kind: "text",
+      event: null,
       author: { id: meId ?? "", name: session?.name ?? "You" },
       authorDepartments: [],
       authorUnits: [],
@@ -453,6 +645,15 @@ export function TicketChat({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <People
+        people={people}
+        raiser={ticket.raisedBy.name ?? "Someone"}
+        holders={ticket.assignees.map((person) => person.name ?? "Someone")}
+        meId={meId}
+        open={peopleOpen}
+        onToggle={() => setPeopleOpen((current) => !current)}
+      />
+
       <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
         {loading && thread.length === 0 && (
           <p className="py-8 text-center text-sm text-ink-400">Loading the conversation...</p>
@@ -476,11 +677,19 @@ export function TicketChat({
                 {group.label}
               </span>
             </p>
-            {group.items.map((message, index) => (
+            {group.items.map((message, index) =>
+              message.kind === "system" ? (
+                <SystemLine key={message.id} message={message} />
+              ) : (
               <ChatMessage
                 key={message.id}
-                // One name per run of messages, the way a chat app does it.
-                showHeader={group.items[index - 1]?.author.id !== message.author.id}
+                // One name per run of messages, the way a chat app does it. A
+                // system line between two breaks the run, which is right: the
+                // thread moved on to something else in between.
+                showHeader={
+                  group.items[index - 1]?.kind === "system" ||
+                  group.items[index - 1]?.author.id !== message.author.id
+                }
                 message={message}
                 mine={message.author.id === meId}
                 pending={message.id.startsWith(PENDING)}
@@ -501,7 +710,8 @@ export function TicketChat({
                 onReply={() => startReply(message)}
                 onJump={jumpTo}
               />
-            ))}
+              ),
+            )}
           </div>
         ))}
       </div>
