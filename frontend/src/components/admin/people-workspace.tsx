@@ -14,6 +14,7 @@ import {
   ShieldPlus,
   UserCheck,
   UserMinus,
+  UserPlus,
 } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
@@ -21,11 +22,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
-import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
+import { MembershipRows } from "@/components/admin/membership-rows";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { avatarTone, initials, isSuperAdmin, ROLE_LABEL } from "@/lib/auth";
@@ -118,8 +121,10 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const [error, setError] = useState("");
 
   const [query, setQuery] = useState("");
-  const [department, setDepartment] = useState("");
-  const [unit, setUnit] = useState("");
+  // Every filter takes a set: "Finance or IT Support" is one question, and
+  // one-at-a-time made it two.
+  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  const [unitIds, setUnitIds] = useState<string[]>([]);
 
   // The units represented by the departments in this workspace. One person
   // can hold departments in several of them, so both are worth filtering by
@@ -134,8 +139,8 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [departments]);
   const manyUnits = units.length > 1;
-  const [status, setStatus] = useState("");
-  const [role, setRole] = useState("");
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [roles, setRoles] = useState<string[]>([]);
 
   const [editing, setEditing] = useState<DirectoryUser | null>(null);
   const [removing, setRemoving] = useState<DirectoryUser | null>(null);
@@ -152,7 +157,10 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setError(errorMessage(caught));
       } finally {
-        setLoading(false);
+        // An aborted request is not an answer. React mounts an effect twice in
+        // development, so the first fetch is always cancelled: clearing the flag
+        // here would declare "nothing found" while the real request is still out.
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [scopeRole],
@@ -174,13 +182,22 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     return users.filter((user) => {
       if (term && !`${user.name} ${user.email} ${shortId(user.id)}`.toLowerCase().includes(term))
         return false;
-      if (department && !user.departments.some((item) => item.id === department)) return false;
-      if (unit && !user.departments.some((item) => item.unit?.id === unit)) return false;
-      if (status && user.status !== status) return false;
-      if (role && effectiveRole(user) !== role) return false;
+      // An empty filter asks nothing of the row, so it lets everything past.
+      if (
+        departmentIds.length > 0 &&
+        !user.departments.some((item) => departmentIds.includes(item.id))
+      )
+        return false;
+      if (
+        unitIds.length > 0 &&
+        !user.departments.some((item) => item.unit?.id && unitIds.includes(item.unit.id))
+      )
+        return false;
+      if (statuses.length > 0 && !statuses.includes(user.status)) return false;
+      if (roles.length > 0 && !roles.includes(effectiveRole(user))) return false;
       return true;
     });
-  }, [users, query, department, unit, status, role]);
+  }, [users, query, departmentIds, unitIds, statuses, roles]);
 
   const setStatusFor = async (user: DirectoryUser, next: DirectoryUser["status"]) => {
     try {
@@ -197,13 +214,13 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     <>
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} />
+      <StatTiles stats={stats} loading={loading} />
 
       <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-3 py-2.5">
           <div className="w-full lg:min-w-44 lg:flex-1">
             <Input
-              className="h-11 text-[13px]"
+              className="h-8 text-[13px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search by name, email or user ID..."
               value={query}
@@ -213,73 +230,84 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
           </div>
 
           {units.length > 1 && (
-            <Select
-              className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
-              value={unit}
-              onChange={(event) => {
-                setUnit(event.target.value);
-                setDepartment("");
-              }}
-              aria-label="Filter by unit"
-            >
-              <option value="">All Units</option>
-              {units.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </Select>
+            <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
+              <MultiSelect
+                options={units.map((item) => ({ value: item.id, label: item.name }))}
+                value={unitIds}
+                onChange={(next) => {
+                  setUnitIds(next);
+                  // A department outside the units now in view would filter
+                  // every row away, so it goes with them.
+                  if (next.length === 0) return;
+                  const allowed = new Set(
+                    departments
+                      .filter((item) => item.unit?.id && next.includes(item.unit.id))
+                      .map((item) => item.id),
+                  );
+                  setDepartmentIds((current) => current.filter((id) => allowed.has(id)));
+                }}
+                display="summary"
+                placeholder="All Units"
+              />
+            </div>
           )}
 
-          <Select
-            className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-40 lg:flex-none"
-            value={department}
-            onChange={(event) => setDepartment(event.target.value)}
-            aria-label="Filter by department"
-          >
-            <option value="">All Departments</option>
-            {departments
-              .filter((item) => !unit || item.unit?.id === unit)
-              .map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-          </Select>
+          <div className="min-w-[132px] flex-1 lg:w-48 lg:flex-none">
+            <MultiSelect
+              options={departments
+                .filter((item) => unitIds.length === 0 || (item.unit?.id && unitIds.includes(item.unit.id)))
+                .map((item) => ({
+                  value: item.id,
+                  // Across units the name alone can be ambiguous; inside one
+                  // it would only be repetition.
+                  label:
+                    unitIds.length !== 1 && units.length > 1 && item.unit?.name
+                      ? `${item.name} · ${item.unit.name}`
+                      : item.name,
+                }))}
+              value={departmentIds}
+              onChange={setDepartmentIds}
+              display="summary"
+              placeholder="All Departments"
+              emptyMessage="Nothing in those units"
+            />
+          </div>
 
           {scope === "all" && (
-            <Select
-              className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
-              value={role}
-              onChange={(event) => setRole(event.target.value)}
-              aria-label="Filter by role"
-            >
-              <option value="">All Roles</option>
-              <option value="superadmin">Super Admin</option>
-              <option value="admin">Admin</option>
-              <option value="head">Head</option>
-              <option value="team">Team</option>
-            </Select>
+            <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
+              <MultiSelect
+                options={[
+                  { value: "superadmin", label: "Super Admin" },
+                  { value: "admin", label: "Admin" },
+                  { value: "head", label: "Head" },
+                  { value: "team", label: "Team" },
+                ]}
+                value={roles}
+                onChange={setRoles}
+                display="summary"
+                placeholder="All Roles"
+              />
+            </div>
           )}
 
-          <Select
-            className="h-11 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-32 lg:flex-none"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            aria-label="Filter by status"
-          >
-            <option value="">All Status</option>
-            <option value="active">Active</option>
-            <option value="invited">Invited</option>
-            <option value="suspended">Suspended</option>
-          </Select>
+          <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
+            <MultiSelect
+              options={[
+                { value: "active", label: "Active" },
+                { value: "invited", label: "Invited" },
+                { value: "suspended", label: "Suspended" },
+              ]}
+              value={statuses}
+              onChange={setStatuses}
+              display="summary"
+              placeholder="All Status"
+            />
+          </div>
 
-          {scope === "admins" && (
-            <Button className="h-11" onClick={() => setCreating(true)}>
-              <ShieldPlus className="size-4.5" />
-              Create Admin
-            </Button>
-          )}
+          <Button className="h-8" onClick={() => setCreating(true)}>
+            {scope === "admins" ? <ShieldPlus className="size-4.5" /> : <UserPlus className="size-4.5" />}
+            {scope === "admins" ? "Create Admin" : "Create User"}
+          </Button>
         </div>
 
         <div className="overflow-x-auto">
@@ -413,19 +441,15 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                 </tr>
               )}
 
-              {loading && (
-                <tr>
-                  <td colSpan={8} className="px-5 py-14 text-center text-sm text-ink-400">
-                    Loading…
-                  </td>
-                </tr>
-              )}
+              {loading && <TableSkeleton rows={5} columns={8} />}
             </tbody>
           </table>
         </div>
 
         <Pagination
-          summary={`Showing 1 to ${rows.length} of ${rows.length} users`}
+          summary={
+            loading ? "Loading users…" : `Showing 1 to ${rows.length} of ${rows.length} users`
+          }
           pages={1}
           current={1}
         />
@@ -444,7 +468,9 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         }}
       />
 
-      <CreateAdminModal
+      <CreatePersonModal
+        scope={scope}
+        departments={departments}
         open={creating}
         onClose={() => setCreating(false)}
         onCreated={() => {
@@ -467,31 +493,51 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   );
 }
 
-/* ---------------------------------------------------------- create admin */
+/* --------------------------------------------------------- create person */
 
-/** Both a super admin and an admin can open this; it only ever mints admins. */
-function CreateAdminModal({
+/**
+ * Makes an account, and on the directory page files it at the same time.
+ *
+ * A member is placed where they work as they are created - any unit, any
+ * department, with a role in each - rather than being made first and filed
+ * afterwards in a second trip through the edit dialog. The Staff page only
+ * ever mints admins, who sit above the org chart and belong to no department,
+ * so it does not ask.
+ */
+function CreatePersonModal({
+  scope,
+  departments,
   open,
   onClose,
   onCreated,
 }: {
+  scope: Scope;
+  departments: Department[];
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
 }) {
+  /** The Staff page is the admin directory, so that is all it makes. */
+  const adminsOnly = scope === "admins";
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [memberships, setMemberships] = useState<MembershipInput[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const toast = useToast();
+
+  /** Decided by which directory you opened, not by a field on the form. */
+  const role = adminsOnly ? "admin" : "user";
 
   const close = () => {
     setName("");
     setEmail("");
     setPassword("");
     setShowPassword(false);
+    setMemberships([]);
     setError("");
     onClose();
   };
@@ -511,9 +557,19 @@ function CreateAdminModal({
         name: name.trim(),
         email: email.trim(),
         password,
-        role: "admin",
+        role,
+        // An admin holds no departments, so the picker's value is not sent.
+        ...(role === "user" ? { memberships } : {}),
       });
-      toast.success(`${created.name} added as an admin`, created.email);
+
+      toast.success(
+        role === "admin"
+          ? `${created.name} added as an admin`
+          : memberships.length === 0
+            ? `${created.name} added`
+            : `${created.name} added to ${memberships.length} department${memberships.length === 1 ? "" : "s"}`,
+        created.email,
+      );
       close();
       onCreated();
     } catch (caught) {
@@ -527,74 +583,106 @@ function CreateAdminModal({
     <Modal
       open={open}
       onClose={close}
-      title="Create Admin"
-      description="An admin can manage departments, members and other admins."
+      title={adminsOnly ? "Create Admin" : "Create User"}
+      description={
+        adminsOnly
+          ? "An admin can manage departments, members and other admins."
+          : "Their sign-in details, and where in the workspace they sit."
+      }
+      className={adminsOnly ? undefined : "max-w-lg"}
     >
-      <form className="space-y-4" onSubmit={submit} noValidate>
+      <form className="space-y-3.5" onSubmit={submit} noValidate>
         {error && <Banner message={error} />}
 
-        <Field label="Full name" required htmlFor="admin-name">
-          <Input
-            id="admin-name"
-            className="h-11"
-            placeholder="Their full name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            name="admin-name"
-            autoComplete="off"
-            data-1p-ignore
-            autoFocus
-          />
-        </Field>
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field label="Full name" required htmlFor="person-name">
+            <Input
+              id="person-name"
+              placeholder="Their full name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              name="person-name"
+              autoComplete="off"
+              data-1p-ignore
+              autoFocus
+            />
+          </Field>
 
-        <Field label="Email" required htmlFor="admin-email">
-          <Input
-            id="admin-email"
-            type="email"
-            className="h-11"
-            placeholder="name@flowdesk.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            name="admin-email"
-            autoComplete="off"
-            data-1p-ignore
-          />
-        </Field>
+          <Field label="Email" required htmlFor="person-email">
+            <Input
+              id="person-email"
+              type="email"
+              placeholder="name@flowdesk.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              name="person-email"
+              autoComplete="off"
+              data-1p-ignore
+            />
+          </Field>
+        </div>
 
-        <Field label="Temporary password" required htmlFor="admin-password">
-          <Input
-            id="admin-password"
-            type={showPassword ? "text" : "password"}
-            className="h-11"
-            placeholder="At least 8 characters"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            name="admin-password"
-            autoComplete="new-password"
-            data-1p-ignore
-            trailing={
-              <button
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
-              </button>
-            }
-          />
-        </Field>
+        <div className="grid gap-3.5">
+          <Field label="Temporary password" required htmlFor="person-password">
+            <Input
+              id="person-password"
+              type={showPassword ? "text" : "password"}
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              name="person-password"
+              autoComplete="new-password"
+              data-1p-ignore
+              trailing={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
+                </button>
+              }
+            />
+          </Field>
+        </div>
 
-        <p className="text-xs text-ink-400">
-          The super admin role is fixed and cannot be granted here.
-        </p>
+        {/* Where they work, and what they are in each place. */}
+        {!adminsOnly && (
+          <div>
+            <p className="mb-1.5 text-sm font-semibold text-ink-800">
+              Roles
+              <span className="ml-1 font-normal text-ink-400">
+                (a unit, a department, and what they are in it
+                {memberships.length > 0 ? ` · ${memberships.length} added` : ""})
+              </span>
+            </p>
+            <MembershipRows
+              departments={departments}
+              value={memberships}
+              onChange={setMemberships}
+            />
+            <p className="mt-1.5 text-xs text-ink-400">
+              Optional now - they can be filed later from this page. Add a row for each posting:
+              several departments in one unit, or across units, both work.
+            </p>
+          </div>
+        )}
 
-        <div className="flex justify-end gap-2 border-t border-line pt-4">
+        {adminsOnly && (
+          <p className="flex items-start gap-2 rounded-field bg-ink-50 px-3 py-2.5 text-xs text-ink-500">
+            <ShieldCheck className="mt-px size-4 shrink-0 text-ink-400" />
+            An admin sits above the org chart and belongs to no department, so they see every unit
+            and every ticket already. The super admin role is fixed and cannot be granted here.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3.5">
           <Button type="button" variant="outline" size="sm" onClick={close}>
             Cancel
           </Button>
           <Button type="submit" size="sm" disabled={pending}>
-            {pending ? "Creating…" : "Create Admin"}
+            {pending ? "Creating…" : adminsOnly ? "Create Admin" : "Create User"}
           </Button>
         </div>
       </form>
@@ -831,7 +919,7 @@ function EditUserForm({
         <Field label="Full name" required htmlFor="edit-name">
           <Input
             id="edit-name"
-            className="h-11"
+            className="h-8"
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
@@ -841,7 +929,7 @@ function EditUserForm({
           <Input
             id="edit-email"
             type="email"
-            className="h-11"
+            className="h-8"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -850,7 +938,7 @@ function EditUserForm({
         <Field label="Status" htmlFor="edit-status">
           <Select
             id="edit-status"
-            className="h-11"
+            className="h-8"
             value={status}
             disabled={isSelf}
             onChange={(event) => setStatus(event.target.value as DirectoryUser["status"])}
@@ -869,7 +957,7 @@ function EditUserForm({
           ) : (
             <Select
               id="edit-role"
-              className="h-11"
+              className="h-8"
               value={role}
               disabled={isSelf}
               onChange={(event) => setRole(event.target.value as "admin" | "user")}
@@ -891,7 +979,7 @@ function EditUserForm({
         <Input
           id="edit-password"
           type={showPassword ? "text" : "password"}
-          className="h-11"
+          className="h-8"
           icon={<KeyRound className="text-ink-500" />}
           placeholder="At least 8 characters"
           value={password}
@@ -923,13 +1011,13 @@ function EditUserForm({
         </div>
       ) : (
         <div>
-          <p className="mb-2 text-sm font-semibold text-ink-800">
-            Departments
+          <p className="mb-1.5 text-sm font-semibold text-ink-800">
+            Roles
             <span className="ml-1.5 font-normal text-ink-400">
-              tick each one and set the role ({memberships.length} selected)
+              (a unit, a department, and what they are in it · {memberships.length} added)
             </span>
           </p>
-          <DepartmentRolePicker
+          <MembershipRows
             departments={departments}
             value={memberships}
             onChange={setMemberships}

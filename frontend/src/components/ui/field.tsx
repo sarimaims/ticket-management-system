@@ -6,9 +6,9 @@ import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const CONTROL =
-  "h-12 w-full rounded-field border border-line-strong bg-surface text-sm font-medium text-ink-900 " +
+  "h-8 w-full rounded-md border border-line-strong bg-surface text-[13px] font-medium text-ink-900 " +
   "transition-colors placeholder:font-normal placeholder:text-ink-400 " +
-  "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10";
+  "focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/10";
 
 export function Label({
   children,
@@ -26,7 +26,7 @@ export function Label({
   return (
     <label
       htmlFor={htmlFor}
-      className={cn("mb-2 block text-sm font-semibold text-ink-800", className)}
+      className={cn("mb-1 block text-[12px] font-semibold text-ink-700", className)}
     >
       {children}
       {required && <span className="ml-1 text-brand-600">*</span>}
@@ -60,7 +60,7 @@ export function Field({
       <Label required={required} hint={hint} htmlFor={htmlFor} className={help ? "mb-1" : undefined}>
         {label}
       </Label>
-      {help && <p className="mb-2 text-xs text-ink-400">{help}</p>}
+      {help && <p className="mb-1.5 text-xs text-ink-400">{help}</p>}
       {children}
       {error && (
         <p role="alert" className="mt-1.5 text-xs font-medium text-brand-600">
@@ -74,7 +74,7 @@ export function Field({
 /** Leading icon slot shared by every control. */
 function LeadingIcon({ children }: { children: React.ReactNode }) {
   return (
-    <span className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-ink-400 [&_svg]:size-4.5">
+    <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-400 [&_svg]:size-4">
       {children}
     </span>
   );
@@ -98,8 +98,8 @@ export function Input({
         aria-invalid={invalid || undefined}
         className={cn(
           CONTROL,
-          icon ? "pl-12" : "pl-4",
-          trailing ? "pr-12" : "pr-4",
+          icon ? "pl-8" : "pl-3",
+          trailing ? "pr-9" : "pr-3",
           invalid && "border-brand-400 bg-brand-50/40",
           className,
         )}
@@ -121,10 +121,10 @@ export function Select({
   return (
     <div className="relative">
       {icon && <LeadingIcon>{icon}</LeadingIcon>}
-      <select className={cn(CONTROL, icon ? "pl-12" : "pl-4", "pr-10", className)} {...props}>
+      <select className={cn(CONTROL, icon ? "pl-8" : "pl-3", "pr-7", className)} {...props}>
         {children}
       </select>
-      <ChevronDown className="pointer-events-none absolute top-1/2 right-3.5 size-4.5 -translate-y-1/2 text-ink-400" />
+      <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-ink-400" />
     </div>
   );
 }
@@ -142,7 +142,7 @@ export function Textarea({
       <textarea
         aria-invalid={invalid || undefined}
         className={cn(
-          "min-h-[116px] w-full resize-y rounded-field border border-line-strong bg-surface px-4 py-3.5 text-sm text-ink-900",
+          "min-h-[84px] w-full resize-y rounded-md border border-line-strong bg-surface px-3 py-2 text-[13px] text-ink-900",
           "transition-colors placeholder:text-ink-400",
           "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10",
           maxLength ? "pb-9" : "",

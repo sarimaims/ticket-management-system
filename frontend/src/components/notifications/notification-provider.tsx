@@ -115,7 +115,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       } catch {
         // A failed poll is not worth a message: the next one is 12 seconds away.
       } finally {
-        setLoading(false);
+        // An aborted request is not an answer. React mounts an effect twice in
+        // development, so the first fetch is always cancelled: clearing the flag
+        // here would declare "nothing found" while the real request is still out.
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [toast],

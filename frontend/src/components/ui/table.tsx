@@ -6,16 +6,20 @@ export function TableHead({
   children,
   sortable,
   className,
+  title,
 }: {
   children: React.ReactNode;
   sortable?: boolean;
   className?: string;
+  /** Spelt-out version of a heading that had to be short to fit its column. */
+  title?: string;
 }) {
   return (
     <th
       scope="col"
+      title={title}
       className={cn(
-        "px-2.5 py-2.5 text-left text-xs font-semibold whitespace-nowrap text-ink-600",
+        "px-2.5 py-1.5 text-left text-[11px] font-semibold whitespace-nowrap text-ink-500",
         className,
       )}
     >
@@ -40,7 +44,7 @@ export function TableCell({
   className?: string;
 }) {
   return (
-    <td className={cn("px-2.5 py-2.5 text-[13px] whitespace-nowrap text-ink-600", className)}>
+    <td className={cn("px-2.5 py-1.5 text-[12px] whitespace-nowrap text-ink-600", className)}>
       {children}
     </td>
   );
@@ -56,11 +60,11 @@ export function Pagination({
   current?: number;
 }) {
   const btn =
-    "grid size-9 place-items-center rounded-lg border border-line-strong bg-surface text-ink-500 transition-colors hover:bg-ink-50 disabled:opacity-40 disabled:hover:bg-surface";
+    "grid size-8 place-items-center rounded-lg border border-line-strong bg-surface text-ink-500 transition-colors hover:bg-ink-50 disabled:opacity-40 disabled:hover:bg-surface";
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-2.5">
-      <p className="text-sm text-ink-500">{summary}</p>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-3 py-2">
+      <p className="text-xs text-ink-500">{summary}</p>
       <div className="flex items-center gap-2">
         <button type="button" className={btn} disabled={current === 1} aria-label="Previous page">
           <ChevronLeft className="size-4" />
@@ -71,7 +75,7 @@ export function Pagination({
             type="button"
             aria-current={page === current ? "page" : undefined}
             className={cn(
-              "grid size-9 place-items-center rounded-lg text-sm font-semibold transition-colors",
+              "grid size-8 place-items-center rounded-lg text-[13px] font-semibold transition-colors",
               page === current
                 ? "bg-brand-600 text-white"
                 : "border border-line-strong bg-surface text-ink-600 hover:bg-ink-50",

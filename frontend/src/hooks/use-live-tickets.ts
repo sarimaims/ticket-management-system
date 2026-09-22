@@ -118,7 +118,10 @@ export function useLiveTickets({ scope, intervalMs = null }: Options) {
       }
     } finally {
       if (inFlight.current === controller) inFlight.current = null;
-      if (alive.current) setLoading(false);
+      // An aborted request is not an answer: the remount that cancelled it has
+      // its own fetch in the air, and clearing the flag here would show an
+      // empty queue until that one lands.
+      if (alive.current && !controller.signal.aborted) setLoading(false);
     }
   }, [scope]);
 

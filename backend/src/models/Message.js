@@ -10,8 +10,10 @@ import { SYSTEM_ROLES } from './User.js';
  * removed. `side` is likewise frozen at the time of writing - someone who
  * later joins the receiving department does not retroactively become it.
  *
- * Messages are never edited or deleted, so there is no updatedAt: the thread
- * is a record of what was actually said.
+ * An author may correct or withdraw their own line, but nothing is ever
+ * really erased: an edit keeps every previous version and a delete only marks
+ * the message. Everyone sees that it happened; an admin can still read what it
+ * said, which is what makes the thread usable as a record.
  */
 const messageSchema = new mongoose.Schema(
   {
@@ -43,12 +45,76 @@ const messageSchema = new mongoose.Schema(
     },
     body: {
       type: String,
-      required: [true, 'A message cannot be empty'],
+      // A photo or a voice note is a message on its own; the controller
+      // refuses only a line that is empty of both.
       trim: true,
       maxlength: 2000,
+      default: '',
+    },
+    /** When the author last corrected it, and what it said before. */
+    editedAt: {
+      type: Date,
+      default: null,
+    },
+    /**
+     * Every earlier version, oldest first. Kept for admins: a correction that
+     * cannot be inspected is indistinguishable from a rewrite of history.
+     */
+    revisions: {
+      type: [
+        {
+          body: { type: String, default: '' },
+          replacedAt: { type: Date, required: true },
+          _id: false,
+        },
+      ],
+      default: [],
+    },
+    /** Withdrawn by its author. The text stays; who may read it changes. */
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    deletedByName: {
+      type: String,
+      default: '',
+    },
+    /**
+     * The line this one answers, WhatsApp-style. A reference rather than a
+     * copy: the quote then follows the original if its author corrects it,
+     * and a withdrawn original is quoted as withdrawn.
+     */
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Message',
+      default: null,
+    },
+    /**
+     * A photo or a voice note living in S3. Only the key is stored: the URL is
+     * signed fresh on every read, so the bucket can stay private and a link
+     * copied out of the page stops working before long.
+     */
+    attachment: {
+      type: {
+        kind: { type: String, enum: ['image', 'voice'], required: true },
+        key: { type: String, required: true },
+        mimeType: { type: String, required: true },
+        size: { type: Number, required: true },
+        /** Voice notes only, in milliseconds. */
+        durationMs: { type: Number, default: null },
+        /** What the sender called it, kept for the download filename. */
+        filename: { type: String, default: '' },
+      },
+      default: null,
+      _id: false,
     },
   },
-  { timestamps: { createdAt: true, updatedAt: false } },
+  { timestamps: true },
 );
 
 // The thread is always "this ticket, oldest first", and the poll below asks

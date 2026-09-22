@@ -28,20 +28,39 @@ export type Session = {
   departments: Membership[];
 };
 
-type UserResponse = { success: boolean; user: Session };
+/** What this deployment supports. Attachments need a configured S3 bucket. */
+export type Features = { attachments: boolean };
+
+export const NO_FEATURES: Features = { attachments: false };
+
+type UserResponse = { success: boolean; user: Session; features?: Features };
 
 /* The session is an httpOnly cookie set by the API: it is never readable from
    JavaScript, so "who am I" is always a round trip to /auth/me. */
 
 export function fetchSession(signal?: AbortSignal) {
-  return api<UserResponse>("/auth/me", { signal }).then((data) => data.user);
+  return api<UserResponse>("/auth/me", { signal }).then((data) => ({
+    user: data.user,
+    features: data.features ?? NO_FEATURES,
+  }));
 }
 
 export function login(email: string, password: string) {
   return api<UserResponse>("/auth/login", {
     method: "POST",
     body: { email, password },
-  }).then((data) => data.user);
+  }).then((data) => ({ user: data.user, features: data.features ?? NO_FEATURES }));
+}
+
+/**
+ * Your own password. The current one goes with it: the cookie proves the
+ * session, not the person sitting in front of it.
+ */
+export function changePassword(currentPassword: string, newPassword: string) {
+  return api<{ success: boolean }>("/auth/password", {
+    method: "POST",
+    body: { currentPassword, newPassword },
+  });
 }
 
 export function logout() {

@@ -3,10 +3,36 @@ import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import TicketAssignment from '../models/TicketAssignment.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
+import { recordAssignment } from '../services/assignment.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
+
+/**
+ * The department a ticket sits with, and the unit above it.
+ *
+ * The unit rides along because a person works in one at a time: their lists
+ * are scoped by it, and a ticket that does not know its own unit cannot be
+ * filtered without a second round trip for every row.
+ */
+const WITH_DEPARTMENT = {
+  path: 'department',
+  select: 'name code unit',
+  populate: { path: 'unit', select: 'name code' },
+};
+
+/** The same, for the departments a request was raised on behalf of. */
+const WITH_FROM_DEPARTMENTS = { ...WITH_DEPARTMENT, path: 'fromDepartments' };
+
+/** A populated unit, flattened to what the client reads. */
+function presentUnit(unit) {
+  if (!unit) return null;
+  return typeof unit === 'object' && unit.name
+    ? { id: String(unit._id), name: unit.name, code: unit.code }
+    : { id: String(unit) };
+}
 
 function present(ticket) {
   const department = ticket.department;
@@ -29,11 +55,16 @@ function present(ticket) {
       : null,
     committedAt: ticket.committedAt ?? null,
     department: populated(department)
-      ? { id: String(department._id), name: department.name, code: department.code }
+      ? {
+          id: String(department._id),
+          name: department.name,
+          code: department.code,
+          unit: presentUnit(department.unit),
+        }
       : { id: String(department) },
     fromDepartments: (ticket.fromDepartments ?? []).map((item) =>
       populated(item)
-        ? { id: String(item._id), name: item.name, code: item.code }
+        ? { id: String(item._id), name: item.name, code: item.code, unit: presentUnit(item.unit) }
         : { id: String(item) },
     ),
     raisedBy: populated(raisedBy)
@@ -41,9 +72,9 @@ function present(ticket) {
       : { id: String(raisedBy) },
     // What level this came from: 'superadmin', 'admin' or 'user'.
     raisedByRole: ticket.raisedByRole,
-    assignee: populated(ticket.assignee)
-      ? { id: String(ticket.assignee._id), name: ticket.assignee.name }
-      : null,
+    assignees: (ticket.assignees ?? []).map((person) =>
+      populated(person) ? { id: String(person._id), name: person.name } : { id: String(person) },
+    ),
     // How much has been said on it, so a row can show there is a conversation
     // without the list loading a single message.
     messageCount: ticket.messageCount ?? 0,
@@ -58,6 +89,7 @@ export async function createTicket(req, res) {
     department,
     departments,
     fromDepartments,
+    assignees,
     subject,
     description,
     requestType,
@@ -87,6 +119,56 @@ export async function createTicket(req, res) {
     throw ApiError.badRequest('One or more departments do not exist.');
   }
 
+  /**
+   * Who should pick it up, per department: `{ departmentId: [userId, ...] }`.
+   *
+   * Each target gets its own ticket, so each gets its own names - somebody in
+   * Finance cannot hold the copy that went to IT - and a department can put
+   * more than one person on the same request rather than splitting it in two.
+   *
+   * The names are a starting point, not a claim on anyone's time: the
+   * receiving department can reassign it like any other ticket.
+   */
+  const assignedTo = new Map();
+  if (assignees && typeof assignees === 'object' && !Array.isArray(assignees)) {
+    const nameOf = new Map(targets.map((target) => [String(target._id), target.name]));
+
+    for (const [departmentId, picked] of Object.entries(assignees)) {
+      const wanted = [...new Set((Array.isArray(picked) ? picked : [picked]).filter(Boolean))];
+      if (wanted.length === 0) continue;
+
+      const key = String(departmentId);
+      if (!nameOf.has(key)) {
+        throw ApiError.badRequest('You can only name someone in a department you are asking.');
+      }
+
+      const held = [];
+      for (const userId of wanted) {
+        if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+
+        // eslint-disable-next-line no-await-in-loop
+        const candidate = await User.findById(userId);
+        const belongs =
+          candidate &&
+          candidate.status !== 'suspended' &&
+          (MANAGER_ROLES.includes(candidate.role) || candidate.roleInDepartment(key));
+
+        if (!belongs) throw ApiError.badRequest(`That person is not in ${nameOf.get(key)}.`);
+        held.push(candidate._id);
+      }
+
+      assignedTo.set(key, held);
+    }
+  }
+
+  // A ticket addressed at nobody is a ticket nobody has agreed to look at, so
+  // every department being asked has to be handed to at least one person by
+  // name. The department can pass it on afterwards; it cannot start ownerless.
+  const unstaffed = targets.find((target) => (assignedTo.get(String(target._id)) ?? []).length === 0);
+  if (unstaffed) {
+    throw ApiError.badRequest(`Choose who should handle it in ${unstaffed.name}.`);
+  }
+
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
   const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
@@ -112,15 +194,21 @@ export async function createTicket(req, res) {
     // Sequential rather than Promise.all: the ticket number comes from a
     // shared counter, and this keeps the numbering in a predictable order.
     // eslint-disable-next-line no-await-in-loop
-    created.push(await Ticket.create({ ...shared, department: target._id }));
+    created.push(
+      await Ticket.create({
+        ...shared,
+        department: target._id,
+        assignees: assignedTo.get(String(target._id)) ?? [],
+      }),
+    );
   }
 
   const populated = await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
     .sort({ number: 1 })
-    .populate('department', 'name code')
+    .populate(WITH_DEPARTMENT)
     .populate('raisedBy', 'name email')
-    .populate('fromDepartments', 'name code')
-    .populate('assignee', 'name email')
+    .populate(WITH_FROM_DEPARTMENTS)
+    .populate('assignees', 'name email')
     .populate('committedBy', 'name email');
 
   const tickets = populated.map(present);
@@ -131,8 +219,21 @@ export async function createTicket(req, res) {
       actor: req.user,
       department: ticket.department,
       action: 'ticket.created',
-      summary: `raised ${ticket.number} "${ticket.subject}"`,
+      summary:
+        (ticket.assignees ?? []).length > 0
+          ? `raised ${ticket.number} "${ticket.subject}" for ${ticket.assignees
+              .map((person) => person.name)
+              .join(', ')}`
+          : `raised ${ticket.number} "${ticket.subject}"`,
       ticketNumber: ticket.number,
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await recordAssignment({
+      ticket,
+      from: [],
+      to: ticket.assignees ?? [],
+      actor: req.user,
+      kind: 'raised',
     });
     // eslint-disable-next-line no-await-in-loop
     await notifyNewTicket({ ticket, actor: req.user });
@@ -167,10 +268,14 @@ export async function listTickets(req, res) {
   const filter = { ...visibilityFilter(req.user) };
 
   if (scope === 'mine') filter.raisedBy = req.user._id;
-  if (scope === 'assigned') {
+  if (scope === 'assigned' && !MANAGER_ROLES.includes(req.user.role)) {
     // Everything my departments have been asked to do, including what I asked
     // them myself: someone in two departments raises from one to the other,
     // and that ticket is still their department's work to pick up.
+    //
+    // A manager belongs to no department but oversees all of them, so their
+    // queue is every department's - otherwise it would always be empty and an
+    // admin could not open any thread at all.
     const departmentIds = (req.user.memberships ?? []).map((membership) => membership.department);
     filter.department = { $in: departmentIds };
   }
@@ -197,10 +302,10 @@ export async function listTickets(req, res) {
 
   const tickets = await Ticket.find(filter)
     .sort({ createdAt: -1 })
-    .populate('department', 'name code')
+    .populate(WITH_DEPARTMENT)
     .populate('raisedBy', 'name email')
-    .populate('fromDepartments', 'name code')
-    .populate('assignee', 'name email')
+    .populate(WITH_FROM_DEPARTMENTS)
+    .populate('assignees', 'name email')
     .populate('committedBy', 'name email');
 
   res.json({ success: true, tickets: tickets.map(present) });
@@ -213,10 +318,10 @@ export async function getTicket(req, res) {
     _id: req.params.id,
     ...visibilityFilter(req.user),
   })
-    .populate('department', 'name code')
+    .populate(WITH_DEPARTMENT)
     .populate('raisedBy', 'name email')
-    .populate('fromDepartments', 'name code')
-    .populate('assignee', 'name email')
+    .populate(WITH_FROM_DEPARTMENTS)
+    .populate('assignees', 'name email')
     .populate('committedBy', 'name email');
 
   // Not found and not allowed answer the same, so the endpoint cannot be used
@@ -227,7 +332,47 @@ export async function getTicket(req, res) {
 }
 
 /**
- * Works a ticket: status, assignee, and the two dates.
+ * The assignment trail for one ticket, oldest first.
+ *
+ * Reading it is exactly the right to read the ticket, so there is no second
+ * rule to keep in step - and nothing in it is anything the reader could not
+ * already see on the ticket itself.
+ */
+export async function listAssignments(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  const ticket = await Ticket.findOne({
+    _id: req.params.id,
+    ...visibilityFilter(req.user),
+  }).select('_id');
+
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  const trail = await TicketAssignment.find({ ticket: ticket._id }).sort({ createdAt: 1 });
+
+  res.json({
+    success: true,
+    assignments: trail.map((entry) => ({
+      id: String(entry._id),
+      // Paired by position: the ids and the names were written together.
+      from: (entry.from ?? []).map((id, index) => ({
+        id: String(id),
+        name: entry.fromNames?.[index] ?? '',
+      })),
+      to: (entry.to ?? []).map((id, index) => ({
+        id: String(id),
+        name: entry.toNames?.[index] ?? '',
+      })),
+      // What the mover was at the time, not what they are now.
+      by: { id: entry.by ? String(entry.by) : null, name: entry.byName, role: entry.byRole },
+      kind: entry.kind,
+      createdAt: entry.createdAt,
+    })),
+  });
+}
+
+/**
+ * Works a ticket: status, who holds it, and the two dates.
  *
  * The dates belong to different people and are enforced that way:
  *   deadline          - what the raiser asked for. Only they, or an admin,
@@ -255,7 +400,7 @@ export async function updateTicket(req, res) {
     status,
     deadline,
     committedDeadline,
-    assignee,
+    assignees,
     priority,
     subject,
     description,
@@ -263,8 +408,8 @@ export async function updateTicket(req, res) {
     project,
   } = req.body ?? {};
 
-  // Status and assignee are how a department works a ticket: theirs alone.
-  if (!worksIt && (status !== undefined || assignee !== undefined)) {
+  // Status and who holds it are how a department works a ticket: theirs alone.
+  if (!worksIt && (status !== undefined || assignees !== undefined)) {
     throw ApiError.forbidden('Only the receiving department can work this ticket.');
   }
 
@@ -293,7 +438,7 @@ export async function updateTicket(req, res) {
     project: ticket.project,
     deadline: asDay(ticket.deadline),
     committedDeadline: asDay(ticket.committedDeadline),
-    assignee: ticket.assignee ? String(ticket.assignee) : null,
+    assignees: (ticket.assignees ?? []).map(String).sort().join(','),
   };
 
   if (status !== undefined) {
@@ -356,30 +501,66 @@ export async function updateTicket(req, res) {
     ticket.committedAt = parsed ? new Date() : null;
   }
 
-  if (assignee !== undefined) {
-    if (assignee === null || assignee === '') {
-      ticket.assignee = null;
-    } else {
-      if (!mongoose.isValidObjectId(assignee)) throw ApiError.badRequest('Invalid assignee.');
+  /**
+   * Handing it on. Whoever works the ticket may pass it to anyone else in the
+   * department, and so may the people they pass it to - the right comes from
+   * working the ticket, not from being one of its holders, so a head is not a
+   * bottleneck and a queue does not stall on one person's absence.
+   *
+   * Remembered here rather than read back afterwards, because the trail needs
+   * the names of whoever it moved away from.
+   */
+  let handedFrom = null;
+  let handedTo = null;
 
-      const candidate = await User.findById(assignee);
+  if (assignees !== undefined) {
+    if (!Array.isArray(assignees)) throw ApiError.badRequest('Assignees must be a list.');
+
+    const held = (ticket.assignees ?? []).map(String);
+    const wanted = [...new Set(assignees.filter(Boolean).map(String))];
+
+    // Once a ticket sits with somebody it stays with somebody: it is handed
+    // on, never dropped. Tickets raised before that rule can stay empty.
+    if (wanted.length === 0 && held.length > 0) {
+      throw ApiError.badRequest(
+        'A ticket has to sit with someone. Hand it to another person instead.',
+      );
+    }
+
+    const people = [];
+    for (const userId of wanted) {
+      if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+
+      // eslint-disable-next-line no-await-in-loop
+      const candidate = await User.findById(userId).select('name role memberships');
       const belongs =
         candidate &&
         (MANAGER_ROLES.includes(candidate.role) ||
           candidate.roleInDepartment(ticket.department));
 
       if (!belongs) throw ApiError.badRequest('That person is not in this department.');
-      ticket.assignee = candidate._id;
+      people.push(candidate);
     }
+
+    const moved = held.join(',') !== people.map((person) => String(person._id)).sort().join(',');
+    if (moved) {
+      handedFrom = await User.find({ _id: { $in: ticket.assignees ?? [] } }).select('name');
+      handedTo = people;
+    }
+    ticket.assignees = people.map((person) => person._id);
   }
 
   await ticket.save();
 
+  if (handedTo) {
+    await recordAssignment({ ticket, from: handedFrom ?? [], to: handedTo, actor: req.user });
+  }
+
   const populated = await Ticket.findById(ticket._id)
-    .populate('department', 'name code')
+    .populate(WITH_DEPARTMENT)
     .populate('raisedBy', 'name email')
-    .populate('fromDepartments', 'name code')
-    .populate('assignee', 'name email')
+    .populate(WITH_FROM_DEPARTMENTS)
+    .populate('assignees', 'name email')
     .populate('committedBy', 'name email');
 
   const changes = [];
@@ -411,10 +592,12 @@ export async function updateTicket(req, res) {
       nowCommitted ? `committed to finish by ${nowCommitted}` : 'withdrew the committed date',
     );
   }
-  const nowAssignee = populated.assignee ? String(populated.assignee._id) : null;
-  if (before.assignee !== nowAssignee) {
+  const nowAssignees = (populated.assignees ?? []).map((person) => String(person._id)).sort();
+  if (before.assignees !== nowAssignees.join(',')) {
     changes.push(
-      populated.assignee ? `assigned to ${populated.assignee.name}` : 'unassigned',
+      nowAssignees.length > 0
+        ? `assigned to ${populated.assignees.map((person) => person.name).join(', ')}`
+        : 'unassigned',
     );
   }
 

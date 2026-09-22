@@ -12,7 +12,7 @@ import { login } from "@/lib/auth";
 
 export function LoginForm() {
   const router = useRouter();
-  const { setSession } = useAuth();
+  const { setAuth } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -33,7 +33,7 @@ export function LoginForm() {
 
     setPending(true);
     try {
-      setSession(await login(email.trim(), password));
+      setAuth(await login(email.trim(), password));
       router.push("/dashboard");
     } catch (error) {
       setErrors({ form: errorMessage(error) });

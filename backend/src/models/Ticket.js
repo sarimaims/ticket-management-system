@@ -91,11 +91,19 @@ const ticketSchema = new mongoose.Schema(
       enum: SYSTEM_ROLES,
       default: 'user',
     },
-    assignee: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-    },
+    /**
+     * Who is handling it. More than one, because a department often puts two
+     * people on the same request rather than splitting it into two requests.
+     *
+     * Empty only on tickets raised before a name was required; from then on a
+     * ticket always sits with somebody, and is handed on rather than dropped.
+     */
+    assignees: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
     // What the raiser asked for. Theirs to move, nobody else's.
     deadline: {
       type: Date,

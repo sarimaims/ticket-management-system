@@ -81,6 +81,35 @@ API base path: `/api`. Health check: `GET /api/health`.
 | `npm run prisma:generate` | Regenerate the Prisma client after a schema change |
 | `npm run prisma:studio` | Browse the data in Prisma Studio |
 
+### Chat attachments
+
+A ticket's chat can carry a photo or a voice note. The browser asks the API for
+a presigned URL, PUTs the file straight to S3, then sends the message with the
+key it was given - so a 10 MB photo never passes through Express, and the
+object is in the bucket before the message that refers to it exists.
+
+Objects are laid out one folder per kind, so the bucket stays browsable:
+
+```
+upload/chat/images/<ticketId>-<date>-<random>.png
+upload/chat/voices/<ticketId>-<date>-<random>.webm
+```
+
+The key is built server side and never taken from the client, and the object is inspected with a HEAD before
+the message is written: the size and type stored are S3's own, not what the
+browser claimed. Reads are signed per request and expire within the hour, so
+the bucket can stay private.
+
+Set `S3_BUCKET` and `S3_REGION` to switch it on. Until then the API answers 503
+on the upload endpoint, `/auth/me` reports `features.attachments: false`, and
+the two buttons in the chat are disabled with a tooltip saying why. The bucket
+needs CORS allowing `PUT` and `GET` from the app's origin:
+
+```json
+[{ "AllowedOrigins": ["https://your-app"], "AllowedMethods": ["PUT", "GET"],
+   "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3000 }]
+```
+
 ### Prisma
 
 `backend/prisma/schema.prisma` describes the same data Mongoose writes — same

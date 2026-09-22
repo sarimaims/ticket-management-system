@@ -30,7 +30,7 @@ export function StatusBadge({ status, className }: { status: TicketStatus; class
   return (
     <span
       className={cn(
-        "inline-flex items-center justify-center rounded-md px-2.5 py-1 text-xs font-semibold whitespace-nowrap",
+        "inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[11px] font-semibold whitespace-nowrap",
         STATUS_STYLES[status],
         className,
       )}
@@ -45,7 +45,7 @@ export function PriorityBadge({ priority, className }: { priority: TicketPriorit
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold whitespace-nowrap",
+        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold whitespace-nowrap",
         style.chip,
         className,
       )}
@@ -66,7 +66,7 @@ export function RoleTag({ role, className }: { role: "head" | "team"; className?
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold capitalize",
+        "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold capitalize",
         ROLE_STYLES[role],
         className,
       )}

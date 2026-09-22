@@ -9,12 +9,16 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import type { Stat } from "@/lib/types";
 import {
   createDepartment,
   deleteDepartment,
@@ -46,7 +50,7 @@ export function DepartmentsWorkspace() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [units, setUnits] = useState<UnitOption[]>([]);
-  const [unitFilter, setUnitFilter] = useState("");
+  const [unitFilter, setUnitFilter] = useState<string[]>([]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Department | null>(null);
@@ -59,7 +63,10 @@ export function DepartmentsWorkspace() {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setError(errorMessage(caught));
     } finally {
-      setLoading(false);
+      // An aborted request is not an answer. React mounts an effect twice in
+      // development, so the first fetch is always cancelled: clearing the flag
+      // here would declare "nothing found" while the real request is still out.
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
@@ -73,7 +80,8 @@ export function DepartmentsWorkspace() {
   }, [load]);
 
   const visible = departments.filter((department) => {
-    if (unitFilter && department.unit?.id !== unitFilter) return false;
+    // An empty filter asks nothing of the row, so it lets everything past.
+    if (unitFilter.length > 0 && !unitFilter.includes(department.unit?.id ?? "")) return false;
     return (department.name + department.code + department.description)
       .toLowerCase()
       .includes(query.trim().toLowerCase());
@@ -83,40 +91,34 @@ export function DepartmentsWorkspace() {
     (sum, department) => ({
       members: sum.members + department.memberCount,
       heads: sum.heads + department.headCount,
+      team: sum.team + department.teamCount,
     }),
-    { members: 0, heads: 0 },
+    { members: 0, heads: 0, team: 0 },
   );
+
+  const stats: Stat[] = [
+    { label: "Departments", value: departments.length, caption: "", tone: "new" },
+    { label: "Members", value: totals.members, caption: "", tone: "progress" },
+    { label: "Heads", value: totals.heads, caption: "", tone: "admin" },
+    { label: "Team", value: totals.team, caption: "", tone: "completed" },
+  ];
 
   return (
     <>
       <PageHeader
         title="Departments"
         crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Departments" }]}
-        actions={
-          <div className="flex items-center gap-4">
-            <p className="hidden text-sm text-ink-500 sm:block">
-              <span className="font-semibold text-ink-900">{departments.length}</span> departments ·{" "}
-              <span className="font-semibold text-ink-900">{totals.members}</span> members ·{" "}
-              <span className="font-semibold text-ink-900">{totals.heads}</span> heads
-            </p>
-
-            {canManage && (
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus className="size-4" strokeWidth={2.5} />
-                New Department
-              </Button>
-            )}
-          </div>
-        }
       />
 
       {error && <Banner message={error} />}
 
+      <StatTiles stats={stats} loading={loading} className="mb-2" />
+
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-10"
+              className="h-7 text-[12px]"
               icon={<Search className="text-ink-400" />}
               placeholder="Search departments..."
               value={query}
@@ -125,19 +127,24 @@ export function DepartmentsWorkspace() {
             />
           </div>
 
-          <Select
-            className="h-10 w-52 shrink-0 pr-8 pl-3 text-[13px]"
-            value={unitFilter}
-            onChange={(event) => setUnitFilter(event.target.value)}
-            aria-label="Filter by unit"
-          >
-            <option value="">All units</option>
-            {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name}
-              </option>
-            ))}
-          </Select>
+          <div className="w-44 shrink-0">
+            <MultiSelect
+              className="h-7 [&>span]:text-[12px]"
+              options={units.map((unit) => ({ value: unit.id, label: unit.name }))}
+              value={unitFilter}
+              onChange={setUnitFilter}
+              display="summary"
+              placeholder="All units"
+              emptyMessage="No units yet"
+            />
+          </div>
+
+          {canManage && (
+            <Button size="sm" className="h-7 shrink-0" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-3.5" strokeWidth={2.5} />
+              New Department
+            </Button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -154,11 +161,7 @@ export function DepartmentsWorkspace() {
               </tr>
             </thead>
             <tbody>
-              {loading && (
-                <tr>
-                  <TableCell className="py-8 text-center text-ink-400">Loading…</TableCell>
-                </tr>
-              )}
+              {loading && <TableSkeleton rows={4} columns={7} />}
 
               {!loading && visible.length === 0 && (
                 <tr>
@@ -242,10 +245,10 @@ export function DepartmentsWorkspace() {
       </Card>
 
       <CreateDepartmentModal
-        key={createOpen ? `open-${unitFilter}` : "closed"}
+        key={createOpen ? `open-${unitFilter.join("-")}` : "closed"}
         open={createOpen}
         units={units}
-        defaultUnit={unitFilter}
+        defaultUnit={unitFilter.length === 1 ? unitFilter[0] : ""}
         onClose={() => setCreateOpen(false)}
         onCreated={(department) => {
           setDepartments((current) => [...current, department].sort((a, b) => a.name.localeCompare(b.name)));
@@ -350,7 +353,7 @@ function CreateDepartmentModal({
           ) : (
             <Select
               id="department-unit"
-              className="h-11"
+              className="h-8"
               icon={<Building className="text-ink-500" />}
               value={unit}
               onChange={(event) => setUnit(event.target.value)}
@@ -368,7 +371,7 @@ function CreateDepartmentModal({
         <Field label="Department name" required htmlFor="department-name">
           <Input
             id="department-name"
-            className="h-11"
+            className="h-8"
             icon={<Building2 className="text-ink-500" />}
             placeholder="e.g. Human Resources"
             value={name}

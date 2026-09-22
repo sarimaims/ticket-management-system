@@ -84,6 +84,20 @@
   --color-priority-critical-fg: #7f1d1d;
   --color-priority-critical-dot: #dc2626;
 
+  /* --- Chat ------------------------------------------------------------- *
+   * Deliberately outside the brand: a wall of red bubbles reads as a wall of
+   * errors. The thread runs in a quiet green instead, and red is kept for
+   * what is actually wrong or actually destructive.
+   * --------------------------------------------------------------------- */
+  --color-chat-mine-bg: #dcf8e4;      /* your own bubble */
+  --color-chat-mine-fg: #14312a;      /* text on it */
+  --color-chat-mine-soft: #c6eed4;    /* a quote inside it */
+  --color-chat-mine-meta: #4b7a67;    /* the time inside it */
+  --color-chat-accent: #0d9488;       /* send, record, a quote's rule */
+  --color-chat-accent-strong: #0f766e;
+  --color-chat-accent-soft: #f0fdfa;
+  --color-chat-accent-line: #99f6e4;
+
   /* --- Profile avatars -------------------------------------------------- *
    * The initials circle is tinted by what the person is: a head reads in the
    * brand red, a team member in slate. Same two families as the role tags and

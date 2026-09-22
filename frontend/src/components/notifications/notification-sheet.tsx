@@ -52,7 +52,7 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
     <>
       {open && (
         <div
-          className="fixed inset-x-0 top-16 bottom-0 z-40 bg-ink-900/30"
+          className="fixed inset-0 z-40 bg-ink-900/30"
           onClick={onClose}
           aria-hidden="true"
         />
@@ -62,7 +62,9 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
         aria-hidden={!open}
         aria-label="All notifications"
         className={cn(
-          "fixed top-16 right-0 bottom-0 z-50 flex w-full max-w-md flex-col border-l border-line bg-canvas transition-transform duration-200",
+          // Full height, like the ticket sheet: a panel that opens over the
+          // bar rather than under it.
+          "fixed inset-y-0 right-0 z-50 flex w-full max-w-[25rem] flex-col border-l border-line bg-canvas shadow-2xl shadow-ink-900/10 transition-transform duration-200",
           open ? "translate-x-0" : "translate-x-full",
         )}
       >

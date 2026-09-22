@@ -1,6 +1,7 @@
 import ApiError from '../utils/ApiError.js';
 import User from '../models/User.js';
 import { clearAuthCookie, setAuthCookie, signToken } from '../utils/token.js';
+import { isConfigured as storageReady } from '../services/storage.js';
 
 /** Shape sent to the client. Never includes the password hash. */
 export function presentUser(user) {
@@ -65,7 +66,11 @@ export async function login(req, res) {
   await user.save({ validateBeforeSave: false });
 
   setAuthCookie(res, signToken(user));
-  res.json({ success: true, user: presentUser(await loadWithDepartments(user._id)) });
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(user._id)),
+    features: { attachments: storageReady() },
+  });
 }
 
 export async function logout(req, res) {
@@ -74,5 +79,50 @@ export async function logout(req, res) {
 }
 
 export async function me(req, res) {
-  res.json({ success: true, user: presentUser(await loadWithDepartments(req.user._id)) });
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(req.user._id)),
+    // What this deployment can actually do, so the app does not offer a
+    // button that is bound to fail.
+    features: { attachments: storageReady() },
+  });
+}
+
+/** The shortest password this workspace accepts, as everywhere else. */
+const MIN_PASSWORD = 8;
+
+/**
+ * Changing your own password. The current one is asked for even though the
+ * session already proves who you are: a browser left open on a shared desk
+ * should not be enough to lock the owner out of their own account.
+ */
+export async function changePassword(req, res) {
+  const { currentPassword, newPassword } = req.body ?? {};
+
+  if (!currentPassword || !newPassword) {
+    throw ApiError.badRequest('Your current and new password are both required.');
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD) {
+    throw ApiError.badRequest(`The new password must be at least ${MIN_PASSWORD} characters.`);
+  }
+  if (newPassword === currentPassword) {
+    throw ApiError.badRequest('The new password must be different from the current one.');
+  }
+
+  // requireAuth left the user here without the hash, which is select: false.
+  const user = await User.findById(req.user._id).select('+password');
+  if (!user) throw ApiError.unauthorized('This session is no longer valid.');
+
+  if (!(await user.verifyPassword(currentPassword))) {
+    throw ApiError.badRequest('Your current password is not correct.');
+  }
+
+  // The model hashes it on save; the plain value never reaches the database.
+  user.password = newPassword;
+  await user.save();
+
+  // A fresh cookie, so the browser that made the change keeps its full seven
+  // days rather than expiring on the old clock.
+  setAuthCookie(res, signToken(user));
+  res.json({ success: true });
 }

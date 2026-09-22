@@ -39,7 +39,7 @@ export function DateField({
         "relative flex items-center gap-3",
         bare
           ? "h-full px-1"
-          : "h-12 rounded-field border border-line-strong bg-surface px-4 transition-colors focus-within:border-brand-400 focus-within:ring-4 focus-within:ring-brand-500/10",
+          : "h-8 rounded-field border border-line-strong bg-surface px-4 transition-colors focus-within:border-brand-400 focus-within:ring-4 focus-within:ring-brand-500/10",
         !bare && invalid && "border-brand-400 bg-brand-50/40",
         className,
       )}
