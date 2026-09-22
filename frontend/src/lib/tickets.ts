@@ -1,6 +1,9 @@
 import { api, apiRevalidate } from "./api";
 import type { TicketPriority, TicketStatus } from "./types";
 
+/** The unit a department sits under, as the ticket carries it. */
+export type TicketUnit = { id: string; name?: string; code?: string } | null;
+
 export type TicketRecord = {
   id: string;
   number: string;
@@ -16,12 +19,14 @@ export type TicketRecord = {
   committedDeadline: string | null;
   committedBy: { id: string; name?: string } | null;
   committedAt: string | null;
-  department: { id: string; name?: string; code?: string };
-  fromDepartments: { id: string; name?: string; code?: string }[];
+  /** The unit rides along, so a list can be scoped without a second request. */
+  department: { id: string; name?: string; code?: string; unit?: TicketUnit };
+  fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
   raisedBy: { id: string; name?: string; email?: string };
   /** The raiser's standing when the ticket was raised, not their standing now. */
   raisedByRole: "superadmin" | "admin" | "user";
-  assignee: { id: string; name?: string } | null;
+  /** Who is handling it. A department can put more than one person on it. */
+  assignees: { id: string; name?: string }[];
   /** How long the conversation on this ticket is, without loading any of it. */
   messageCount: number;
   lastMessageAt: string | null;
@@ -33,8 +38,8 @@ export type TicketRecord = {
 export function createTicket(input: {
   departments: string[];
   fromDepartments?: string[];
-  /** Who should pick it up, one name per department: `{ departmentId: userId }`. */
-  assignees?: Record<string, string>;
+  /** Who should pick it up, per department: `{ departmentId: [userId, ...] }`. */
+  assignees?: Record<string, string[]>;
   subject: string;
   description: string;
   /** Optional: the form no longer asks, older tickets still carry one. */
@@ -93,7 +98,7 @@ export function updateTicket(
     project?: string;
     deadline?: string | null;
     committedDeadline?: string | null;
-    assignee?: string | null;
+    assignees?: string[];
   },
 ) {
   return api<{ ticket: TicketRecord }>(`/tickets/${id}`, { method: "PATCH", body: input }).then(

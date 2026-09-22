@@ -9,6 +9,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/scripts/seed.js",
+    "seed:tickets": "node src/scripts/seed-tickets.js",
     "reset": "node src/scripts/reset.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
@@ -16,7 +17,8 @@
     "prisma:studio": "prisma studio",
     "postinstall": "prisma generate || exit 0",
     "prisma:seed": "prisma db seed",
-    "units:migrate": "node src/scripts/add-units.js"
+    "units:migrate": "node src/scripts/add-units.js",
+    "migrate:assignees": "node src/scripts/migrate-assignees.js"
   },
   "engines": {
     "node": ">=18.18.0"

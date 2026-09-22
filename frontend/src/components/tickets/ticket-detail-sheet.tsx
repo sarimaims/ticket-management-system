@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { OriginTag, PriorityBadge, StatusBadge, statusToneClasses } from "@/components/ui/badge";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { DateField } from "@/components/tickets/date-field";
 import { TicketChat } from "@/components/tickets/ticket-chat";
 import { TicketHistory } from "@/components/tickets/ticket-history";
@@ -46,12 +47,23 @@ const LABEL = {
 
 const dayOf = (value: string | null) => value?.slice(0, 10) ?? "";
 
+/** The people holding a ticket, in one readable line. */
+const holders = (people: { name?: string }[]) =>
+  people.length === 0 ? "Nobody yet" : people.map((person) => person.name ?? "Someone").join(", ");
+
+/** A stable key for a set of people, so two of them can be compared. */
+const holderKey = (people: { id: string }[]) =>
+  people
+    .map((person) => person.id)
+    .sort()
+    .join(",");
+
 /** What actually moved, so the toast names it instead of saying "saved". */
 function changes(before: TicketRecord, after: TicketRecord) {
   const parts: string[] = [];
   if (before.status !== after.status) parts.push(`Status: ${after.status}`);
-  if ((before.assignee?.id ?? "") !== (after.assignee?.id ?? "")) {
-    parts.push(`Assignee: ${after.assignee?.name ?? "Nobody yet"}`);
+  if (holderKey(before.assignees) !== holderKey(after.assignees)) {
+    parts.push(`Assignee: ${holders(after.assignees)}`);
   }
   if (dayOf(before.committedDeadline) !== dayOf(after.committedDeadline)) {
     parts.push(
@@ -414,7 +426,7 @@ function SheetBody({
   const [committed, setCommitted] = useState(
     ticket.committedDeadline ? ticket.committedDeadline.slice(0, 10) : "",
   );
-  const [assignee, setAssignee] = useState(ticket.assignee?.id ?? "");
+  const [assignees, setAssignees] = useState(ticket.assignees.map((person) => person.id));
   const [members, setMembers] = useState<Member[]>([]);
   const [pending, setPending] = useState(false);
   const toast = useToast();
@@ -532,7 +544,7 @@ function SheetBody({
       const saved = await updateTicket(ticket.id, {
         status: nextStatus,
         committedDeadline: committed || null,
-        assignee: assignee || null,
+        assignees,
       });
       onSaved(saved);
 
@@ -621,7 +633,11 @@ function SheetBody({
             <PriorityBadge priority={ticket.priority} />
           </Row>
           <Row label="Assignee">
-            {ticket.assignee?.name ?? <span className="font-normal text-ink-400">Nobody yet</span>}
+            {ticket.assignees.length > 0 ? (
+              holders(ticket.assignees)
+            ) : (
+              <span className="font-normal text-ink-400">Nobody yet</span>
+            )}
           </Row>
           <Row label="Project">
             {ticket.project || <span className="font-normal text-ink-400">—</span>}
@@ -677,25 +693,21 @@ function SheetBody({
               </Select>
             </Field>
 
-            <Field label="Assignee" htmlFor="sheet-assignee">
-              <Select
+            <Field label="Assignee" hint="(one or more)" htmlFor="sheet-assignee">
+              <MultiSelect
                 id="sheet-assignee"
-                className="h-11"
-                value={assignee}
-                onChange={(event) => setAssignee(event.target.value)}
-              >
-                {/* Only offered while nobody holds it, which only a ticket
-                    raised before that rule can be. */}
-                {!ticket.assignee && <option value="">Nobody yet</option>}
-                {members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.name} ({member.departmentRole})
-                  </option>
-                ))}
-              </Select>
+                options={members.map((member) => ({
+                  value: member.id,
+                  label: `${member.name} (${member.departmentRole})`,
+                }))}
+                value={assignees}
+                onChange={setAssignees}
+                placeholder="Nobody yet"
+                emptyMessage="Nobody is in this department"
+              />
               <p className="mt-1.5 text-xs text-ink-400">
-                Anyone in {departmentName} can take it on, or hand it to someone else. Every
-                handover is listed under History.
+                Anyone in {departmentName} can take it on, or hand it to someone else. Two people
+                can hold it at once, and every handover is listed under History.
               </p>
             </Field>
 

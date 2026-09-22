@@ -9,6 +9,10 @@ import { listAssignments, type AssignmentRecord } from "@/lib/assignments";
 import type { TicketRecord } from "@/lib/tickets";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
 
+/** The people on one side of a move, or "Nobody" when there are none. */
+const names = (people: { name?: string }[]) =>
+  people.length === 0 ? "Nobody" : people.map((person) => person.name ?? "Someone").join(", ");
+
 /**
  * Who has held this ticket, oldest first.
  *
@@ -41,7 +45,11 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
           Sitting with
         </span>
         <span className="truncate text-sm font-bold text-ink-900">
-          {ticket.assignee?.name ?? <span className="font-normal text-ink-400">Nobody yet</span>}
+          {ticket.assignees.length > 0 ? (
+            names(ticket.assignees)
+          ) : (
+            <span className="font-normal text-ink-400">Nobody yet</span>
+          )}
         </span>
       </p>
 
@@ -96,13 +104,13 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                         <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
                           Raised
                         </span>
-                        {entry.to?.name ?? "Nobody"}
+                        {names(entry.to)}
                       </>
                     ) : (
                       <>
-                        <span className="text-ink-500">{entry.from?.name ?? "Nobody"}</span>
+                        <span className="text-ink-500">{names(entry.from)}</span>
                         <ArrowRight className="size-3.5 shrink-0 text-ink-300" />
-                        {entry.to?.name ?? "Nobody"}
+                        {names(entry.to)}
                       </>
                     )}
                   </p>

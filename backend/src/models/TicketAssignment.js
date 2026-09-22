@@ -21,25 +21,27 @@ const ticketAssignmentSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    /** Null on the first line: it came from nobody. */
-    from: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
+    /** Empty on the first line: it came from nobody. */
+    from: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    fromNames: {
+      type: [String],
+      default: [],
     },
-    fromName: {
-      type: String,
-      default: '',
-    },
-    /** Null when a ticket was handed back to nobody, which only old ones can be. */
-    to: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-    },
-    toName: {
-      type: String,
-      default: '',
+    /** Who it sits with after the move. Several, because a ticket can. */
+    to: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    toNames: {
+      type: [String],
+      default: [],
     },
     by: {
       type: mongoose.Schema.Types.ObjectId,

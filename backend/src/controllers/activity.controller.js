@@ -19,25 +19,34 @@ function present(entry) {
   };
 }
 
+/** `?department=` takes one id or a comma-separated list of them. */
+function askedFor(department) {
+  return String(department ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => mongoose.isValidObjectId(id));
+}
+
 /**
- * A department's own people see that department's log and nothing else.
- * Managers see every department, and may narrow with ?department=.
+ * A department's own people see their departments' log and nothing else.
+ * Managers see every department. Either may narrow with ?department=, which
+ * takes several ids - "Finance and IT Support" is one question.
  */
 export async function listActivity(req, res) {
   const { department, limit } = req.query;
+  const asked = askedFor(department);
 
   let filter;
   if (isManager(req.user)) {
-    filter =
-      department && mongoose.isValidObjectId(department) ? { department } : {};
+    filter = asked.length > 0 ? { department: { $in: asked } } : {};
   } else {
-    const mine = (req.user.memberships ?? []).map((membership) => membership.department);
+    const mine = (req.user.memberships ?? []).map((membership) => String(membership.department));
     if (mine.length === 0) return res.json({ success: true, activity: [] });
 
-    filter =
-      department && mine.some((id) => String(id) === String(department))
-        ? { department }
-        : { department: { $in: mine } };
+    // Narrowing can only ever shrink what they were already allowed to see:
+    // anything asked for outside their own departments is dropped.
+    const allowed = asked.filter((id) => mine.includes(id));
+    filter = { department: { $in: allowed.length > 0 ? allowed : mine } };
   }
 
   const entries = await Activity.find(filter)

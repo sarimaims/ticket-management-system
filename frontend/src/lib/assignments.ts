@@ -7,9 +7,10 @@ import type { Role } from "./auth";
  */
 export type AssignmentRecord = {
   id: string;
-  /** Null on the first line: it came from nobody. */
-  from: { id: string; name: string } | null;
-  to: { id: string; name: string } | null;
+  /** Empty on the first line: it came from nobody. */
+  from: { id: string; name: string }[];
+  /** Who it sits with after the move. Several, because a ticket can. */
+  to: { id: string; name: string }[];
   by: { id: string | null; name: string; role: Role };
   /** How it got there: raised onto them, or handed over afterwards. */
   kind: "raised" | "reassigned";
