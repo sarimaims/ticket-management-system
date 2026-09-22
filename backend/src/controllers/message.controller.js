@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import Message from '../models/Message.js';
 import Ticket from '../models/Ticket.js';
 import { isRaiser, visibilityFilter } from '../services/ticketAccess.js';
+import { MANAGER_ROLES } from '../models/User.js';
 import { notifyNewMessage } from '../services/notify.js';
 import {
   ATTACHMENT_KINDS,
@@ -23,8 +24,19 @@ const MAX_BODY = 2000;
 /** How much of a message the bell and the toast quote. */
 const PREVIEW = 140;
 
-async function present(message) {
-  const attachment = message.attachment;
+/**
+ * One line, as a particular reader may see it.
+ *
+ * A withdrawn message is a tombstone to the people in the thread: they are
+ * told it existed and that it is gone, but not what it said. An admin reads it
+ * in full, along with every earlier version of an edited line - a record that
+ * can be quietly rewritten is not a record.
+ */
+async function present(message, viewer) {
+  const manager = MANAGER_ROLES.includes(viewer.role);
+  const deleted = Boolean(message.deletedAt);
+  const hidden = deleted && !manager;
+  const attachment = hidden ? null : message.attachment;
 
   return {
     id: String(message._id),
@@ -33,7 +45,26 @@ async function present(message) {
     // What the author was when they wrote it, not what they are now.
     authorRole: message.authorRole,
     side: message.side,
-    body: message.body,
+    body: hidden ? '' : message.body,
+    /** Corrected by its author, and when. */
+    editedAt: message.editedAt ?? null,
+    deleted,
+    deletedAt: message.deletedAt ?? null,
+    /** Who withdrew it - only worth naming to someone who can see the text. */
+    deletedBy: deleted && manager ? message.deletedByName || null : null,
+    /**
+     * Earlier versions, for an admin only. Everyone else is told a line was
+     * edited; only an admin is shown what it replaced.
+     */
+    revisions:
+      manager && message.revisions?.length
+        ? message.revisions.map((revision) => ({
+            body: revision.body,
+            replacedAt: revision.replacedAt,
+          }))
+        : [],
+    /** True when this reader is seeing something the thread cannot. */
+    adminOnly: deleted && manager,
     attachment: attachment
       ? {
           kind: attachment.kind,
@@ -47,6 +78,30 @@ async function present(message) {
       : null,
     createdAt: message.createdAt,
   };
+}
+
+/** The message named in the URL, on the ticket named in the URL. */
+async function readableMessage(req, ticket) {
+  if (!mongoose.isValidObjectId(req.params.messageId)) {
+    throw ApiError.badRequest('Invalid message id.');
+  }
+
+  const message = await Message.findOne({ _id: req.params.messageId, ticket: ticket._id });
+  if (!message) throw ApiError.notFound('Message not found.');
+  return message;
+}
+
+/**
+ * Only the author may change their own line.
+ *
+ * Deliberately not extended to admins: an admin editing someone else's words
+ * under their name would make the thread untrustworthy. Admins read
+ * everything; they do not speak for anyone.
+ */
+function assertAuthor(message, user) {
+  if (String(message.author) !== String(user._id)) {
+    throw ApiError.forbidden('You can only change your own messages.');
+  }
 }
 
 /**
@@ -76,10 +131,12 @@ async function readableTicket(req) {
 async function fingerprint(ticketId) {
   const [count, newest] = await Promise.all([
     Message.countDocuments({ ticket: ticketId }),
-    Message.findOne({ ticket: ticketId }).sort({ createdAt: -1 }).select('createdAt').lean(),
+    // updatedAt, not createdAt: an edit or a withdrawal changes the thread
+    // without adding to it, and an open chat has to notice.
+    Message.findOne({ ticket: ticketId }).sort({ updatedAt: -1 }).select('updatedAt').lean(),
   ]);
 
-  const last = newest?.createdAt ? new Date(newest.createdAt).getTime() : 0;
+  const last = newest?.updatedAt ? new Date(newest.updatedAt).getTime() : 0;
   // Signed links live an hour, so the tag turns over every half hour: a chat
   // left open overnight refetches rather than holding dead URLs.
   const window = Math.floor(Date.now() / (30 * 60 * 1000));
@@ -102,7 +159,10 @@ export async function listMessages(req, res) {
 
   const messages = await Message.find({ ticket: ticket._id }).sort({ createdAt: 1 });
 
-  res.json({ success: true, messages: await Promise.all(messages.map(present)) });
+  res.json({
+    success: true,
+    messages: await Promise.all(messages.map((message) => present(message, req.user))),
+  });
 }
 
 /**
@@ -187,7 +247,64 @@ export async function createMessage(req, res) {
     preview: trimmed || (attachment ? ATTACHMENT_KINDS[attachment.kind].label : ''),
   });
 
-  res.status(201).json({ success: true, message: await present(message) });
+  res.status(201).json({ success: true, message: await present(message, req.user) });
+}
+
+/**
+ * Corrects a line already said.
+ *
+ * The previous text is kept rather than replaced: everyone sees that it was
+ * edited, and an admin can see what it used to say. An attachment is not
+ * touched - a photo cannot be swapped for another under the same message.
+ */
+export async function updateMessage(req, res) {
+  const ticket = await readableTicket(req);
+  const message = await readableMessage(req, ticket);
+
+  assertAuthor(message, req.user);
+  if (message.deletedAt) throw ApiError.badRequest('That message was deleted.');
+
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  if (!body && !message.attachment) throw ApiError.badRequest('Write something first.');
+  if (body.length > MAX_BODY) {
+    throw ApiError.badRequest(`A message cannot be longer than ${MAX_BODY} characters.`);
+  }
+
+  // Saying the same thing again is not an edit.
+  if (body !== message.body) {
+    message.revisions.push({ body: message.body, replacedAt: new Date() });
+    message.body = body;
+    message.editedAt = new Date();
+    await message.save();
+  }
+
+  res.json({ success: true, message: await present(message, req.user) });
+}
+
+/**
+ * Withdraws a line.
+ *
+ * Nothing is removed from the database and no attachment is deleted from
+ * storage: the thread shows that a message was withdrawn, and an admin can
+ * still read it. A hard delete would let a thread be rewritten after the fact.
+ */
+export async function deleteMessage(req, res) {
+  const ticket = await readableTicket(req);
+  const message = await readableMessage(req, ticket);
+
+  assertAuthor(message, req.user);
+
+  if (!message.deletedAt) {
+    message.deletedAt = new Date();
+    message.deletedBy = req.user._id;
+    message.deletedByName = req.user.name;
+    await message.save();
+
+    // The ticket's own counter follows what the thread now shows.
+    await Ticket.updateOne({ _id: ticket._id }, { $inc: { messageCount: -1 } });
+  }
+
+  res.json({ success: true, message: await present(message, req.user) });
 }
 
 /**

@@ -30,6 +30,17 @@ export type MessageRecord = {
   side: "raiser" | "department";
   body: string;
   attachment: MessageAttachment | null;
+  /** Set when the author has corrected it since. */
+  editedAt: string | null;
+  /** Withdrawn by its author. The body is empty unless you are an admin. */
+  deleted: boolean;
+  deletedAt: string | null;
+  /** Who withdrew it - admins only. */
+  deletedBy: string | null;
+  /** Earlier versions of an edited line - admins only. */
+  revisions: { body: string; replacedAt: string }[];
+  /** True when you are being shown something the rest of the thread cannot. */
+  adminOnly: boolean;
   createdAt: string;
 };
 
@@ -57,6 +68,24 @@ export function revalidateMessages(ticketId: string, etag: string | null, signal
  * Says something on a ticket. `attachment` names a file already uploaded to
  * storage - the API checks it landed before it writes the message.
  */
+/** Corrects a line you wrote. The previous text is kept for admins. */
+export function editMessage(ticketId: string, messageId: string, body: string) {
+  return api<{ message: MessageRecord }>(`/tickets/${ticketId}/messages/${messageId}`, {
+    method: "PATCH",
+    body: { body },
+  }).then((data) => data.message);
+}
+
+/**
+ * Withdraws a line you wrote. Nothing is erased: the thread shows that a
+ * message was deleted, and an admin can still read it.
+ */
+export function deleteMessage(ticketId: string, messageId: string) {
+  return api<{ message: MessageRecord }>(`/tickets/${ticketId}/messages/${messageId}`, {
+    method: "DELETE",
+  }).then((data) => data.message);
+}
+
 export function sendMessage(
   ticketId: string,
   body: string,

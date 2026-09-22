@@ -1,15 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ImagePlus, Mic, MessagesSquare, SendHorizontal, Square } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  EyeOff,
+  History,
+  ImagePlus,
+  Mic,
+  MessagesSquare,
+  Pencil,
+  SendHorizontal,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { dayLabel } from "@/components/notifications/notification-shared";
 import { errorMessage } from "@/lib/api";
-import { initials } from "@/lib/auth";
-import { revalidateMessages, sendMessage, type MessageRecord } from "@/lib/messages";
+import { initials, isAdmin } from "@/lib/auth";
+import {
+  deleteMessage,
+  editMessage,
+  revalidateMessages,
+  sendMessage,
+  type MessageRecord,
+} from "@/lib/messages";
 import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
 import {
   DraftPreview,
@@ -35,17 +56,25 @@ const FAILURES_BEFORE_ERROR = 2;
 /** A placeholder id cannot collide with a real one. */
 const PENDING = "pending-";
 
+/** Enough of a line to tell whether it has changed since we last saw it. */
+const signature = (message: MessageRecord) =>
+  `${message.id}:${message.editedAt ?? ""}:${message.deleted ? "x" : ""}:${message.body.length}`;
+
 /**
  * Folds a fresh thread into the one on screen.
  *
- * A message is written once and never edited or deleted, so the two lists are
- * unioned rather than swapped: a poll that was already in the air when we sent
- * cannot drop the line we just added.
+ * The two lists are unioned rather than swapped, so a poll that was already in
+ * the air when we sent cannot drop the line we just added. Sameness is judged
+ * on content as well as identity: a line that was edited or withdrawn keeps
+ * its id, and comparing ids alone would leave the old text on screen.
  */
 function merge(previous: MessageRecord[], incoming: MessageRecord[]) {
   const unchanged =
     previous.length === incoming.length &&
-    previous.every((message, index) => message.id === incoming[index]?.id);
+    previous.every((message, index) => {
+      const other = incoming[index];
+      return other !== undefined && signature(message) === signature(other);
+    });
   if (unchanged) return previous;
 
   const byId = new Map(previous.map((message) => [message.id, message]));
@@ -93,15 +122,38 @@ function Bubble({
   mine,
   pending,
   departmentName,
+  manager,
+  editing,
+  editDraft,
+  onEditDraft,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onDelete,
+  busy,
 }: {
   message: MessageRecord;
   mine: boolean;
   /** Written here but not yet acknowledged by the server. */
   pending?: boolean;
   departmentName: string;
+  /** Admins are shown what a withdrawn line said, and what an edit replaced. */
+  manager: boolean;
+  editing: boolean;
+  editDraft: string;
+  onEditDraft: (value: string) => void;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onDelete: () => void;
+  busy: boolean;
 }) {
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Nothing to act on while it is still in flight, or once it is withdrawn.
+  const actionable = mine && !pending && !message.deleted;
   return (
-    <div className={cn("flex items-start gap-2", mine && "flex-row-reverse")}>
+    <div className={cn("group flex items-start gap-2", mine && "flex-row-reverse")}>
       {/* Brand for the side that asked, slate for the side answering - so a
           long thread still reads as two voices at a glance. */}
       <Avatar
@@ -120,8 +172,72 @@ function Bubble({
           <span className="font-semibold text-ink-700">{mine ? "You" : message.author.name}</span>
           {!mine && <SideTag side={message.side} departmentName={departmentName} />}
           <span>{pending ? "Sending..." : formatTime(message.createdAt)}</span>
+          {message.editedAt && !message.deleted && <span className="italic">edited</span>}
+
+          {/* The two things only an admin is shown, each said plainly. */}
+          {manager && message.adminOnly && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-status-waiting-bg px-1.5 py-0.5 font-semibold text-status-waiting-fg">
+              <EyeOff className="size-3" />
+              Deleted · admins only
+            </span>
+          )}
+          {manager && message.revisions.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowHistory((current) => !current)}
+              className="inline-flex items-center gap-1 rounded-md bg-ink-100 px-1.5 py-0.5 font-semibold text-ink-600 transition-colors hover:bg-ink-200"
+            >
+              <History className="size-3" />
+              {showHistory ? "Hide" : `${message.revisions.length} earlier`}
+            </button>
+          )}
         </p>
 
+        {editing ? (
+          <div className="w-full min-w-[15rem] rounded-2xl border border-brand-200 bg-surface p-2">
+            <textarea
+              value={editDraft}
+              maxLength={MAX_BODY}
+              autoFocus
+              onChange={(event) => onEditDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  onSaveEdit();
+                }
+                if (event.key === "Escape") onCancelEdit();
+              }}
+              className={cn(
+                "max-h-40 min-h-16 w-full resize-none rounded-lg border border-line-strong bg-surface px-2.5 py-2",
+                "text-[13px] leading-relaxed text-ink-900 focus:border-brand-400 focus:outline-none",
+              )}
+            />
+            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-semibold text-ink-500 hover:bg-ink-100"
+              >
+                <X className="size-3.5" />
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onSaveEdit}
+                disabled={busy}
+                className="flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-[12px] font-bold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                <Check className="size-3.5" />
+                Save
+              </button>
+            </div>
+          </div>
+        ) : message.deleted && !manager ? (
+          // The thread is told a line existed and is gone, not what it said.
+          <div className="rounded-2xl border border-dashed border-line-strong px-3.5 py-2 text-[13px] text-ink-400 italic">
+            This message was deleted
+          </div>
+        ) : (
         <div
           className={cn(
             "rounded-2xl text-[13px] leading-relaxed break-words whitespace-pre-wrap",
@@ -129,6 +245,9 @@ function Bubble({
             message.attachment?.kind === "image" ? "overflow-hidden p-1" : "px-3.5 py-2",
             mine ? "rounded-tr-sm bg-brand-600 text-white" : "rounded-tl-sm bg-ink-100 text-ink-800",
             pending && "opacity-60",
+            // A withdrawn line an admin can still read is set apart, so it is
+            // never mistaken for something the thread can see.
+            message.deleted && "opacity-70 ring-1 ring-status-waiting-fg/40 ring-inset",
           )}
         >
           {message.attachment && (
@@ -140,6 +259,46 @@ function Bubble({
             </span>
           )}
         </div>
+        )}
+
+        {/* Earlier versions, for an admin who asked to see them. */}
+        {manager && showHistory && message.revisions.length > 0 && (
+          <ul className="mt-1.5 space-y-1">
+            {message.revisions.map((revision, index) => (
+              <li
+                key={`${revision.replacedAt}-${index}`}
+                className="rounded-lg border border-dashed border-line-strong px-2.5 py-1.5 text-[12px] text-ink-500"
+              >
+                <span className="mr-1.5 text-[10px] font-bold tracking-wide text-ink-400 uppercase">
+                  before {formatTime(revision.replacedAt)}
+                </span>
+                {revision.body || "(empty)"}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Your own line, while it is yours to change. */}
+        {actionable && !editing && (
+          <p className="mt-1 flex gap-2 text-[11px] text-ink-400 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={onStartEdit}
+              className="inline-flex items-center gap-1 font-semibold hover:text-ink-700"
+            >
+              <Pencil className="size-3" />
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="inline-flex items-center gap-1 font-semibold hover:text-brand-600"
+            >
+              <Trash2 className="size-3" />
+              Delete
+            </button>
+          </p>
+        )}
       </div>
     </div>
   );
@@ -274,6 +433,51 @@ export function TicketChat({
     onCount?.(messages.length);
   }, [messages.length, onCount]);
 
+  // The line being corrected, if any, and the one waiting to be withdrawn.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<MessageRecord | null>(null);
+  const [busy, setBusy] = useState(false);
+  const manager = isAdmin(session);
+
+  const saveEdit = async (message: MessageRecord) => {
+    const body = editDraft.trim();
+    if (!body && !message.attachment) {
+      setError("A message cannot be empty. Delete it instead.");
+      return;
+    }
+    if (body === message.body) {
+      setEditingId(null);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const saved = await editMessage(ticketId, message.id, body);
+      setMessages((current) => merge(current, [saved]));
+      setEditingId(null);
+      setError("");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
+  const withdraw = async (message: MessageRecord) => {
+    setBusy(true);
+    try {
+      const saved = await deleteMessage(ticketId, message.id);
+      setMessages((current) => merge(current, [saved]));
+      setPendingDelete(null);
+      setError("");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
   // What is attached to the line being written, and how far it has uploaded.
   const [draftFile, setDraftFile] = useState<Draft | null>(null);
   const [percent, setPercent] = useState<number | null>(null);
@@ -351,6 +555,12 @@ export function TicketChat({
       authorRole: session?.role ?? "user",
       side: ticket.raisedBy.id === meId ? "raiser" : "department",
       body,
+      editedAt: null,
+      deleted: false,
+      deletedAt: null,
+      deletedBy: null,
+      revisions: [],
+      adminOnly: false,
       // The local copy is shown while it uploads, so the thread does not jump
       // when the real one arrives.
       attachment: file
@@ -443,6 +653,18 @@ export function TicketChat({
                 mine={message.author.id === meId}
                 pending={message.id.startsWith(PENDING)}
                 departmentName={departmentName}
+                manager={manager}
+                editing={editingId === message.id}
+                editDraft={editDraft}
+                busy={busy}
+                onEditDraft={setEditDraft}
+                onStartEdit={() => {
+                  setEditingId(message.id);
+                  setEditDraft(message.body);
+                }}
+                onCancelEdit={() => setEditingId(null)}
+                onSaveEdit={() => void saveEdit(message)}
+                onDelete={() => setPendingDelete(message)}
               />
             ))}
           </div>
@@ -583,6 +805,36 @@ export function TicketChat({
           {remaining <= COUNTER_FROM && <span>{remaining} left</span>}
         </p>
       </form>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        title="Delete this message?"
+        description="The thread will show that a message was deleted."
+        className="max-w-md"
+      >
+        <p className="rounded-field bg-ink-50 px-3.5 py-2.5 text-sm text-ink-600 italic">
+          {pendingDelete?.body || (pendingDelete?.attachment ? "(attachment)" : "")}
+        </p>
+        <p className="mt-3 text-sm text-ink-500">
+          {departmentName} and {ticket.raisedBy.name} will see that a message was deleted, but not
+          what it said. An admin can still read it.
+        </p>
+
+        <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+          <Button type="button" variant="outline" size="sm" onClick={() => setPendingDelete(null)}>
+            Keep it
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy}
+            onClick={() => pendingDelete && void withdraw(pendingDelete)}
+          >
+            {busy ? "Deleting…" : "Delete message"}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

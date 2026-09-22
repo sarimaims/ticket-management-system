@@ -167,10 +167,14 @@ export async function listTickets(req, res) {
   const filter = { ...visibilityFilter(req.user) };
 
   if (scope === 'mine') filter.raisedBy = req.user._id;
-  if (scope === 'assigned') {
+  if (scope === 'assigned' && !MANAGER_ROLES.includes(req.user.role)) {
     // Everything my departments have been asked to do, including what I asked
     // them myself: someone in two departments raises from one to the other,
     // and that ticket is still their department's work to pick up.
+    //
+    // A manager belongs to no department but oversees all of them, so their
+    // queue is every department's - otherwise it would always be empty and an
+    // admin could not open any thread at all.
     const departmentIds = (req.user.memberships ?? []).map((membership) => membership.department);
     filter.department = { $in: departmentIds };
   }
