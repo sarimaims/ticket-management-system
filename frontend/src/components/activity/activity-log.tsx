@@ -6,7 +6,8 @@ import { AlertCircle, History, Search, Trash2 } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input, Select } from "@/components/ui/field";
+import { Input } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Modal } from "@/components/ui/modal";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -72,7 +73,7 @@ export function ActivityLog() {
 
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [department, setDepartment] = useState("");
+  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -82,7 +83,7 @@ export function ActivityLog() {
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        setEntries(await listActivity({ department: department || undefined }, signal));
+        setEntries(await listActivity({ departments: departmentIds }, signal));
         setError("");
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -94,7 +95,7 @@ export function ActivityLog() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [department],
+    [departmentIds],
   );
 
   useEffect(() => {
@@ -105,6 +106,12 @@ export function ActivityLog() {
       .catch(() => setDepartments([]));
     return () => controller.abort();
   }, [load]);
+
+  /** The one department the Clear button would target, if there is exactly one. */
+  const clearTarget =
+    departmentIds.length === 1
+      ? (departments.find((item) => item.id === departmentIds[0]) ?? null)
+      : null;
 
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -139,21 +146,16 @@ export function ActivityLog() {
             />
           </div>
 
-          <Select
-            className="h-8 w-48 shrink-0 pr-8 pl-3 text-[13px]"
-            value={department}
-            onChange={(event) => setDepartment(event.target.value)}
-            aria-label="Filter by department"
-          >
-            <option value="">
-              {canClear ? "All departments" : "All my departments"}
-            </option>
-            {departments.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </Select>
+          <div className="w-48 shrink-0">
+            <MultiSelect
+              options={departments.map((item) => ({ value: item.id, label: item.name }))}
+              value={departmentIds}
+              onChange={setDepartmentIds}
+              display="summary"
+              placeholder={canClear ? "All departments" : "All my departments"}
+              emptyMessage="No departments yet"
+            />
+          </div>
 
           {canClear && (
             <Button
@@ -226,13 +228,13 @@ export function ActivityLog() {
 
       <ClearLogModal
         open={confirmClear}
-        department={departments.find((item) => item.id === department) ?? null}
+        department={clearTarget}
         count={entries.length}
         onClose={() => setConfirmClear(false)}
         onCleared={(cleared) => {
           setConfirmClear(false);
           load();
-          const scope = departments.find((item) => item.id === department);
+          const scope = clearTarget;
           toast.success(
             "Activity log cleared",
             `${cleared} entr${cleared === 1 ? "y" : "ies"} removed${

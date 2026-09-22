@@ -7,14 +7,14 @@ import TicketAssignment from '../models/TicketAssignment.js';
  * ticket being handed over matters more than the record of it, and there are
  * no transactions to lean on here. A failure is reported and swallowed.
  */
-export async function recordAssignment({ ticket, from, to, actor, kind = 'reassigned' }) {
+export async function recordAssignment({ ticket, from = [], to = [], actor, kind = 'reassigned' }) {
   try {
     await TicketAssignment.create({
       ticket: ticket._id ?? ticket,
-      from: from?._id ?? null,
-      fromName: from?.name ?? '',
-      to: to?._id ?? null,
-      toName: to?.name ?? '',
+      from: from.map((person) => person._id ?? person),
+      fromNames: from.map((person) => person.name ?? ''),
+      to: to.map((person) => person._id ?? person),
+      toNames: to.map((person) => person.name ?? ''),
       by: actor?._id ?? null,
       byName: actor?.name ?? 'Someone',
       byRole: actor?.role ?? 'user',

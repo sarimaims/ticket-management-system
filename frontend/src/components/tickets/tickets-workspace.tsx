@@ -1,11 +1,21 @@
 "use client";
 
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
+  Building,
   Inbox,
   MessagesSquare,
   Plus,
@@ -17,7 +27,8 @@ import {
 
 import { Card } from "@/components/ui/card";
 import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
-import { Input, Select } from "@/components/ui/field";
+import { Input } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import {
   DeadlineVerdict,
   TicketDetailSheet,
@@ -34,6 +45,7 @@ import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { isAdmin } from "@/lib/auth";
+import { activeUnit, activeUnitOnServer, subscribeActiveUnit } from "@/lib/active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { Stat, TicketStatus } from "@/lib/types";
 
@@ -48,13 +60,25 @@ const STATUSES: TicketStatus[] = [
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
-const COMPACT = "h-7 pr-6 pl-2.5 text-[12px]";
-
 /** How often a live queue asks the API whether anything moved. */
 const REFRESH_MS = 7000;
 
 /** How long a row arrived at from a notification keeps its outline. */
 const FLASH_MS = 4000;
+
+/**
+ * A ticket counts as belonging to a unit when either end of it does: the
+ * department working it, or a department it was raised on behalf of.
+ *
+ * Matching only the receiving end would hide your own request the moment you
+ * switched to the unit you raised it from, which is exactly when you would go
+ * looking for it.
+ */
+function inUnit(ticket: TicketRecord, unitId: string) {
+  if (!unitId) return true;
+  if (ticket.department.unit?.id === unitId) return true;
+  return ticket.fromDepartments.some((item) => item.unit?.id === unitId);
+}
 
 function isToday(value: string | null) {
   if (!value) return false;
@@ -352,8 +376,16 @@ export function TicketsWorkspace({
   });
 
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const [priority, setPriority] = useState("");
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [priorities, setPriorities] = useState<string[]>([]);
+  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+
+  /**
+   * The unit chosen on the profile menu. It scopes the list rather than the
+   * request: the server already decided what this person may read, and this
+   * only narrows what is shown of it.
+   */
+  const unit = useSyncExternalStore(subscribeActiveUnit, activeUnit, activeUnitOnServer);
   const [viewing, setViewing] = useState<TicketRecord | null>(null);
   // Which pane the sheet opens on. Held here rather than inside the sheet, so
   // the chat icon on a row can go straight to the conversation.
@@ -375,8 +407,10 @@ export function TicketsWorkspace({
   const meId = session?.id;
 
   // A ticket sits with my department; this says it sits with *me*.
+  // A ticket can sit with several people; it is mine if I am one of them.
   const isMine = useCallback(
-    (ticket: TicketRecord) => scope === "assigned" && ticket.assignee?.id === meId,
+    (ticket: TicketRecord) =>
+      scope === "assigned" && ticket.assignees.some((person) => person.id === meId),
     [scope, meId],
   );
 
@@ -403,24 +437,54 @@ export function TicketsWorkspace({
     return counts;
   }, [feed]);
 
-  const stats = useMemo(() => statsFor(tickets, scope), [tickets, scope]);
+  /** Everything the unit in view holds, which is what the numbers count. */
+  const inScope = useMemo(() => tickets.filter((ticket) => inUnit(ticket, unit)), [tickets, unit]);
 
-  const mineCount = useMemo(() => tickets.filter(isMine).length, [tickets, isMine]);
+  /**
+   * The departments actually present, so the filter only ever offers a choice
+   * that returns something. Grouped nowhere: inside one unit the name is
+   * enough, and across units the unit rides along.
+   */
+  const departmentOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const ticket of inScope) {
+      const name = ticket.department.name ?? "Department";
+      byId.set(
+        ticket.department.id,
+        !unit && ticket.department.unit?.name
+          ? `${name} · ${ticket.department.unit.name}`
+          : name,
+      );
+    }
+    return [...byId].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [inScope, unit]);
+
+  /** The unit in view, named, so the bar can say what is being left out. */
+  const unitName = useMemo(
+    () => (session?.departments ?? []).find((item) => item.unit?.id === unit)?.unit?.name ?? "",
+    [session, unit],
+  );
+
+  const stats = useMemo(() => statsFor(inScope, scope), [inScope, scope]);
+
+  const mineCount = useMemo(() => inScope.filter(isMine).length, [inScope, isMine]);
 
   const rows = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
-    return tickets.filter((ticket) => {
+    return inScope.filter((ticket) => {
       if (
         term &&
         !`${ticket.number} ${ticket.subject} ${ticket.requestType}`.toLowerCase().includes(term)
       )
         return false;
-      if (status && ticket.status !== status) return false;
-      if (priority && ticket.priority !== priority) return false;
+      // An empty filter asks nothing of the row, so it lets everything past.
+      if (statuses.length > 0 && !statuses.includes(ticket.status)) return false;
+      if (priorities.length > 0 && !priorities.includes(ticket.priority)) return false;
+      if (departmentIds.length > 0 && !departmentIds.includes(ticket.department.id)) return false;
       if (mineOnly && !isMine(ticket)) return false;
       return true;
     });
-  }, [tickets, deferredQuery, status, priority, mineOnly, isMine]);
+  }, [inScope, deferredQuery, statuses, priorities, departmentIds, mineOnly, isMine]);
 
   const columns = scope === "mine" ? 8 : 9;
 
@@ -447,8 +511,9 @@ export function TicketsWorkspace({
        the URL and the arriving list, both outside React, and the guard above
        holds it to once per link. */
     setQuery("");
-    setStatus("");
-    setPriority("");
+    setStatuses([]);
+    setPriorities([]);
+    setDepartmentIds([]);
     setMineOnly(false);
     setFlashed(target.id);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -535,29 +600,42 @@ export function TicketsWorkspace({
             />
           </div>
 
-          <Select
-            className={COMPACT + " w-32 shrink-0"}
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            aria-label="Filter by status"
-          >
-            <option value="">All Status</option>
-            {STATUSES.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </Select>
+          <div className="w-40 shrink-0">
+            <MultiSelect
+              display="summary"
+              className="h-7 [&>span]:text-[12px]"
+              id="filter-status"
+              options={STATUSES.map((item) => ({ value: item, label: item }))}
+              value={statuses}
+              onChange={setStatuses}
+              placeholder="All Status"
+            />
+          </div>
 
-          <Select
-            className={COMPACT + " w-32 shrink-0"}
-            value={priority}
-            onChange={(event) => setPriority(event.target.value)}
-            aria-label="Filter by priority"
-          >
-            <option value="">All Priorities</option>
-            {PRIORITIES.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </Select>
+          <div className="w-40 shrink-0">
+            <MultiSelect
+              display="summary"
+              className="h-7 [&>span]:text-[12px]"
+              id="filter-priority"
+              options={PRIORITIES.map((item) => ({ value: item, label: item }))}
+              value={priorities}
+              onChange={setPriorities}
+              placeholder="All Priorities"
+            />
+          </div>
+
+          <div className="w-48 shrink-0">
+            <MultiSelect
+              display="summary"
+              className="h-7 [&>span]:text-[12px]"
+              id="filter-department"
+              options={departmentOptions.map((item) => ({ value: item.id, label: item.label }))}
+              value={departmentIds}
+              onChange={setDepartmentIds}
+              placeholder="All Departments"
+              emptyMessage="No departments in view"
+            />
+          </div>
 
           {scope === "assigned" && (
             <button
@@ -582,6 +660,16 @@ export function TicketsWorkspace({
                 {mineCount}
               </span>
             </button>
+          )}
+
+          {unitName && (
+            <span
+              className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-brand-200 bg-brand-50 px-2 text-[11px] font-semibold text-brand-700"
+              title="Set on your profile, at the foot of the sidebar"
+            >
+              <Building className="size-3.5" />
+              {unitName}
+            </span>
           )}
 
           {live && <RefreshButton onRefresh={refresh} syncedAt={syncedAt} />}
@@ -648,11 +736,13 @@ export function TicketsWorkspace({
                           : "Nothing in your queue"}
                     </p>
                     <p className="mt-0.5 text-sm text-ink-400">
-                      {mineOnly
-                        ? "Tickets picked up in your name show here."
-                        : scope === "mine"
-                          ? "Raise one and it lands in that department's queue."
-                          : "Tickets raised to your departments will appear here."}
+                      {unitName && tickets.length > 0
+                        ? `Nothing in ${unitName}. Switch units on your profile to see the rest.`
+                        : mineOnly
+                          ? "Tickets picked up in your name show here."
+                          : scope === "mine"
+                            ? "Raise one and it lands in that department's queue."
+                            : "Tickets raised to your departments will appear here."}
                     </p>
                   </td>
                 </tr>

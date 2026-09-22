@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { TableCell, TableHead } from "@/components/ui/table";
@@ -49,7 +50,7 @@ export function DepartmentsWorkspace() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [units, setUnits] = useState<UnitOption[]>([]);
-  const [unitFilter, setUnitFilter] = useState("");
+  const [unitFilter, setUnitFilter] = useState<string[]>([]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Department | null>(null);
@@ -79,7 +80,8 @@ export function DepartmentsWorkspace() {
   }, [load]);
 
   const visible = departments.filter((department) => {
-    if (unitFilter && department.unit?.id !== unitFilter) return false;
+    // An empty filter asks nothing of the row, so it lets everything past.
+    if (unitFilter.length > 0 && !unitFilter.includes(department.unit?.id ?? "")) return false;
     return (department.name + department.code + department.description)
       .toLowerCase()
       .includes(query.trim().toLowerCase());
@@ -125,19 +127,17 @@ export function DepartmentsWorkspace() {
             />
           </div>
 
-          <Select
-            className="h-7 w-40 shrink-0 pr-7 pl-2.5 text-[12px]"
-            value={unitFilter}
-            onChange={(event) => setUnitFilter(event.target.value)}
-            aria-label="Filter by unit"
-          >
-            <option value="">All units</option>
-            {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name}
-              </option>
-            ))}
-          </Select>
+          <div className="w-44 shrink-0">
+            <MultiSelect
+              className="h-7 [&>span]:text-[12px]"
+              options={units.map((unit) => ({ value: unit.id, label: unit.name }))}
+              value={unitFilter}
+              onChange={setUnitFilter}
+              display="summary"
+              placeholder="All units"
+              emptyMessage="No units yet"
+            />
+          </div>
 
           {canManage && (
             <Button size="sm" className="h-7 shrink-0" onClick={() => setCreateOpen(true)}>
@@ -245,10 +245,10 @@ export function DepartmentsWorkspace() {
       </Card>
 
       <CreateDepartmentModal
-        key={createOpen ? `open-${unitFilter}` : "closed"}
+        key={createOpen ? `open-${unitFilter.join("-")}` : "closed"}
         open={createOpen}
         units={units}
-        defaultUnit={unitFilter}
+        defaultUnit={unitFilter.length === 1 ? unitFilter[0] : ""}
         onClose={() => setCreateOpen(false)}
         onCreated={(department) => {
           setDepartments((current) => [...current, department].sort((a, b) => a.name.localeCompare(b.name)));

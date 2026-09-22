@@ -13,11 +13,12 @@ export type ActivityEntry = {
 
 /** The API decides the scope: your departments, or all of them for a manager. */
 export function listActivity(
-  filters: { department?: string; limit?: number } = {},
+  filters: { departments?: string[]; limit?: number } = {},
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
-  if (filters.department) query.set("department", filters.department);
+  // Several ids ride as one comma-separated value; none means "no narrowing".
+  if (filters.departments?.length) query.set("department", filters.departments.join(","));
   if (filters.limit) query.set("limit", String(filters.limit));
   const suffix = query.toString() ? `?${query}` : "";
 

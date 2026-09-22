@@ -154,7 +154,7 @@ export function MembershipRows({
           <button
             type="button"
             onClick={() => remove(row.key)}
-            aria-label="Remove this department"
+            aria-label="Remove this role"
             className="grid h-10 w-10 shrink-0 place-items-center justify-self-end rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
           >
             <X className="size-4" />
@@ -171,7 +171,7 @@ export function MembershipRows({
         )}
       >
         <Plus className="size-4" />
-        {rows.length === 0 ? "Add a department" : "Add another"}
+        {rows.length === 0 ? "Add a role" : "Add another role"}
       </button>
     </div>
   );

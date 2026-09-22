@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
@@ -120,8 +121,10 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const [error, setError] = useState("");
 
   const [query, setQuery] = useState("");
-  const [department, setDepartment] = useState("");
-  const [unit, setUnit] = useState("");
+  // Every filter takes a set: "Finance or IT Support" is one question, and
+  // one-at-a-time made it two.
+  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  const [unitIds, setUnitIds] = useState<string[]>([]);
 
   // The units represented by the departments in this workspace. One person
   // can hold departments in several of them, so both are worth filtering by
@@ -136,8 +139,8 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [departments]);
   const manyUnits = units.length > 1;
-  const [status, setStatus] = useState("");
-  const [role, setRole] = useState("");
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [roles, setRoles] = useState<string[]>([]);
 
   const [editing, setEditing] = useState<DirectoryUser | null>(null);
   const [removing, setRemoving] = useState<DirectoryUser | null>(null);
@@ -179,13 +182,22 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     return users.filter((user) => {
       if (term && !`${user.name} ${user.email} ${shortId(user.id)}`.toLowerCase().includes(term))
         return false;
-      if (department && !user.departments.some((item) => item.id === department)) return false;
-      if (unit && !user.departments.some((item) => item.unit?.id === unit)) return false;
-      if (status && user.status !== status) return false;
-      if (role && effectiveRole(user) !== role) return false;
+      // An empty filter asks nothing of the row, so it lets everything past.
+      if (
+        departmentIds.length > 0 &&
+        !user.departments.some((item) => departmentIds.includes(item.id))
+      )
+        return false;
+      if (
+        unitIds.length > 0 &&
+        !user.departments.some((item) => item.unit?.id && unitIds.includes(item.unit.id))
+      )
+        return false;
+      if (statuses.length > 0 && !statuses.includes(user.status)) return false;
+      if (roles.length > 0 && !roles.includes(effectiveRole(user))) return false;
       return true;
     });
-  }, [users, query, department, unit, status, role]);
+  }, [users, query, departmentIds, unitIds, statuses, roles]);
 
   const setStatusFor = async (user: DirectoryUser, next: DirectoryUser["status"]) => {
     try {
@@ -218,66 +230,79 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
           </div>
 
           {units.length > 1 && (
-            <Select
-              className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
-              value={unit}
-              onChange={(event) => {
-                setUnit(event.target.value);
-                setDepartment("");
-              }}
-              aria-label="Filter by unit"
-            >
-              <option value="">All Units</option>
-              {units.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </Select>
+            <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
+              <MultiSelect
+                options={units.map((item) => ({ value: item.id, label: item.name }))}
+                value={unitIds}
+                onChange={(next) => {
+                  setUnitIds(next);
+                  // A department outside the units now in view would filter
+                  // every row away, so it goes with them.
+                  if (next.length === 0) return;
+                  const allowed = new Set(
+                    departments
+                      .filter((item) => item.unit?.id && next.includes(item.unit.id))
+                      .map((item) => item.id),
+                  );
+                  setDepartmentIds((current) => current.filter((id) => allowed.has(id)));
+                }}
+                display="summary"
+                placeholder="All Units"
+              />
+            </div>
           )}
 
-          <Select
-            className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-40 lg:flex-none"
-            value={department}
-            onChange={(event) => setDepartment(event.target.value)}
-            aria-label="Filter by department"
-          >
-            <option value="">All Departments</option>
-            {departments
-              .filter((item) => !unit || item.unit?.id === unit)
-              .map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-          </Select>
+          <div className="min-w-[132px] flex-1 lg:w-48 lg:flex-none">
+            <MultiSelect
+              options={departments
+                .filter((item) => unitIds.length === 0 || (item.unit?.id && unitIds.includes(item.unit.id)))
+                .map((item) => ({
+                  value: item.id,
+                  // Across units the name alone can be ambiguous; inside one
+                  // it would only be repetition.
+                  label:
+                    unitIds.length !== 1 && units.length > 1 && item.unit?.name
+                      ? `${item.name} · ${item.unit.name}`
+                      : item.name,
+                }))}
+              value={departmentIds}
+              onChange={setDepartmentIds}
+              display="summary"
+              placeholder="All Departments"
+              emptyMessage="Nothing in those units"
+            />
+          </div>
 
           {scope === "all" && (
-            <Select
-              className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-36 lg:flex-none"
-              value={role}
-              onChange={(event) => setRole(event.target.value)}
-              aria-label="Filter by role"
-            >
-              <option value="">All Roles</option>
-              <option value="superadmin">Super Admin</option>
-              <option value="admin">Admin</option>
-              <option value="head">Head</option>
-              <option value="team">Team</option>
-            </Select>
+            <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
+              <MultiSelect
+                options={[
+                  { value: "superadmin", label: "Super Admin" },
+                  { value: "admin", label: "Admin" },
+                  { value: "head", label: "Head" },
+                  { value: "team", label: "Team" },
+                ]}
+                value={roles}
+                onChange={setRoles}
+                display="summary"
+                placeholder="All Roles"
+              />
+            </div>
           )}
 
-          <Select
-            className="h-8 min-w-[116px] flex-1 pr-8 pl-3 text-[13px] lg:w-32 lg:flex-none"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            aria-label="Filter by status"
-          >
-            <option value="">All Status</option>
-            <option value="active">Active</option>
-            <option value="invited">Invited</option>
-            <option value="suspended">Suspended</option>
-          </Select>
+          <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
+            <MultiSelect
+              options={[
+                { value: "active", label: "Active" },
+                { value: "invited", label: "Invited" },
+                { value: "suspended", label: "Suspended" },
+              ]}
+              value={statuses}
+              onChange={setStatuses}
+              display="summary"
+              placeholder="All Status"
+            />
+          </div>
 
           <Button className="h-8" onClick={() => setCreating(true)}>
             {scope === "admins" ? <ShieldPlus className="size-4.5" /> : <UserPlus className="size-4.5" />}

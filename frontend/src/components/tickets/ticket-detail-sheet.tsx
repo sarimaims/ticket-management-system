@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { DateField } from "@/components/tickets/date-field";
 import { TicketChat } from "@/components/tickets/ticket-chat";
 import { TicketHistory } from "@/components/tickets/ticket-history";
@@ -37,12 +38,23 @@ const LABEL = {
 
 const dayOf = (value: string | null) => value?.slice(0, 10) ?? "";
 
+/** The people holding a ticket, in one readable line. */
+const holders = (people: { name?: string }[]) =>
+  people.length === 0 ? "Nobody yet" : people.map((person) => person.name ?? "Someone").join(", ");
+
+/** A stable key for a set of people, so two of them can be compared. */
+const holderKey = (people: { id: string }[]) =>
+  people
+    .map((person) => person.id)
+    .sort()
+    .join(",");
+
 /** What actually moved, so the toast names it instead of saying "saved". */
 function changes(before: TicketRecord, after: TicketRecord) {
   const parts: string[] = [];
   if (before.status !== after.status) parts.push(`Status: ${after.status}`);
-  if ((before.assignee?.id ?? "") !== (after.assignee?.id ?? "")) {
-    parts.push(`Assignee: ${after.assignee?.name ?? "Nobody yet"}`);
+  if (holderKey(before.assignees) !== holderKey(after.assignees)) {
+    parts.push(`Assignee: ${holders(after.assignees)}`);
   }
   if (dayOf(before.committedDeadline) !== dayOf(after.committedDeadline)) {
     parts.push(
@@ -448,7 +460,7 @@ function SheetBody({
   const [committed, setCommitted] = useState(
     ticket.committedDeadline ? ticket.committedDeadline.slice(0, 10) : "",
   );
-  const [assignee, setAssignee] = useState(ticket.assignee?.id ?? "");
+  const [assignees, setAssignees] = useState(ticket.assignees.map((person) => person.id));
   const [members, setMembers] = useState<Member[]>([]);
   const [pending, setPending] = useState(false);
   const toast = useToast();
@@ -566,7 +578,7 @@ function SheetBody({
       const saved = await updateTicket(ticket.id, {
         status: nextStatus,
         committedDeadline: committed || null,
-        assignee: assignee || null,
+        assignees,
       });
       onSaved(saved);
 
@@ -668,8 +680,14 @@ function SheetBody({
               {ticket.raisedBy.name}
               <OriginTag role={ticket.raisedByRole} />
             </Fact>
-            <Fact label="Assignee">
-              {ticket.assignee?.name ?? <Blank>Nobody yet</Blank>}
+            {/* A ticket can be held by more than one person now, so the row
+                names all of them rather than the first. */}
+            <Fact label={ticket.assignees.length > 1 ? "Assignees" : "Assignee"}>
+              {ticket.assignees.length > 0 ? (
+                holders(ticket.assignees)
+              ) : (
+                <Blank>Nobody yet</Blank>
+              )}
             </Fact>
           </Group>
 
@@ -734,21 +752,18 @@ function SheetBody({
 
               <div className="min-w-0">
                 <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
-                <Select
+                <MultiSelect
                   id="sheet-assignee"
-                  className="h-7 text-[12px]"
-                  value={assignee}
-                  onChange={(event) => setAssignee(event.target.value)}
-                >
-                  {/* Only offered while nobody holds it, which only a ticket
-                      raised before that rule can be. */}
-                  {!ticket.assignee && <option value="">Nobody yet</option>}
-                  {members.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.name} ({member.departmentRole})
-                    </option>
-                  ))}
-                </Select>
+                  options={members.map((member) => ({
+                    value: member.id,
+                    label: `${member.name} (${member.departmentRole})`,
+                  }))}
+                  value={assignees}
+                  onChange={setAssignees}
+                  display="summary"
+                  placeholder="Nobody yet"
+                  emptyMessage="Nobody is in this department"
+                />
               </div>
 
               {/* The requested date used to be repeated here as a locked box.
