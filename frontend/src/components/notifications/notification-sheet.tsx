@@ -72,7 +72,9 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
           <h2 className="min-w-0 flex-1 truncate text-[13px] font-bold text-ink-900">
             Notifications
             {unread > 0 && (
-              <span className="ml-1.5 text-[11px] font-semibold text-brand-600">{unread} new</span>
+              <span className="ml-1.5 rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {unread} new
+              </span>
             )}
           </h2>
 
@@ -117,15 +119,15 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
                 className={cn(
                   "flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors",
                   filter === entry.key
-                    ? "bg-ink-900 text-white"
+                    ? "bg-brand-600 text-white shadow-sm shadow-brand-600/25"
                     : "text-ink-500 hover:bg-ink-100 hover:text-ink-900",
                 )}
               >
                 {entry.label}
                 <span
                   className={cn(
-                    "text-[10px] tabular-nums",
-                    filter === entry.key ? "text-white/60" : "text-ink-400",
+                    "rounded px-1 text-[10px] tabular-nums",
+                    filter === entry.key ? "bg-white/20 text-white" : "bg-ink-100 text-ink-500",
                   )}
                 >
                   {count}
@@ -138,8 +140,8 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
         <div className="flex-1 overflow-y-auto">
           {groups.length === 0 ? (
             <div className="px-4 py-14 text-center">
-              <span className="mx-auto grid size-9 place-items-center rounded-full bg-ink-100">
-                <Bell className="size-4 text-ink-400" />
+              <span className="mx-auto grid size-9 place-items-center rounded-full bg-brand-50">
+                <Bell className="size-4 text-brand-400" />
               </span>
               <p className="mt-2 text-[12px] font-semibold text-ink-700">
                 {filter === "all" ? "Nothing yet" : "Nothing here"}

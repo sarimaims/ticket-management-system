@@ -584,7 +584,9 @@ export function TicketsWorkspace({
         </div>
       )}
 
-      <div className={cn("transition-[padding] duration-200", viewing && "xl:pr-[28rem]")}>
+      {/* The sheet floats over this, so the table keeps its full width and its
+          columns do not reflow the moment a row is opened. */}
+      <div>
       <StatTiles stats={stats} loading={loading} />
 
       <Card className="mt-3 overflow-hidden">
