@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { Building, Check, ChevronUp, Layers, LogOut, Settings, ShieldCheck } from "lucide-react";
+import { Building, Check, ChevronUp, Layers, LogOut, Settings } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { RoleTag } from "@/components/ui/badge";
@@ -122,25 +122,22 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
       {open && (
         <div
           role="menu"
-          className="absolute bottom-full left-2.5 z-50 mb-2 w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-card border border-line bg-surface shadow-xl shadow-ink-900/10"
+          className="absolute bottom-full left-2.5 z-50 mb-1.5 w-[min(14rem,calc(100vw-1.5rem))] overflow-hidden rounded-lg border border-line bg-surface shadow-lg shadow-ink-900/10"
         >
-          <div className="border-b border-line px-3 py-2.5">
-            <p className="truncate text-sm font-bold text-ink-900">{name}</p>
-            <p className="truncate text-xs text-ink-500">{session.email}</p>
-            {manager && (
-              <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700">
-                <ShieldCheck className="size-3" />
-                {ROLE_LABEL[session.role]}
-              </span>
-            )}
+          {/* Name and address only. The role badge that used to sit here said
+              what the button below already says, and a pill on its own line is
+              most of why the box was tall. */}
+          <div className="border-b border-line px-2.5 py-2">
+            <p className="truncate text-[13px] leading-tight font-semibold text-ink-900">{name}</p>
+            <p className="truncate text-[11px] leading-tight text-ink-400">{session.email}</p>
           </div>
 
           {/* Which unit they are working in. Picking one narrows what they
               look at; it never widens what they may read, because every unit
               here is already one they belong to. */}
           {units.length > 0 && (
-            <div className="border-b border-line py-1.5">
-              <p className="px-3 pt-1 pb-1 text-[11px] font-bold tracking-wide text-ink-400 uppercase">
+            <div className="border-b border-line py-1">
+              <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold tracking-wide text-ink-400 uppercase">
                 Working in
               </p>
 
@@ -151,7 +148,7 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
                   aria-checked={viewing === null}
                   onClick={() => setActiveUnit("")}
                   className={cn(
-                    "flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[13px] font-bold transition-colors",
+                    "flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[12px] font-semibold transition-colors",
                     viewing === null ? "text-brand-700" : "text-ink-700 hover:bg-ink-50",
                   )}
                 >
@@ -164,14 +161,14 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
               {units.map((unit) => {
                 const current = viewing?.id === unit.id;
                 return (
-                  <div key={unit.id} className="pb-1">
+                  <div key={unit.id} className="pb-0.5">
                     <button
                       type="button"
                       role="menuitemradio"
                       aria-checked={current}
                       onClick={() => setActiveUnit(current && units.length > 1 ? "" : unit.id)}
                       className={cn(
-                        "flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[13px] font-bold transition-colors",
+                        "flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[12px] font-semibold transition-colors",
                         current ? "bg-brand-50/60 text-brand-700" : "text-ink-900 hover:bg-ink-50",
                       )}
                     >
@@ -188,12 +185,12 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
                     {unit.departments.map((membership) => (
                       <div
                         key={membership.id}
-                        className="flex items-center gap-2 py-1 pr-3 pl-[1.85rem] text-sm"
+                        className="flex items-center gap-1.5 py-0.5 pr-2.5 pl-[1.65rem] text-[11px]"
                       >
-                        <span className="min-w-0 flex-1 truncate text-ink-700">
+                        <span className="min-w-0 flex-1 truncate text-ink-600">
                           {membership.name ?? "Department"}
                         </span>
-                        <RoleTag role={membership.role} className="px-1.5 py-0 text-[10px]" />
+                        <RoleTag role={membership.role} className="px-1 py-0 text-[9px]" />
                       </div>
                     ))}
                   </div>
@@ -201,14 +198,14 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
               })}
 
               {units.length > 1 && (
-                <p className="px-3 pt-1 pb-1 text-[11px] text-ink-400">
+                <p className="px-2.5 pt-0.5 pb-1 text-[10px] leading-snug text-ink-400">
                   My Requests and Assigned to Me follow this.
                 </p>
               )}
             </div>
           )}
 
-          <div className="p-1.5">
+          <div className="p-1">
             <Link
               href="/settings"
               role="menuitem"
@@ -216,9 +213,9 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
                 setOpen(false);
                 onNavigate?.();
               }}
-              className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-700 transition-colors hover:bg-ink-50"
+              className="flex h-8 items-center gap-2 rounded-md px-2 text-[13px] font-medium text-ink-700 transition-colors hover:bg-ink-50"
             >
-              <Settings className="size-4.5 text-ink-400" />
+              <Settings className="size-4 text-ink-400" />
               Settings
             </Link>
 
@@ -226,9 +223,9 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
               type="button"
               role="menuitem"
               onClick={signOut}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-50"
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-[13px] font-medium text-brand-600 transition-colors hover:bg-brand-50"
             >
-              <LogOut className="size-4.5" />
+              <LogOut className="size-4" />
               Sign out
             </button>
           </div>

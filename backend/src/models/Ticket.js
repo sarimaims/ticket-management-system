@@ -133,6 +133,25 @@ const ticketSchema = new mongoose.Schema(
     },
     // The thread lives in its own collection; these two are kept here so a
     // list can show that a conversation exists without reading any of it.
+    /**
+     * The paperwork that came with the request: whatever the raiser attached
+     * on the form. Only the key is stored, as with a chat attachment - the URL
+     * is signed fresh on every read, so the bucket stays private.
+     */
+    attachments: {
+      type: [
+        {
+          key: { type: String, required: true },
+          filename: { type: String, default: '' },
+          mimeType: { type: String, required: true },
+          size: { type: Number, required: true },
+          uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+          uploadedAt: { type: Date, default: Date.now },
+          _id: false,
+        },
+      ],
+      default: [],
+    },
     messageCount: {
       type: Number,
       default: 0,

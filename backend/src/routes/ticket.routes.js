@@ -4,6 +4,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
   createTicket,
+  createTicketUploadTarget,
+  downloadAttachment,
   getTicket,
   listAssignments,
   listTickets,
@@ -25,6 +27,13 @@ router.use(requireAuth);
 
 router.get('/', asyncHandler(listTickets));
 router.post('/', asyncHandler(createTicket));
+
+// A URL the browser PUTs a file to while the form is still being filled in.
+// Declared before '/:id' so "attachments" is never read as a ticket id.
+router.post('/attachments/upload-url', asyncHandler(createTicketUploadTarget));
+// One file back, as a redirect to a link signed at the moment it is followed.
+router.get('/:id/attachments/:index', asyncHandler(downloadAttachment));
+
 router.get('/:id', asyncHandler(getTicket));
 router.patch('/:id', asyncHandler(updateTicket));
 

@@ -1,6 +1,17 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import {
+  buildTicketKey,
+  createDownloadUrl,
+  createUploadUrl,
+  describeObject,
+  isConfigured as storageReady,
+  StorageUnavailable,
+  TICKET_FILE,
+  ticketKeyPrefixFor,
+  validateTicketUpload,
+} from '../services/storage.js';
 import Department from '../models/Department.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
 import TicketAssignment from '../models/TicketAssignment.js';
@@ -75,6 +86,18 @@ function present(ticket) {
     assignees: (ticket.assignees ?? []).map((person) =>
       populated(person) ? { id: String(person._id), name: person.name } : { id: String(person) },
     ),
+    /**
+     * What was attached to the request. No URLs here: a signed link expires
+     * within the hour and a list is cached for longer than that, so the link
+     * is fetched at the moment it is followed instead.
+     */
+    attachments: (ticket.attachments ?? []).map((file, index) => ({
+      index,
+      filename: file.filename || 'Attachment',
+      mimeType: file.mimeType,
+      size: file.size,
+      uploadedAt: file.uploadedAt ?? null,
+    })),
     // How much has been said on it, so a row can show there is a conversation
     // without the list loading a single message.
     messageCount: ticket.messageCount ?? 0,
@@ -82,6 +105,112 @@ function present(ticket) {
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
   };
+}
+
+/**
+ * Hands back a URL the browser may PUT one file to.
+ *
+ * Asked for while the form is still being filled in, so there is no ticket to
+ * name yet: the key is owned by the person uploading, and checked against them
+ * again when the ticket that refers to it is written.
+ */
+export async function createTicketUploadTarget(req, res) {
+  if (!storageReady()) {
+    throw ApiError.unavailable('File storage is not configured yet, so files cannot be attached.');
+  }
+
+  const { contentType, size, filename } = req.body ?? {};
+
+  const problem = validateTicketUpload({ contentType, size });
+  if (problem) throw ApiError.badRequest(problem);
+
+  const key = buildTicketKey({ ownerId: String(req.user._id), filename, contentType });
+
+  let target;
+  try {
+    target = await createUploadUrl({ key, contentType, size: Number(size) });
+  } catch (error) {
+    if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+    throw error;
+  }
+
+  res.json({ success: true, key, ...target });
+}
+
+/**
+ * Turns the keys the browser uploaded to into something worth storing.
+ *
+ * Each object is inspected in the bucket first: that proves the upload
+ * finished, and means the size and type recorded are S3's own rather than
+ * whatever the client claimed. The key must carry the caller's own prefix, so
+ * one person cannot attach another's file to their request.
+ */
+async function resolveAttachments(req) {
+  const input = req.body?.attachments;
+  if (!Array.isArray(input) || input.length === 0) return [];
+
+  if (!storageReady()) throw ApiError.unavailable('File storage is not configured yet.');
+  if (input.length > TICKET_FILE.maxCount) {
+    throw ApiError.badRequest(`A request can carry at most ${TICKET_FILE.maxCount} files.`);
+  }
+
+  const prefix = ticketKeyPrefixFor(String(req.user._id));
+  const files = [];
+
+  for (const entry of input) {
+    const key = entry?.key;
+    if (typeof key !== 'string' || !key) throw ApiError.badRequest('An upload key is missing.');
+    if (!key.startsWith(prefix)) throw ApiError.badRequest('That upload is not yours to attach.');
+
+    let object;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      object = await describeObject(key);
+    } catch (error) {
+      if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+      throw ApiError.badRequest('An upload did not finish. Try attaching it again.');
+    }
+
+    const problem = validateTicketUpload({ contentType: object.contentType, size: object.size });
+    if (problem) throw ApiError.badRequest(problem);
+
+    files.push({
+      key,
+      filename: typeof entry.filename === 'string' ? entry.filename.slice(0, 160) : '',
+      mimeType: object.contentType,
+      size: object.size,
+      uploadedBy: req.user._id,
+      uploadedAt: new Date(),
+    });
+  }
+
+  return files;
+}
+
+/**
+ * Sends the reader to one attachment.
+ *
+ * A redirect rather than a URL in the ticket's JSON: the signature expires
+ * within the hour, and a list that was cached before lunch would otherwise
+ * hand out dead links. Reading a file is exactly the right to read its ticket.
+ */
+export async function downloadAttachment(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) });
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  const file = (ticket.attachments ?? [])[Number(req.params.index)];
+  if (!file) throw ApiError.notFound('Attachment not found.');
+
+  if (!storageReady()) throw ApiError.unavailable('File storage is not configured yet.');
+
+  try {
+    res.redirect(await createDownloadUrl(file.key));
+  } catch (error) {
+    if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+    throw error;
+  }
 }
 
 export async function createTicket(req, res) {
@@ -161,19 +290,19 @@ export async function createTicket(req, res) {
     }
   }
 
-  // A ticket addressed at nobody is a ticket nobody has agreed to look at, so
-  // every department being asked has to be handed to at least one person by
-  // name. The department can pass it on afterwards; it cannot start ownerless.
-  const unstaffed = targets.find((target) => (assignedTo.get(String(target._id)) ?? []).length === 0);
-  if (unstaffed) {
-    throw ApiError.badRequest(`Choose who should handle it in ${unstaffed.name}.`);
-  }
+  // Naming somebody is optional. A ticket with no name on it still reaches the
+  // department's head and team, who can pick it up or hand it on; requiring a
+  // name would mean knowing who works there before you are allowed to ask.
 
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
   const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
   const stranger = fromIds.find((id) => !mine.has(id));
   if (stranger) throw ApiError.badRequest('You can only raise on behalf of your own departments.');
+
+  // Checked against the bucket before anything is written: a ticket must not
+  // end up pointing at an upload that never landed.
+  const attachments = await resolveAttachments(req);
 
   const shared = {
     subject: subject.trim(),
@@ -185,6 +314,9 @@ export async function createTicket(req, res) {
     fromDepartments: fromIds,
     deadline: dueDate,
     project: project?.trim() ?? '',
+    // The same files on each ticket when several departments are asked: one
+    // upload, one copy in the bucket, referred to by each request.
+    attachments,
   };
 
   // One ticket per receiving department: each owns its own number, status and

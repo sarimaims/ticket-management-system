@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
 import { statusToneClasses } from "@/components/ui/badge";
 import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+/** Roughly how tall the open list is, used to decide which way it opens. */
+const LIST_HEIGHT = 196;
 
 const STATUSES: TicketStatus[] = [
   "New",
@@ -50,13 +54,40 @@ export function StatusPicker({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  /** Where the list is pinned, in viewport coordinates. */
+  const [at, setAt] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  /**
+   * The table scrolls sideways inside its own box, which clipped a list drawn
+   * in it - the last row's options were cut off entirely. The list is drawn on
+   * the body instead and pinned to its trigger, opening upwards when the row is
+   * near the bottom of the window.
+   */
+  const place = () => {
+    const rect = trigger.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const room = window.innerHeight - rect.bottom;
+    setAt({
+      right: Math.max(8, window.innerWidth - rect.right),
+      ...(room > LIST_HEIGHT
+        ? { top: rect.bottom + 4 }
+        : { bottom: Math.max(8, window.innerHeight - rect.top + 4) }),
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const inRoot = root.current?.contains(event.target as Node);
+      const inList = (event.target as HTMLElement).closest?.("[data-status-list]");
+      if (!inRoot && !inList) setOpen(false);
     };
+    // A list pinned to a row cannot follow it, so it closes when the page moves.
+    const onScroll = () => setOpen(false);
+    const onResize = () => place();
     // Caught on the way down, and stopped there: whatever is behind this
     // list - the detail sheet, say - also closes on Escape, and one key press
     // should only shut one thing.
@@ -67,18 +98,26 @@ export function StatusPicker({
     };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
 
   return (
     <div ref={root} className="relative" onClick={(event) => event.stopPropagation()}>
       <button
+        ref={trigger}
         type="button"
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          place();
+          setOpen((current) => !current);
+        }}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
@@ -95,11 +134,15 @@ export function StatusPicker({
         <ChevronDown className={cn("size-3 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
 
-      {open && (
+      {open &&
+        at &&
+        createPortal(
         <ul
           role="listbox"
           aria-label={label}
-          className="absolute right-0 z-30 mt-1 w-36 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-lg shadow-ink-900/10"
+          data-status-list
+          style={{ right: at.right, top: at.top, bottom: at.bottom }}
+          className="fixed z-50 w-36 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
         >
           {STATUSES.map((status) => {
             const current = status === value;
@@ -125,7 +168,8 @@ export function StatusPicker({
               </li>
             );
           })}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   );

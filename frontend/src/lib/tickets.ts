@@ -1,8 +1,21 @@
-import { api, apiRevalidate } from "./api";
+import { api, apiRevalidate, BASE } from "./api";
 import type { TicketPriority, TicketStatus } from "./types";
 
 /** The unit a department sits under, as the ticket carries it. */
 export type TicketUnit = { id: string; name?: string; code?: string } | null;
+
+/**
+ * One file attached to the request itself. No URL: a signed link expires
+ * within the hour and a cached list would hand out dead ones, so the link is
+ * asked for at the moment it is followed - see {@link attachmentHref}.
+ */
+export type TicketAttachment = {
+  index: number;
+  filename: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string | null;
+};
 
 export type TicketRecord = {
   id: string;
@@ -27,6 +40,8 @@ export type TicketRecord = {
   raisedByRole: "superadmin" | "admin" | "user";
   /** Who is handling it. A department can put more than one person on it. */
   assignees: { id: string; name?: string }[];
+  /** The paperwork that came with the request. */
+  attachments: TicketAttachment[];
   /** How long the conversation on this ticket is, without loading any of it. */
   messageCount: number;
   lastMessageAt: string | null;
@@ -47,10 +62,20 @@ export function createTicket(input: {
   priority: TicketPriority;
   deadline: string;
   project?: string;
+  /** Files already uploaded to storage, named by the key the API handed out. */
+  attachments?: { key: string; filename?: string }[];
 }) {
   return api<{ tickets: TicketRecord[] }>("/tickets", { method: "POST", body: input }).then(
     (data) => data.tickets,
   );
+}
+
+/**
+ * Where one attachment is read from. The API answers with a redirect to a
+ * freshly signed link, so this can be the href of an ordinary anchor.
+ */
+export function attachmentHref(ticketId: string, index: number) {
+  return `${BASE}/tickets/${ticketId}/attachments/${index}`;
 }
 
 /** `mine` = raised by me, `assigned` = my departments' queue, omitted = both. */
