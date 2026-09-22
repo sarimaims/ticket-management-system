@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import {
   createTicket,
   getTicket,
+  listAssignments,
   listTickets,
   updateTicket,
 } from '../controllers/ticket.controller.js';
@@ -35,5 +36,9 @@ router.post('/:id/messages/upload-url', asyncHandler(createUploadTarget));
 // An author corrects or withdraws their own line; the controller checks that.
 router.patch('/:id/messages/:messageId', asyncHandler(updateMessage));
 router.delete('/:id/messages/:messageId', asyncHandler(deleteMessage));
+
+// Who has held it, and who handed it on. Written by raising and updating a
+// ticket, never posted to directly - a history anyone can write is not one.
+router.get('/:id/assignments', asyncHandler(listAssignments));
 
 export default router;

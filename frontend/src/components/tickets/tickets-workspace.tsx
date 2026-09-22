@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
+  ArrowRight,
   Inbox,
   MessagesSquare,
   Plus,
@@ -45,7 +46,7 @@ const STATUSES: TicketStatus[] = [
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
-const COMPACT = "h-11 pr-8 pl-3 text-[13px]";
+const COMPACT = "h-9 pr-7 pl-2.5 text-xs";
 
 /** How often a live queue asks the API whether anything moved. */
 const REFRESH_MS = 7000;
@@ -102,10 +103,18 @@ function statsFor(tickets: TicketRecord[], scope: "mine" | "assigned"): Stat[] {
   ];
 }
 
+/** Every cell in this table, tight enough that the whole row fits on screen. */
+const CELL = "px-2 py-2 text-xs align-top";
+
 /**
  * One row, held apart from the table so a refresh only repaints the tickets
  * that actually moved. The poll reuses the object of an unchanged ticket, so
  * every prop here is reference-equal and React skips the row entirely.
+ *
+ * Every column earns its width: what was two department columns is one route,
+ * what was two date columns is one deadline with the promise under it, and the
+ * request type - which almost no ticket carries - sits under the subject
+ * rather than holding a column of dashes open.
  */
 const TicketRow = memo(function TicketRow({
   ticket,
@@ -114,7 +123,6 @@ const TicketRow = memo(function TicketRow({
   byMe,
   selected,
   flashed,
-  showType,
   unreadMessages,
   onOpen,
   onStatus,
@@ -127,13 +135,13 @@ const TicketRow = memo(function TicketRow({
   selected: boolean;
   /** Arrived here from a notification: hold the eye on this row for a moment. */
   flashed: boolean;
-  /** Whether the list is showing a request type column at all. */
-  showType: boolean;
   /** How many messages on this ticket the reader has not opened yet. */
   unreadMessages: number;
   onOpen: (ticket: TicketRecord, tab?: SheetTab) => void;
   onStatus: (ticket: TicketRecord, next: TicketStatus) => void;
 }) {
+  const messages = unreadMessages > 0 ? unreadMessages : ticket.messageCount;
+
   return (
     <tr
       id={`ticket-row-${ticket.id}`}
@@ -147,59 +155,35 @@ const TicketRow = memo(function TicketRow({
           "bg-status-waiting-bg ring-2 ring-status-waiting-fg ring-inset hover:bg-status-waiting-bg",
       )}
     >
-      <TableCell className={cn(mine && "relative")}>
-        {/* A bar on the row's edge: visible even when the table is
-            scrolled, and it costs the layout nothing. */}
+      <TableCell className={cn(CELL, "relative")}>
+        {/* A bar on the row's edge rather than a word: it says the same thing
+            in three pixels. */}
         {mine && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />}
-        <span className="flex items-center gap-1.5">
-          <span className="text-sm font-semibold text-brand-600">#{ticket.number}</span>
-          {mine && (
-            <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
-              Mine
-            </span>
-          )}
-        </span>
+        <span className="block font-bold whitespace-nowrap text-brand-600">#{ticket.number}</span>
+        {mine && (
+          <span className="mt-0.5 inline-block rounded bg-brand-50 px-1 py-px text-[9px] font-bold tracking-wide text-brand-700 uppercase">
+            Mine
+          </span>
+        )}
       </TableCell>
-      <TableCell className="font-semibold whitespace-normal text-ink-900">
+
+      <TableCell className={cn(CELL, "font-semibold whitespace-normal text-ink-900")}>
         {ticket.subject}
-        {/* The way into the conversation, on every row rather than only the
-            ones that already have one - a thread nobody can find is a thread
-            nobody starts. */}
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpen(ticket, "chat");
-          }}
-          aria-label={
-            unreadMessages > 0
-              ? `Open the conversation on ${ticket.number}, ${unreadMessages} unread`
-              : `Open the conversation on ${ticket.number}`
-          }
-          className={cn(
-            "ml-2 inline-flex translate-y-px items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold transition-colors",
-            unreadMessages > 0
-              ? "bg-brand-600 text-white hover:bg-brand-700"
-              : ticket.messageCount > 0
-                ? "bg-ink-100 text-ink-600 hover:bg-ink-200"
-                : "text-ink-300 hover:bg-ink-100 hover:text-ink-600",
-          )}
-        >
-          <MessagesSquare className="size-3.5" />
-          {unreadMessages > 0
-            ? unreadMessages
-            : ticket.messageCount > 0
-              ? ticket.messageCount
-              : null}
-        </button>
+        {/* The form stopped asking for this, so it rides under the subject on
+            the tickets that still carry one instead of holding a column open. */}
+        {ticket.requestType && (
+          <span className="mt-0.5 block text-[11px] font-normal text-ink-400">
+            {ticket.requestType}
+          </span>
+        )}
       </TableCell>
 
       {scope === "assigned" && (
-        <TableCell className="whitespace-normal">
-          <span className="flex flex-wrap items-center gap-1.5">
+        <TableCell className={cn(CELL, "whitespace-normal")}>
+          <span className="flex flex-wrap items-center gap-1">
             <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
             {byMe && (
-              <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-ink-600 uppercase">
+              <span className="rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
                 You
               </span>
             )}
@@ -208,40 +192,40 @@ const TicketRow = memo(function TicketRow({
         </TableCell>
       )}
 
-      <TableCell className="whitespace-normal">
-        {ticket.fromDepartments.length === 0 ? (
-          // Empty for a manager: they sit above the departments,
-          // so the Raised By tag carries the origin instead.
-          <span className="text-ink-400">—</span>
-        ) : (
-          <span className="flex flex-wrap gap-1">
-            {ticket.fromDepartments.map((item) => (
+      {/* Where it came from and where it went, read as one move. */}
+      <TableCell className={cn(CELL, "whitespace-normal")}>
+        <span className="flex flex-wrap items-center gap-1">
+          {ticket.fromDepartments.length === 0 ? (
+            // Empty for a manager: they sit above the departments, so the
+            // Raised By tag carries the origin instead.
+            <span className="text-ink-300">—</span>
+          ) : (
+            ticket.fromDepartments.map((item) => (
               <span
                 key={item.id}
-                className="rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600"
+                className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-600"
               >
                 {item.name}
               </span>
-            ))}
+            ))
+          )}
+          <ArrowRight className="size-3 shrink-0 text-ink-300" />
+          <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
+            {ticket.department.name}
           </span>
-        )}
-      </TableCell>
-
-      <TableCell>
-        <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
-          {ticket.department.name}
         </span>
       </TableCell>
-      {showType && <TableCell>{ticket.requestType || "—"}</TableCell>}
-      <TableCell>
-        <PriorityBadge priority={ticket.priority} />
+
+      <TableCell className={CELL}>
+        <PriorityBadge priority={ticket.priority} className="px-1.5 py-0.5 text-[11px]" />
       </TableCell>
-      <TableCell>
+
+      <TableCell className={CELL}>
         {scope === "assigned" ? (
           <Select
             onClick={(event) => event.stopPropagation()}
             className={cn(
-              "h-8 w-32 border-transparent pr-7 pl-2.5 text-xs font-semibold",
+              "h-7 w-[104px] border-transparent pr-6 pl-2 text-[11px] font-semibold",
               statusToneClasses(ticket.status),
             )}
             value={ticket.status}
@@ -253,38 +237,68 @@ const TicketRow = memo(function TicketRow({
             ))}
           </Select>
         ) : (
-          <StatusBadge status={ticket.status} />
+          <StatusBadge status={ticket.status} className="px-1.5 py-0.5 text-[11px]" />
         )}
       </TableCell>
-      <TableCell>
+
+      <TableCell className={cn(CELL, "whitespace-nowrap")}>
         <span className="block leading-tight">{formatDateOf(ticket.createdAt)}</span>
         <span className="block text-[11px] leading-tight text-ink-400">
           {formatTime(ticket.createdAt)}
         </span>
       </TableCell>
-      <TableCell>{ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "—"}</TableCell>
-      {/* What the receiving department promised back, next to
-          what was asked: green if it meets the ask, amber if it
-          runs past it. */}
-      <TableCell>
-        <DeadlineVerdict requested={ticket.deadline} committed={ticket.committedDeadline} />
+
+      {/* The date asked for, with what the department promised back under it:
+          green if it meets the ask, amber if it runs past it. */}
+      <TableCell className={cn(CELL, "whitespace-nowrap")}>
+        <span className="block leading-tight">
+          {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "—"}
+        </span>
+        <span className="mt-0.5 block text-[11px] leading-tight">
+          <DeadlineVerdict requested={ticket.deadline} committed={ticket.committedDeadline} />
+        </span>
       </TableCell>
 
-      {scope === "assigned" && (
-        <TableCell>
+      <TableCell className={CELL}>
+        <span className="flex items-center gap-1">
+          {/* The way into the conversation, on every row rather than only the
+              ones that already have one - a thread nobody can find is a thread
+              nobody starts. Filled in once something is waiting to be read. */}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen(ticket, "chat");
+            }}
+            aria-label={
+              unreadMessages > 0
+                ? `Open the conversation on ${ticket.number}, ${unreadMessages} unread`
+                : `Open the conversation on ${ticket.number}`
+            }
+            className={cn(
+              "inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[11px] font-bold transition-colors",
+              unreadMessages > 0
+                ? "bg-status-completed-fg text-white hover:bg-status-accepted-fg"
+                : "bg-status-completed-bg text-status-completed-fg hover:bg-status-completed-fg/20",
+            )}
+          >
+            <MessagesSquare className="size-3.5" />
+            {messages > 0 ? messages : null}
+          </button>
+
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
               onOpen(ticket);
             }}
-            className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
             aria-label={`Open ${ticket.number}`}
           >
             <SlidersHorizontal className="size-4" />
           </button>
-        </TableCell>
-      )}
+        </span>
+      </TableCell>
     </tr>
   );
 });
@@ -293,7 +307,7 @@ const TicketRow = memo(function TicketRow({
 function LiveTag({ syncedAt }: { syncedAt: number | null }) {
   return (
     <span
-      className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[11px] font-semibold text-ink-500"
+      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-[11px] font-semibold text-ink-500"
       title={
         syncedAt
           ? `Checks every ${REFRESH_MS / 1000}s · last change ${new Date(syncedAt).toLocaleTimeString()}`
@@ -400,13 +414,7 @@ export function TicketsWorkspace({
     });
   }, [tickets, deferredQuery, status, priority, mineOnly, isMine]);
 
-  /**
-   * The form stopped asking for a request type, so the column would be a
-   * stripe of dashes. It appears only while something in view still carries
-   * one, which keeps it for the tickets raised when the field existed.
-   */
-  const showType = tickets.some((ticket) => Boolean(ticket.requestType));
-  const columns = (scope === "mine" ? 9 : 11) + (showType ? 1 : 0);
+  const columns = scope === "mine" ? 8 : 9;
 
   /**
    * Arriving from a notification: find the ticket it named, clear whatever
@@ -506,11 +514,11 @@ export function TicketsWorkspace({
       <div className={cn("transition-[padding] duration-200", viewing && "xl:pr-[28rem]")}>
       <StatTiles stats={stats} loading={loading} />
 
-      <Card className="mt-4 overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-line p-2.5">
+      <Card className="mt-3 overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
           <div className="min-w-44 flex-1">
             <Input
-              className="h-11 text-[13px]"
+              className="h-9 pl-10 text-xs"
               icon={<Search className="text-ink-400" />}
               placeholder="Search by ticket ID, subject or keyword..."
               value={query}
@@ -520,7 +528,7 @@ export function TicketsWorkspace({
           </div>
 
           <Select
-            className={COMPACT + " w-36 shrink-0"}
+            className={COMPACT + " w-32 shrink-0"}
             value={status}
             onChange={(event) => setStatus(event.target.value)}
             aria-label="Filter by status"
@@ -532,7 +540,7 @@ export function TicketsWorkspace({
           </Select>
 
           <Select
-            className={COMPACT + " w-36 shrink-0"}
+            className={COMPACT + " w-32 shrink-0"}
             value={priority}
             onChange={(event) => setPriority(event.target.value)}
             aria-label="Filter by priority"
@@ -549,7 +557,7 @@ export function TicketsWorkspace({
               onClick={() => setMineOnly((current) => !current)}
               aria-pressed={mineOnly}
               className={cn(
-                "inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-[13px] font-semibold transition-colors",
+                "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors",
                 mineOnly
                   ? "border-brand-600 bg-brand-50 text-brand-700"
                   : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
@@ -573,7 +581,7 @@ export function TicketsWorkspace({
           {scope === "mine" && (
             <Link
               href="/create-ticket"
-              className="inline-flex h-11 items-center gap-2 rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 text-[13px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
             >
               <Plus className="size-4" strokeWidth={2.5} />
               Create Ticket
@@ -582,23 +590,39 @@ export function TicketsWorkspace({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1220px] border-collapse">
+          {/* Fluid rather than held open at a fixed width: on a desktop every
+              column fits and nothing scrolls sideways, and the min-width below
+              only catches phones. */}
+          <table className="w-full min-w-[820px] border-collapse">
             <thead className="border-b border-line bg-ink-50/60">
               <tr>
-                <TableHead sortable>Ticket ID</TableHead>
-                <TableHead sortable className="min-w-[180px]">
+                <TableHead sortable className="px-2 py-2">
+                  Ticket
+                </TableHead>
+                <TableHead sortable className="w-[24%] px-2 py-2">
                   Subject
                 </TableHead>
-                {scope === "assigned" && <TableHead sortable>Raised By</TableHead>}
-                <TableHead sortable>From Department</TableHead>
-                <TableHead sortable>To Department</TableHead>
-                {showType && <TableHead sortable>Request Type</TableHead>}
-                <TableHead sortable>Priority</TableHead>
-                <TableHead sortable>Status</TableHead>
-                <TableHead sortable>Created On</TableHead>
-                <TableHead sortable>Deadline Asked</TableHead>
-                <TableHead sortable>Committed</TableHead>
-                {scope === "assigned" && <TableHead>Actions</TableHead>}
+                {scope === "assigned" && (
+                  <TableHead sortable className="px-2 py-2">
+                    Raised By
+                  </TableHead>
+                )}
+                <TableHead sortable className="px-2 py-2">
+                  From → To
+                </TableHead>
+                <TableHead sortable className="px-2 py-2">
+                  Priority
+                </TableHead>
+                <TableHead sortable className="px-2 py-2">
+                  Status
+                </TableHead>
+                <TableHead sortable className="px-2 py-2">
+                  Created
+                </TableHead>
+                <TableHead sortable className="px-2 py-2" title="Asked for, and what was promised back">
+                  Deadline
+                </TableHead>
+                <TableHead className="px-2 py-2">Actions</TableHead>
               </tr>
             </thead>
             <tbody>
@@ -636,7 +660,6 @@ export function TicketsWorkspace({
                     byMe={scope === "assigned" && ticket.raisedBy.id === meId}
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
-                    showType={showType}
                     unreadMessages={unreadByTicket.get(ticket.id) ?? 0}
                     onOpen={openTicket}
                     onStatus={applyStatus}

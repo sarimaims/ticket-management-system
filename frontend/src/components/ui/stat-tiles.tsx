@@ -36,14 +36,16 @@ export function StatTiles({
   className?: string;
 }) {
   return (
-    <div className={cn("grid grid-cols-2 gap-3", COLUMNS[stats.length] ?? "lg:grid-cols-4", className)}>
+    <div
+      className={cn("grid grid-cols-2 gap-2.5", COLUMNS[stats.length] ?? "lg:grid-cols-4", className)}
+    >
       {stats.map((stat) => (
-        <div key={stat.label} className={cn("rounded-xl px-4 py-3", TILE_TONES[stat.tone])}>
-          <p className="text-xs font-semibold opacity-80">{stat.label}</p>
+        <div key={stat.label} className={cn("rounded-xl px-3 py-2.5", TILE_TONES[stat.tone])}>
+          <p className="text-[11px] font-semibold opacity-80">{stat.label}</p>
           {loading ? (
-            <span className="mt-1.5 block h-6 w-10 animate-pulse rounded-md bg-current opacity-20" />
+            <span className="mt-1 block h-5 w-9 animate-pulse rounded-md bg-current opacity-20" />
           ) : (
-            <p className="mt-1 text-2xl leading-none font-bold tabular-nums">{stat.value}</p>
+            <p className="mt-0.5 text-xl leading-none font-bold tabular-nums">{stat.value}</p>
           )}
         </div>
       ))}

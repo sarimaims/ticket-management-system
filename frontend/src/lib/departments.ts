@@ -33,6 +33,25 @@ export type DepartmentOption = Pick<Department, "id" | "name" | "code"> & {
   unit: { id: string; name: string } | null;
 };
 
+/** A name to address a ticket at, without the rest of the person's record. */
+export type MemberOption = {
+  id: string;
+  name: string;
+  departmentRole: DepartmentRole;
+};
+
+/**
+ * Who is in one department, names only. Open to anyone signed in, on the same
+ * footing as listing the departments themselves: you may send a request to a
+ * department, so you may address it at somebody in it. Reading the department
+ * proper still needs {@link getDepartment}.
+ */
+export function listDepartmentMembers(id: string, signal?: AbortSignal) {
+  return api<{ members: MemberOption[] }>(`/departments/${id}/members/options`, { signal }).then(
+    (data) => data.members,
+  );
+}
+
 /** Every department, names only - what you may send a ticket to. */
 export function listDepartmentOptions(signal?: AbortSignal) {
   return api<{ departments: DepartmentOption[] }>("/departments/options", { signal }).then(

@@ -6,7 +6,7 @@ import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const CONTROL =
-  "h-12 w-full rounded-field border border-line-strong bg-surface text-sm font-medium text-ink-900 " +
+  "h-11 w-full rounded-field border border-line-strong bg-surface text-sm font-medium text-ink-900 " +
   "transition-colors placeholder:font-normal placeholder:text-ink-400 " +
   "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10";
 
@@ -26,7 +26,7 @@ export function Label({
   return (
     <label
       htmlFor={htmlFor}
-      className={cn("mb-2 block text-sm font-semibold text-ink-800", className)}
+      className={cn("mb-1.5 block text-sm font-semibold text-ink-800", className)}
     >
       {children}
       {required && <span className="ml-1 text-brand-600">*</span>}
@@ -60,7 +60,7 @@ export function Field({
       <Label required={required} hint={hint} htmlFor={htmlFor} className={help ? "mb-1" : undefined}>
         {label}
       </Label>
-      {help && <p className="mb-2 text-xs text-ink-400">{help}</p>}
+      {help && <p className="mb-1.5 text-xs text-ink-400">{help}</p>}
       {children}
       {error && (
         <p role="alert" className="mt-1.5 text-xs font-medium text-brand-600">
@@ -142,7 +142,7 @@ export function Textarea({
       <textarea
         aria-invalid={invalid || undefined}
         className={cn(
-          "min-h-[116px] w-full resize-y rounded-field border border-line-strong bg-surface px-4 py-3.5 text-sm text-ink-900",
+          "min-h-[92px] w-full resize-y rounded-field border border-line-strong bg-surface px-4 py-3 text-sm text-ink-900",
           "transition-colors placeholder:text-ink-400",
           "focus:border-brand-400 focus:outline-none focus:ring-4 focus:ring-brand-500/10",
           maxLength ? "pb-9" : "",

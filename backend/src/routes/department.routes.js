@@ -9,6 +9,7 @@ import {
   deleteDepartment,
   getDepartment,
   listDepartments,
+  listMemberOptions,
   removeMember,
   updateDepartment,
   updateMemberRole,
@@ -22,6 +23,9 @@ router.get('/', asyncHandler(listDepartments));
 // Any signed-in user may list the names, so they can address a ticket.
 router.get('/options', asyncHandler(listDepartmentOptions));
 router.get('/:id', asyncHandler(getDepartment));
+// Names only, so a ticket can be addressed at a person rather than a queue.
+// Reading the department itself stays restricted; this does not.
+router.get('/:id/members/options', asyncHandler(listMemberOptions));
 
 // Everything that changes the org chart needs management rights.
 router.post('/', requireAdmin, asyncHandler(createDepartment));

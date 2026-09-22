@@ -14,6 +14,7 @@ import {
   ShieldPlus,
   UserCheck,
   UserMinus,
+  UserPlus,
 } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
@@ -26,7 +27,7 @@ import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
-import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
+import { MembershipRows } from "@/components/admin/membership-rows";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { avatarTone, initials, isSuperAdmin, ROLE_LABEL } from "@/lib/auth";
@@ -278,12 +279,10 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <option value="suspended">Suspended</option>
           </Select>
 
-          {scope === "admins" && (
-            <Button className="h-11" onClick={() => setCreating(true)}>
-              <ShieldPlus className="size-4.5" />
-              Create Admin
-            </Button>
-          )}
+          <Button className="h-11" onClick={() => setCreating(true)}>
+            {scope === "admins" ? <ShieldPlus className="size-4.5" /> : <UserPlus className="size-4.5" />}
+            {scope === "admins" ? "Create Admin" : "Create User"}
+          </Button>
         </div>
 
         <div className="overflow-x-auto">
@@ -444,7 +443,9 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         }}
       />
 
-      <CreateAdminModal
+      <CreatePersonModal
+        scope={scope}
+        departments={departments}
         open={creating}
         onClose={() => setCreating(false)}
         onCreated={() => {
@@ -467,31 +468,51 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   );
 }
 
-/* ---------------------------------------------------------- create admin */
+/* --------------------------------------------------------- create person */
 
-/** Both a super admin and an admin can open this; it only ever mints admins. */
-function CreateAdminModal({
+/**
+ * Makes an account, and on the directory page files it at the same time.
+ *
+ * A member is placed where they work as they are created - any unit, any
+ * department, with a role in each - rather than being made first and filed
+ * afterwards in a second trip through the edit dialog. The Staff page only
+ * ever mints admins, who sit above the org chart and belong to no department,
+ * so it does not ask.
+ */
+function CreatePersonModal({
+  scope,
+  departments,
   open,
   onClose,
   onCreated,
 }: {
+  scope: Scope;
+  departments: Department[];
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
 }) {
+  /** The Staff page is the admin directory, so that is all it makes. */
+  const adminsOnly = scope === "admins";
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [memberships, setMemberships] = useState<MembershipInput[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const toast = useToast();
+
+  /** Decided by which directory you opened, not by a field on the form. */
+  const role = adminsOnly ? "admin" : "user";
 
   const close = () => {
     setName("");
     setEmail("");
     setPassword("");
     setShowPassword(false);
+    setMemberships([]);
     setError("");
     onClose();
   };
@@ -511,9 +532,19 @@ function CreateAdminModal({
         name: name.trim(),
         email: email.trim(),
         password,
-        role: "admin",
+        role,
+        // An admin holds no departments, so the picker's value is not sent.
+        ...(role === "user" ? { memberships } : {}),
       });
-      toast.success(`${created.name} added as an admin`, created.email);
+
+      toast.success(
+        role === "admin"
+          ? `${created.name} added as an admin`
+          : memberships.length === 0
+            ? `${created.name} added`
+            : `${created.name} added to ${memberships.length} department${memberships.length === 1 ? "" : "s"}`,
+        created.email,
+      );
       close();
       onCreated();
     } catch (caught) {
@@ -527,74 +558,106 @@ function CreateAdminModal({
     <Modal
       open={open}
       onClose={close}
-      title="Create Admin"
-      description="An admin can manage departments, members and other admins."
+      title={adminsOnly ? "Create Admin" : "Create User"}
+      description={
+        adminsOnly
+          ? "An admin can manage departments, members and other admins."
+          : "Their sign-in details, and where in the workspace they sit."
+      }
+      className={adminsOnly ? undefined : "max-w-lg"}
     >
-      <form className="space-y-4" onSubmit={submit} noValidate>
+      <form className="space-y-3.5" onSubmit={submit} noValidate>
         {error && <Banner message={error} />}
 
-        <Field label="Full name" required htmlFor="admin-name">
-          <Input
-            id="admin-name"
-            className="h-11"
-            placeholder="Their full name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            name="admin-name"
-            autoComplete="off"
-            data-1p-ignore
-            autoFocus
-          />
-        </Field>
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field label="Full name" required htmlFor="person-name">
+            <Input
+              id="person-name"
+              placeholder="Their full name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              name="person-name"
+              autoComplete="off"
+              data-1p-ignore
+              autoFocus
+            />
+          </Field>
 
-        <Field label="Email" required htmlFor="admin-email">
-          <Input
-            id="admin-email"
-            type="email"
-            className="h-11"
-            placeholder="name@flowdesk.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            name="admin-email"
-            autoComplete="off"
-            data-1p-ignore
-          />
-        </Field>
+          <Field label="Email" required htmlFor="person-email">
+            <Input
+              id="person-email"
+              type="email"
+              placeholder="name@flowdesk.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              name="person-email"
+              autoComplete="off"
+              data-1p-ignore
+            />
+          </Field>
+        </div>
 
-        <Field label="Temporary password" required htmlFor="admin-password">
-          <Input
-            id="admin-password"
-            type={showPassword ? "text" : "password"}
-            className="h-11"
-            placeholder="At least 8 characters"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            name="admin-password"
-            autoComplete="new-password"
-            data-1p-ignore
-            trailing={
-              <button
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
-              </button>
-            }
-          />
-        </Field>
+        <div className="grid gap-3.5">
+          <Field label="Temporary password" required htmlFor="person-password">
+            <Input
+              id="person-password"
+              type={showPassword ? "text" : "password"}
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              name="person-password"
+              autoComplete="new-password"
+              data-1p-ignore
+              trailing={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
+                </button>
+              }
+            />
+          </Field>
+        </div>
 
-        <p className="text-xs text-ink-400">
-          The super admin role is fixed and cannot be granted here.
-        </p>
+        {/* Where they work, and what they are in each place. */}
+        {!adminsOnly && (
+          <div>
+            <p className="mb-1.5 text-sm font-semibold text-ink-800">
+              Roles
+              <span className="ml-1 font-normal text-ink-400">
+                (a unit, a department, and what they are in it
+                {memberships.length > 0 ? ` · ${memberships.length} added` : ""})
+              </span>
+            </p>
+            <MembershipRows
+              departments={departments}
+              value={memberships}
+              onChange={setMemberships}
+            />
+            <p className="mt-1.5 text-xs text-ink-400">
+              Optional now - they can be filed later from this page. Add a row for each posting:
+              several departments in one unit, or across units, both work.
+            </p>
+          </div>
+        )}
 
-        <div className="flex justify-end gap-2 border-t border-line pt-4">
+        {adminsOnly && (
+          <p className="flex items-start gap-2 rounded-field bg-ink-50 px-3 py-2.5 text-xs text-ink-500">
+            <ShieldCheck className="mt-px size-4 shrink-0 text-ink-400" />
+            An admin sits above the org chart and belongs to no department, so they see every unit
+            and every ticket already. The super admin role is fixed and cannot be granted here.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3.5">
           <Button type="button" variant="outline" size="sm" onClick={close}>
             Cancel
           </Button>
           <Button type="submit" size="sm" disabled={pending}>
-            {pending ? "Creating…" : "Create Admin"}
+            {pending ? "Creating…" : adminsOnly ? "Create Admin" : "Create User"}
           </Button>
         </div>
       </form>
@@ -923,13 +986,13 @@ function EditUserForm({
         </div>
       ) : (
         <div>
-          <p className="mb-2 text-sm font-semibold text-ink-800">
-            Departments
+          <p className="mb-1.5 text-sm font-semibold text-ink-800">
+            Roles
             <span className="ml-1.5 font-normal text-ink-400">
-              tick each one and set the role ({memberships.length} selected)
+              (a unit, a department, and what they are in it · {memberships.length} added)
             </span>
           </p>
-          <DepartmentRolePicker
+          <MembershipRows
             departments={departments}
             value={memberships}
             onChange={setMemberships}

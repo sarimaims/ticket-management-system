@@ -110,7 +110,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
       <div
         aria-live="assertive"
-        className="pointer-events-none fixed top-20 right-4 z-[100] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2"
+        className="pointer-events-none fixed top-[4.5rem] right-4 z-[100] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2"
       >
         {toasts.map((toast) => {
           const tone = TONES[toast.tone];

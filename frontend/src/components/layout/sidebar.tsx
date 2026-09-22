@@ -64,22 +64,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         onClick={onClose}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition-colors",
+          "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-semibold transition-colors",
           active ? "bg-brand-50 text-brand-700" : "text-ink-600 hover:bg-ink-50 hover:text-ink-900",
         )}
       >
         {accent ? (
-          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-600 text-white shadow-sm shadow-brand-600/30">
-            <Icon className="size-4.5" strokeWidth={2.5} />
+          <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-brand-600 text-white shadow-sm shadow-brand-600/30">
+            <Icon className="size-4" strokeWidth={2.5} />
           </span>
         ) : (
           <span
             className={cn(
-              "grid size-8 shrink-0 place-items-center rounded-lg",
+              "grid size-7 shrink-0 place-items-center rounded-lg",
               active ? "text-brand-600" : "text-ink-400 group-hover:text-ink-600",
             )}
           >
-            <Icon className="size-5" strokeWidth={2} />
+            <Icon className="size-4.5" strokeWidth={2} />
           </span>
         )}
         {label}
@@ -103,7 +103,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-16 shrink-0 items-center justify-between px-5">
+        <div className="flex h-14 shrink-0 items-center justify-between px-4">
           <Link href="/dashboard" onClick={onClose}>
             <Logo />
           </Link>
@@ -117,12 +117,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-2.5 py-2.5">
           {NAV.filter((item) => !item.adminOnly || isAdmin(session)).map(renderItem)}
 
           {isAdmin(session) && (
             <>
-              <p className="px-3 pt-5 pb-2 text-[11px] font-bold tracking-wider text-ink-400 uppercase">
+              <p className="px-2.5 pt-3 pb-1 text-[10px] font-bold tracking-wider text-ink-400 uppercase">
                 Administration
               </p>
               {ADMIN_NAV.map(renderItem)}

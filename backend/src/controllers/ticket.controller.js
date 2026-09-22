@@ -3,8 +3,10 @@ import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import TicketAssignment from '../models/TicketAssignment.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
+import { recordAssignment } from '../services/assignment.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
 
@@ -58,6 +60,7 @@ export async function createTicket(req, res) {
     department,
     departments,
     fromDepartments,
+    assignees,
     subject,
     description,
     requestType,
@@ -87,6 +90,49 @@ export async function createTicket(req, res) {
     throw ApiError.badRequest('One or more departments do not exist.');
   }
 
+  /**
+   * Who should pick it up, one name per department: `{ departmentId: userId }`.
+   *
+   * Each target gets its own ticket, so each gets its own name - somebody in
+   * Finance cannot hold the copy that went to IT. Every entry is optional; a
+   * department left out simply starts unassigned.
+   *
+   * A name here is a starting point, not a claim on anyone's time: the
+   * receiving department can reassign it like any other ticket.
+   */
+  const assignedTo = new Map();
+  if (assignees && typeof assignees === 'object' && !Array.isArray(assignees)) {
+    const nameOf = new Map(targets.map((target) => [String(target._id), target.name]));
+
+    for (const [departmentId, userId] of Object.entries(assignees)) {
+      if (!userId) continue;
+
+      const key = String(departmentId);
+      if (!nameOf.has(key)) {
+        throw ApiError.badRequest('You can only name someone in a department you are asking.');
+      }
+      if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+
+      // eslint-disable-next-line no-await-in-loop
+      const candidate = await User.findById(userId);
+      const belongs =
+        candidate &&
+        candidate.status !== 'suspended' &&
+        (MANAGER_ROLES.includes(candidate.role) || candidate.roleInDepartment(key));
+
+      if (!belongs) throw ApiError.badRequest(`That person is not in ${nameOf.get(key)}.`);
+      assignedTo.set(key, candidate._id);
+    }
+  }
+
+  // A ticket addressed at nobody is a ticket nobody has agreed to look at, so
+  // every department being asked has to be handed to a person by name. The
+  // department can pass it on afterwards; it cannot start ownerless.
+  const unstaffed = targets.find((target) => !assignedTo.has(String(target._id)));
+  if (unstaffed) {
+    throw ApiError.badRequest(`Choose who should handle it in ${unstaffed.name}.`);
+  }
+
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
   const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
@@ -112,7 +158,13 @@ export async function createTicket(req, res) {
     // Sequential rather than Promise.all: the ticket number comes from a
     // shared counter, and this keeps the numbering in a predictable order.
     // eslint-disable-next-line no-await-in-loop
-    created.push(await Ticket.create({ ...shared, department: target._id }));
+    created.push(
+      await Ticket.create({
+        ...shared,
+        department: target._id,
+        assignee: assignedTo.get(String(target._id)) ?? null,
+      }),
+    );
   }
 
   const populated = await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
@@ -131,8 +183,18 @@ export async function createTicket(req, res) {
       actor: req.user,
       department: ticket.department,
       action: 'ticket.created',
-      summary: `raised ${ticket.number} "${ticket.subject}"`,
+      summary: ticket.assignee
+        ? `raised ${ticket.number} "${ticket.subject}" for ${ticket.assignee.name}`
+        : `raised ${ticket.number} "${ticket.subject}"`,
       ticketNumber: ticket.number,
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await recordAssignment({
+      ticket,
+      from: null,
+      to: ticket.assignee,
+      actor: req.user,
+      kind: 'raised',
     });
     // eslint-disable-next-line no-await-in-loop
     await notifyNewTicket({ ticket, actor: req.user });
@@ -228,6 +290,39 @@ export async function getTicket(req, res) {
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
   res.json({ success: true, ticket: present(ticket) });
+}
+
+/**
+ * The assignment trail for one ticket, oldest first.
+ *
+ * Reading it is exactly the right to read the ticket, so there is no second
+ * rule to keep in step - and nothing in it is anything the reader could not
+ * already see on the ticket itself.
+ */
+export async function listAssignments(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  const ticket = await Ticket.findOne({
+    _id: req.params.id,
+    ...visibilityFilter(req.user),
+  }).select('_id');
+
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  const trail = await TicketAssignment.find({ ticket: ticket._id }).sort({ createdAt: 1 });
+
+  res.json({
+    success: true,
+    assignments: trail.map((entry) => ({
+      id: String(entry._id),
+      from: entry.from ? { id: String(entry.from), name: entry.fromName } : null,
+      to: entry.to ? { id: String(entry.to), name: entry.toName } : null,
+      // What the mover was at the time, not what they are now.
+      by: { id: entry.by ? String(entry.by) : null, name: entry.byName, role: entry.byRole },
+      kind: entry.kind,
+      createdAt: entry.createdAt,
+    })),
+  });
 }
 
 /**
@@ -360,9 +455,29 @@ export async function updateTicket(req, res) {
     ticket.committedAt = parsed ? new Date() : null;
   }
 
+  /**
+   * Handing it on. Whoever works the ticket may pass it to anyone else in the
+   * department, and so may the person they pass it to - the right comes from
+   * working the ticket, not from being its current owner, so a head is not a
+   * bottleneck and a queue does not stall on one person's absence.
+   *
+   * Remembered here rather than read back afterwards, because the trail needs
+   * the name of the person it moved away from.
+   */
+  let handedFrom = null;
+  let handedTo = null;
+
   if (assignee !== undefined) {
+    const holder = ticket.assignee ? String(ticket.assignee) : null;
+
     if (assignee === null || assignee === '') {
-      ticket.assignee = null;
+      // Once a ticket sits with somebody it stays with somebody: it is handed
+      // on, never dropped. Tickets raised before that rule can stay empty.
+      if (holder) {
+        throw ApiError.badRequest(
+          'A ticket has to sit with someone. Hand it to another person instead.',
+        );
+      }
     } else {
       if (!mongoose.isValidObjectId(assignee)) throw ApiError.badRequest('Invalid assignee.');
 
@@ -373,11 +488,20 @@ export async function updateTicket(req, res) {
           candidate.roleInDepartment(ticket.department));
 
       if (!belongs) throw ApiError.badRequest('That person is not in this department.');
+
+      if (holder !== String(candidate._id)) {
+        handedFrom = holder ? await User.findById(holder).select('name') : null;
+        handedTo = candidate;
+      }
       ticket.assignee = candidate._id;
     }
   }
 
   await ticket.save();
+
+  if (handedTo) {
+    await recordAssignment({ ticket, from: handedFrom, to: handedTo, actor: req.user });
+  }
 
   const populated = await Ticket.findById(ticket._id)
     .populate('department', 'name code')

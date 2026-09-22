@@ -67,20 +67,20 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
         : session.email;
 
   return (
-    <div ref={root} className="relative shrink-0 border-t border-line p-3">
+    <div ref={root} className="relative shrink-0 border-t border-line p-2.5">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-haspopup="menu"
         aria-expanded={open}
         className={cn(
-          "flex w-full items-center gap-2.5 rounded-xl border p-2 text-left transition-colors",
+          "flex w-full items-center gap-2 rounded-lg border p-1.5 text-left transition-colors",
           open
             ? "border-brand-200 bg-brand-50/60"
             : "border-transparent hover:border-line hover:bg-ink-50",
         )}
       >
-        <Avatar initials={initials(name)} tone={avatarTone(session)} className="shrink-0" />
+        <Avatar initials={initials(name)} tone={avatarTone(session)} className="size-8 shrink-0" />
 
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] leading-tight font-bold text-ink-900">
@@ -100,7 +100,7 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
       {open && (
         <div
           role="menu"
-          className="absolute bottom-full left-3 z-50 mb-2 w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-card border border-line bg-surface shadow-xl shadow-ink-900/10"
+          className="absolute bottom-full left-2.5 z-50 mb-2 w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-card border border-line bg-surface shadow-xl shadow-ink-900/10"
         >
           <div className="border-b border-line px-3 py-2.5">
             <p className="truncate text-sm font-bold text-ink-900">{name}</p>
