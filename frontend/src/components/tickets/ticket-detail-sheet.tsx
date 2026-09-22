@@ -5,7 +5,6 @@ import {
   CalendarCheck,
   CheckCircle2,
   History,
-  Lock,
   MessagesSquare,
   PencilLine,
   X,
@@ -295,27 +294,27 @@ function Tabs({
 }
 
 /**
- * One labelled fact.
+ * A few related facts under one heading.
  *
- * Two of these sit on a line, which is what lets the whole ticket be read
- * without scrolling: a label-left/value-right list spends half the width on
- * air. The hairlines come from the grid's own gap over a tinted parent, so
- * the facts read as a table without a border on every cell.
+ * The pane used to be one undifferentiated grid of ten cells, which is a lot
+ * to read when the question in your head is usually just one of "who has it",
+ * "where is it going" or "when is it due".
  */
-function Cell({
-  label,
-  wide,
-  children,
-}: {
-  label: string;
-  /** For a value that needs the full width, and to keep the rows even. */
-  wide?: boolean;
-  children: React.ReactNode;
-}) {
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className={cn("min-w-0 bg-surface px-2 py-1.5", wide && "col-span-2")}>
-      <dt className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">{label}</dt>
-      <dd className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px] font-semibold break-words text-ink-900">
+    <section className="mt-2.5">
+      <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">{title}</p>
+      <dl className="mt-1 divide-y divide-line rounded-md border border-line">{children}</dl>
+    </section>
+  );
+}
+
+/** One fact: its name on the left, its value on the right. */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 px-2 py-1.5">
+      <dt className="shrink-0 text-[11px] text-ink-500">{label}</dt>
+      <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 text-right text-[12px] font-semibold break-words text-ink-900">
         {children}
       </dd>
     </div>
@@ -592,28 +591,30 @@ function SheetBody({
 
   return (
     <>
-      {/* Number, state and priority on one line: the three things that decide
-          whether the rest is worth reading. */}
-      <div className="flex items-start gap-2 border-b border-line px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[12px] font-bold text-brand-600">#{ticket.number}</span>
-            <StatusBadge status={ticket.status} />
-            <PriorityBadge priority={ticket.priority} />
-            <OriginTag role={ticket.raisedByRole} />
-          </p>
-          <h2 className="mt-0.5 text-[13px] leading-snug font-bold break-words text-ink-900">
+      {/* What it is, then what it is called. The old order put four coloured
+          chips above the subject, which made the one line that says what the
+          ticket is about the hardest thing on the page to find. */}
+      <div className="border-b border-line px-3 py-2">
+        <div className="flex items-start gap-2">
+          <h2 className="min-w-0 flex-1 text-[14px] leading-snug font-bold break-words text-ink-900">
             {ticket.subject}
           </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-6 shrink-0 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            aria-label="Close details"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="grid size-6 shrink-0 place-items-center rounded text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-          aria-label="Close details"
-        >
-          <X className="size-4" />
-        </button>
+
+        <p className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-ink-400">#{ticket.number}</span>
+          <span className="h-3 w-px bg-line-strong" />
+          <StatusBadge status={ticket.status} />
+          <PriorityBadge priority={ticket.priority} />
+        </p>
       </div>
 
       <Tabs tab={tab} onTab={onTab} count={chatCount ?? ticket.messageCount} unread={unread} />
@@ -643,63 +644,79 @@ function SheetBody({
           </p>
         </div>
 
-        {/* Two facts to a line. The cell count is kept even so the last row
-            never leaves a bare strip of the tinted backing showing. */}
-        <dl
-          className={cn(
-            "mt-2 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line",
-            editing && "hidden",
+        {/* Grouped rather than gridded: "where it goes", "who", "when" are the
+            three questions actually being asked of this pane, and a label beside
+            its value reads faster than a label above it. */}
+        <div className={cn(editing && "hidden")}>
+          <Group title="Where it goes">
+            <Fact label="From">
+              {ticket.fromDepartments.length > 0 ? (
+                <Chips items={ticket.fromDepartments} />
+              ) : (
+                <Blank>Raised directly</Blank>
+              )}
+            </Fact>
+            <Fact label="To">
+              <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
+                {ticket.department.name}
+              </span>
+            </Fact>
+          </Group>
+
+          <Group title="Who">
+            <Fact label="Raised by">
+              {ticket.raisedBy.name}
+              <OriginTag role={ticket.raisedByRole} />
+            </Fact>
+            <Fact label="Assignee">
+              {ticket.assignee?.name ?? <Blank>Nobody yet</Blank>}
+            </Fact>
+          </Group>
+
+          <Group title="Dates">
+            <Fact label="Raised on">
+              {formatDateOf(ticket.createdAt)}
+              <span className="font-normal text-ink-400">{formatTime(ticket.createdAt)}</span>
+            </Fact>
+            <Fact label="They asked for">
+              {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : <Blank>Not set</Blank>}
+            </Fact>
+            <Fact label="Promised for">
+              {ticket.committedDeadline ? (
+                <>
+                  <DeadlineVerdict
+                    requested={ticket.deadline}
+                    committed={ticket.committedDeadline}
+                  />
+                  {ticket.committedBy?.name && (
+                    <span className="w-full text-[10px] font-normal text-ink-400">
+                      by {ticket.committedBy.name}
+                      {ticket.committedAt ? ` · ${formatDateOf(ticket.committedAt)}` : ""}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <Blank>Nothing promised yet</Blank>
+              )}
+            </Fact>
+            <Fact label="Last updated">
+              {formatDateOf(ticket.updatedAt)}
+              <span className="font-normal text-ink-400">{formatTime(ticket.updatedAt)}</span>
+            </Fact>
+          </Group>
+
+          {/* Only when there is something in it: two empty rows are worse than
+              no section at all. */}
+          {(ticket.requestType || ticket.project) && (
+            <Group title="More">
+              {ticket.requestType && <Fact label="Request type">{ticket.requestType}</Fact>}
+              {ticket.project && <Fact label="Project">{ticket.project}</Fact>}
+            </Group>
           )}
-        >
-          <Cell label="From">
-            <Chips items={ticket.fromDepartments} />
-          </Cell>
-          <Cell label="To">
-            <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
-              {ticket.department.name}
-            </span>
-          </Cell>
-          <Cell label="Raised by">
-            {ticket.raisedBy.name}
-            <OriginTag role={ticket.raisedByRole} />
-          </Cell>
-          <Cell label="Assignee">
-            {ticket.assignee?.name ?? <Blank>Nobody yet</Blank>}
-          </Cell>
-          <Cell label="Deadline requested">
-            {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : <Blank>Not set</Blank>}
-          </Cell>
-          <Cell label="Committed to finish">
-            {ticket.committedDeadline ? (
-              <>
-                <DeadlineVerdict requested={ticket.deadline} committed={ticket.committedDeadline} />
-                {ticket.committedBy?.name && (
-                  <span className="w-full text-[10px] font-normal text-ink-400">
-                    by {ticket.committedBy.name}
-                    {ticket.committedAt ? ` · ${formatDateOf(ticket.committedAt)}` : ""}
-                  </span>
-                )}
-              </>
-            ) : (
-              <Blank>Nothing promised yet</Blank>
-            )}
-          </Cell>
-          <Cell label="Created">
-            {formatDateOf(ticket.createdAt)}
-            <span className="font-normal text-ink-400">{formatTime(ticket.createdAt)}</span>
-          </Cell>
-          <Cell label="Last updated">
-            {formatDateOf(ticket.updatedAt)}
-            <span className="font-normal text-ink-400">{formatTime(ticket.updatedAt)}</span>
-          </Cell>
-          {ticket.requestType && <Cell label="Request type">{ticket.requestType}</Cell>}
-          <Cell label="Project" wide={!ticket.requestType}>
-            {ticket.project || <Blank />}
-          </Cell>
-        </dl>
+        </div>
 
         {canWork && !editing && (
-          <div className="mt-2.5 border-t border-line pt-2.5">
+          <div className="mt-3 border-t border-line pt-2.5">
             <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
               Work this ticket
             </p>
@@ -734,20 +751,19 @@ function SheetBody({
                 </Select>
               </div>
 
-              {/* The ask is shown, locked: a department answers it, it does not
-                  edit it. */}
-              <div className="min-w-0">
-                <MiniLabel>
-                  Requested
-                  <Lock className="size-2.5" />
+              {/* The requested date used to be repeated here as a locked box.
+                  It is already two rows up under Dates; what this pane needs is
+                  the date you are promising, and what it is being judged
+                  against. */}
+              <div className="col-span-2 min-w-0">
+                <MiniLabel htmlFor="sheet-committed">
+                  I can resolve by
+                  {ticket.deadline && (
+                    <span className="font-medium normal-case">
+                      · they asked for {formatDate(ticket.deadline.slice(0, 10))}
+                    </span>
+                  )}
                 </MiniLabel>
-                <div className="flex h-7 items-center rounded-md border border-line bg-ink-50 px-2 text-[12px] font-medium text-ink-500">
-                  {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : "None given"}
-                </div>
-              </div>
-
-              <div className="min-w-0">
-                <MiniLabel htmlFor="sheet-committed">I can resolve by</MiniLabel>
                 <DateField
                   id="sheet-committed"
                   value={committed}
@@ -758,18 +774,18 @@ function SheetBody({
               </div>
             </div>
 
-            <p className="mt-1.5 text-[11px] leading-snug text-ink-400">
-              {ticket.raisedBy.name} set the requested date; commit to your own instead. Anyone in{" "}
-              {departmentName} can take this on — every handover is listed under History.
-            </p>
-
-            {committed && (
+            {committed ? (
               <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-ink-50 px-2 py-1.5 text-[11px] leading-snug text-ink-500">
                 <CalendarCheck className="mt-px size-3.5 shrink-0 text-ink-400" />
                 <span>
                   {ticket.raisedBy.name} sees this as your commitment.{" "}
                   <DeadlineVerdict requested={ticket.deadline} committed={committed} inline />
                 </span>
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] leading-snug text-ink-400">
+                Anyone in {departmentName} can take this on; every handover is listed under
+                History.
               </p>
             )}
           </div>
