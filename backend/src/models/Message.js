@@ -37,6 +37,28 @@ const messageSchema = new mongoose.Schema(
       enum: SYSTEM_ROLES,
       default: 'user',
     },
+    /**
+     * A line somebody wrote, or one the ticket wrote about itself.
+     *
+     * System lines are what happened rather than what was said: raised,
+     * retitled, handed over. Nobody may edit, withdraw or reply to one, and
+     * they are not counted as messages waiting to be read.
+     */
+    kind: {
+      type: String,
+      enum: ['text', 'system'],
+      default: 'text',
+    },
+    /**
+     * Which kind of thing happened, for a system line. The history tab shows
+     * handovers from the assignment trail instead, so it needs to be able to
+     * tell those apart from the rest.
+     */
+    event: {
+      type: String,
+      enum: ['raised', 'edited', 'assignment', null],
+      default: null,
+    },
     /** Which end of the ticket this was written from. */
     side: {
       type: String,

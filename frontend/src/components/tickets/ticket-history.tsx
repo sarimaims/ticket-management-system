@@ -5,7 +5,7 @@ import { AlertCircle, ArrowRight, History } from "lucide-react";
 
 import { OriginTag } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/api";
-import { listAssignments, type AssignmentRecord } from "@/lib/assignments";
+import { listHistory, type AssignmentRecord, type TicketEvent } from "@/lib/assignments";
 import type { TicketRecord } from "@/lib/tickets";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
 
@@ -20,23 +20,50 @@ const names = (people: { name?: string }[]) =>
  * it is a record rather than a notes field. Names are the people's at the time
  * of each handover, which is why a rename does not rewrite the past.
  */
+/**
+ * One moment in the ticket's life, whichever record it came from.
+ *
+ * A handover carries who it moved between, so it keeps its own shape; an edit
+ * carries the line describing it. Merged and sorted, they read as one story
+ * rather than two tabs.
+ */
+type Moment =
+  | ({ at: string; sort: number } & { type: "handover"; entry: AssignmentRecord })
+  | ({ at: string; sort: number } & { type: "event"; entry: TicketEvent });
+
 export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
-  const [trail, setTrail] = useState<AssignmentRecord[] | null>(null);
+  const [trail, setTrail] = useState<Moment[] | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
 
-    listAssignments(ticket.id, controller.signal)
-      .then(setTrail)
-      .catch((caught) => {
+    listHistory(ticket.id, controller.signal)
+      .then((data) => {
+        const moments: Moment[] = [
+          ...data.assignments.map((entry) => ({
+            type: "handover" as const,
+            entry,
+            at: entry.createdAt,
+            sort: Date.parse(entry.createdAt),
+          })),
+          ...data.events.map((entry) => ({
+            type: "event" as const,
+            entry,
+            at: entry.createdAt,
+            sort: Date.parse(entry.createdAt),
+          })),
+        ];
+        setTrail(moments.sort((a, b) => a.sort - b.sort));
+      })
+      .catch((caught: unknown) => {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         setTrail([]);
         setError(errorMessage(caught));
       });
 
     return () => controller.abort();
-  }, [ticket.id]);
+  }, [ticket.id, ticket.updatedAt]);
 
   return (
     <div className="flex-1 overflow-y-auto px-3 py-2.5">
@@ -80,18 +107,21 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
 
       {trail && trail.length > 0 && (
         <ol className="mt-4">
-          {trail.map((entry, index) => {
+          {trail.map((moment, index) => {
             const last = index === trail.length - 1;
+            const opening = moment.type === "handover" && moment.entry.kind === "raised";
+            const by =
+              moment.type === "handover" ? moment.entry.by : { ...moment.entry.by, id: null };
 
             return (
-              <li key={entry.id} className="flex gap-3">
+              <li key={`${moment.type}-${moment.entry.id}`} className="flex gap-3">
                 {/* The dot marks the moment; the line carries the eye to the
                     next one, and stops at the last. */}
                 <span className="flex flex-col items-center">
                   <span
                     className={cn(
                       "mt-1.5 size-2.5 shrink-0 rounded-full",
-                      entry.kind === "raised" ? "bg-brand-600" : "bg-ink-300",
+                      opening ? "bg-brand-600" : "bg-ink-300",
                     )}
                   />
                   {!last && <span className="w-px flex-1 bg-line" />}
@@ -99,27 +129,43 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
 
                 <div className={cn("min-w-0 flex-1", last ? "pb-1" : "pb-5")}>
                   <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-ink-900">
-                    {entry.kind === "raised" ? (
-                      <>
-                        <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
-                          Raised
-                        </span>
-                        {names(entry.to)}
-                      </>
+                    {moment.type === "handover" ? (
+                      opening ? (
+                        <>
+                          <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
+                            Raised
+                          </span>
+                          {names(moment.entry.to)}
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-ink-500">{names(moment.entry.from)}</span>
+                          <ArrowRight className="size-3.5 shrink-0 text-ink-300" />
+                          {names(moment.entry.to)}
+                        </>
+                      )
                     ) : (
                       <>
-                        <span className="text-ink-500">{names(entry.from)}</span>
-                        <ArrowRight className="size-3.5 shrink-0 text-ink-300" />
-                        {names(entry.to)}
+                        <span
+                          className={cn(
+                            "rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
+                            moment.entry.event === "raised"
+                              ? "bg-brand-50 text-brand-700"
+                              : "bg-status-waiting-bg text-status-waiting-fg",
+                          )}
+                        >
+                          {moment.entry.event === "raised" ? "Raised" : "Edited"}
+                        </span>
+                        <span className="font-medium text-ink-700">{moment.entry.body}</span>
                       </>
                     )}
                   </p>
 
                   <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
-                    by {entry.by.name}
-                    <OriginTag role={entry.by.role} />
+                    by {by.name}
+                    <OriginTag role={by.role} />
                     <span className="text-ink-400">
-                      · {formatDateOf(entry.createdAt)} {formatTime(entry.createdAt)}
+                      · {formatDateOf(moment.at)} {formatTime(moment.at)}
                     </span>
                   </p>
                 </div>

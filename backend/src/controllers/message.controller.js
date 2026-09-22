@@ -115,6 +115,9 @@ async function present(message, viewer, context = {}) {
   return {
     id: String(message._id),
     ticket: String(message.ticket),
+    /** 'text' for something somebody said, 'system' for something that happened. */
+    kind: message.kind ?? 'text',
+    event: message.event ?? null,
     author: { id: String(message.author), name: message.authorName },
     /** Who the author works for now - shown in the menu on their message. */
     authorDepartments: affiliation?.departments ?? [],
@@ -197,6 +200,12 @@ async function readableMessage(req, ticket) {
  * under their name would make the thread untrustworthy. Admins read
  * everything; they do not speak for anyone.
  */
+function assertNotSystem(message) {
+  if (message.kind === 'system') {
+    throw ApiError.badRequest('That line is part of the ticket\'s record, not a message.');
+  }
+}
+
 function assertAuthor(message, user) {
   if (String(message.author) !== String(user._id)) {
     throw ApiError.forbidden('You can only change your own messages.');
@@ -431,6 +440,7 @@ export async function updateMessage(req, res) {
   const ticket = await readableTicket(req);
   const message = await readableMessage(req, ticket);
 
+  assertNotSystem(message);
   assertAuthor(message, req.user);
   if (message.deletedAt) throw ApiError.badRequest('That message was deleted.');
 
@@ -462,6 +472,7 @@ export async function deleteMessage(req, res) {
   const ticket = await readableTicket(req);
   const message = await readableMessage(req, ticket);
 
+  assertNotSystem(message);
   assertAuthor(message, req.user);
 
   if (!message.deletedAt) {

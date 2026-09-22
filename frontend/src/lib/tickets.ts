@@ -53,9 +53,12 @@ export function createTicket(input: {
   );
 }
 
+/** Which slice of the workspace a list is asking for. */
+export type TicketScope = "mine" | "assigned" | "all";
+
 /** `mine` = raised by me, `assigned` = my departments' queue, omitted = both. */
 export function listTickets(
-  filters: { scope?: "mine" | "assigned"; status?: string; priority?: string } = {},
+  filters: { scope?: TicketScope; status?: string; priority?: string } = {},
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
@@ -74,11 +77,7 @@ export function listTickets(
  * carried; when the queue has not moved the reply is 304 and `changed` is
  * false, which costs one small request and no re-render.
  */
-export function revalidateTickets(
-  scope: "mine" | "assigned",
-  etag: string | null,
-  signal?: AbortSignal,
-) {
+export function revalidateTickets(scope: TicketScope, etag: string | null, signal?: AbortSignal) {
   return apiRevalidate<{ tickets: TicketRecord[] }>(`/tickets?scope=${scope}`, etag, signal);
 }
 
@@ -87,6 +86,30 @@ export function revalidateTickets(
  * the date it commits to - and the person who raised it edits the request
  * itself. The server enforces which fields belong to whom.
  */
+/**
+ * Removes tickets and everything that only existed because of them - the
+ * conversation, the assignment trail, the bell entries. Managers only, which
+ * the API enforces.
+ */
+export function deleteTickets(ids: string[]) {
+  return api<{ deleted: number; numbers: string[] }>("/tickets", {
+    method: "DELETE",
+    body: { ids },
+  });
+}
+
+/**
+ * Hands a batch of tickets to the same people. They must all sit with one
+ * department, because an assignee belongs to one - the API refuses a mixed
+ * batch rather than half-applying it.
+ */
+export function reassignTickets(ids: string[], assignees: string[]) {
+  return api<{ reassigned: number; assignees: { id: string; name: string }[] }>("/tickets", {
+    method: "PATCH",
+    body: { ids, assignees },
+  });
+}
+
 export function updateTicket(
   id: string,
   input: {

@@ -6,6 +6,7 @@ import {
   Building,
   FileText,
   History,
+  Layers,
   LayoutDashboard,
   Plus,
   Settings,
@@ -20,7 +21,7 @@ import {
 import { Logo } from "@/components/layout/logo";
 import { SidebarProfile } from "@/components/layout/sidebar-profile";
 import { useAuth } from "@/components/auth/auth-provider";
-import { isAdmin } from "@/lib/auth";
+import { canSeeAllTickets, isAdmin } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -30,6 +31,11 @@ type NavItem = {
   accent?: boolean;
   /** The top of the org chart is an admin's concern, so it is hidden here. */
   adminOnly?: boolean;
+  /**
+   * Offered to whoever oversees rather than takes part: an admin across the
+   * workspace, a head across their own departments.
+   */
+  overseersOnly?: boolean;
 };
 
 const NAV: NavItem[] = [
@@ -39,6 +45,7 @@ const NAV: NavItem[] = [
   { href: "/departments", label: "Departments", icon: Users },
   { href: "/assigned-to-me", label: "Assigned to Me", icon: UserRound },
   { href: "/my-requests", label: "My Requests", icon: FileText },
+  { href: "/all-tickets", label: "All Tickets", icon: Layers, overseersOnly: true },
   { href: "/activity", label: "Activity", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -46,7 +53,7 @@ const NAV: NavItem[] = [
 /** Only rendered for the super admin role. */
 const ADMIN_NAV: NavItem[] = [
   { href: "/admin/users", label: "Users", icon: UserCog },
-  { href: "/admin/staff", label: "Staff", icon: UsersRound },
+  { href: "/admin/staff", label: "Admin Access", icon: UsersRound },
 ];
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -118,13 +125,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
 
         <nav className="flex-1 space-y-px overflow-y-auto px-2 py-2">
-          {NAV.filter((item) => !item.adminOnly || isAdmin(session)).map(renderItem)}
+          {NAV.filter(
+            (item) =>
+              (!item.adminOnly || isAdmin(session)) &&
+              (!item.overseersOnly || canSeeAllTickets(session)),
+          ).map(renderItem)}
 
           {isAdmin(session) && (
             <>
-              <p className="px-2 pt-2.5 pb-1 text-[10px] font-bold tracking-wider text-ink-400 uppercase">
-                Administration
-              </p>
+              <span aria-hidden className="my-2 block border-t border-line" />
               {ADMIN_NAV.map(renderItem)}
             </>
           )}

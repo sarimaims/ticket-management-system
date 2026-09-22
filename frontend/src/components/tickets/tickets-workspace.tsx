@@ -16,6 +16,7 @@ import {
   AlertCircle,
   ArrowRight,
   Building,
+  Trash2,
   Inbox,
   MessagesSquare,
   Plus,
@@ -25,7 +26,9 @@ import {
   UserCheck,
 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Modal } from "@/components/ui/modal";
 import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
@@ -36,11 +39,18 @@ import {
 } from "@/components/tickets/ticket-detail-sheet";
 import { StatusPicker } from "@/components/tickets/status-picker";
 import { useNotifications } from "@/components/notifications/notification-provider";
+import { listDepartmentMembers, type MemberOption } from "@/lib/departments";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
-import { updateTicket, type TicketRecord } from "@/lib/tickets";
+import {
+  deleteTickets,
+  reassignTickets,
+  updateTicket,
+  type TicketRecord,
+  type TicketScope,
+} from "@/lib/tickets";
 import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -62,6 +72,12 @@ const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
 /** How often a live queue asks the API whether anything moved. */
 const REFRESH_MS = 7000;
+
+/**
+ * How long somebody has to take back a ticket they raised. The API holds the
+ * same number; this one only decides whether to offer the button.
+ */
+const DELETE_WINDOW_MS = 15 * 60 * 1000;
 
 /** How long a row arrived at from a notification keeps its outline. */
 const FLASH_MS = 4000;
@@ -85,7 +101,7 @@ function isToday(value: string | null) {
   return new Date(value).toDateString() === new Date().toDateString();
 }
 
-function statsFor(tickets: TicketRecord[], scope: "mine" | "assigned"): Stat[] {
+function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
   const count = (predicate: (ticket: TicketRecord) => boolean) => tickets.filter(predicate).length;
 
   return [
@@ -150,11 +166,17 @@ const TicketRow = memo(function TicketRow({
   selected,
   flashed,
   unreadMessages,
+  showPick,
+  canPick,
+  canDelete,
+  picked,
+  onPick,
   onOpen,
   onStatus,
+  onDelete,
 }: {
   ticket: TicketRecord;
-  scope: "mine" | "assigned";
+  scope: TicketScope;
   mine: boolean;
   /** My department's queue, but I am the one who asked for it. */
   byMe: boolean;
@@ -163,8 +185,17 @@ const TicketRow = memo(function TicketRow({
   flashed: boolean;
   /** How many messages on this ticket the reader has not opened yet. */
   unreadMessages: number;
+  /** Whether this reader may remove tickets at all. */
+  /** Whether the table is showing the tick column at all. */
+  showPick: boolean;
+  /** Whether this reader can do anything with this row in a batch. */
+  canPick: boolean;
+  canDelete: boolean;
+  picked: boolean;
+  onPick: (id: string, picked: boolean) => void;
   onOpen: (ticket: TicketRecord, tab?: SheetTab) => void;
   onStatus: (ticket: TicketRecord, next: TicketStatus) => void;
+  onDelete: (ticket: TicketRecord) => void;
 }) {
   const messages = unreadMessages > 0 ? unreadMessages : ticket.messageCount;
 
@@ -181,6 +212,23 @@ const TicketRow = memo(function TicketRow({
           "bg-status-waiting-bg ring-2 ring-status-waiting-fg ring-inset hover:bg-status-waiting-bg",
       )}
     >
+      {showPick && (
+        <TableCell className={cn(CELL, "w-8")}>
+          {/* A row nobody may act on keeps the column's width and offers
+              nothing, rather than a box that refuses when it is used. */}
+          {canPick && (
+            <input
+              type="checkbox"
+              checked={picked}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => onPick(ticket.id, event.target.checked)}
+              aria-label={`Select ${ticket.number}`}
+              className="size-4 cursor-pointer accent-brand-600"
+            />
+          )}
+        </TableCell>
+      )}
+
       <TableCell className={cn(CELL, "relative")}>
         {/* A bar on the row's edge rather than a word: it says the same thing
             in three pixels. */}
@@ -204,7 +252,7 @@ const TicketRow = memo(function TicketRow({
         )}
       </TableCell>
 
-      {scope === "assigned" && (
+      {scope !== "mine" && (
         <TableCell className={cn(CELL, "whitespace-normal")}>
           <span className="flex flex-wrap items-center gap-1">
             <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
@@ -247,7 +295,7 @@ const TicketRow = memo(function TicketRow({
       </TableCell>
 
       <TableCell className={CELL}>
-        {scope === "assigned" ? (
+        {scope !== "mine" ? (
           <div className="w-[104px]">
             <StatusPicker
               value={ticket.status}
@@ -316,6 +364,20 @@ const TicketRow = memo(function TicketRow({
           >
             <SlidersHorizontal className="size-4" />
           </button>
+
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(ticket);
+              }}
+              className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+              aria-label={`Delete ${ticket.number}`}
+            >
+              <Trash2 className="size-4" />
+            </button>
+          )}
         </span>
       </TableCell>
     </tr>
@@ -367,7 +429,7 @@ export function TicketsWorkspace({
   scope,
   live = false,
 }: {
-  scope: "mine" | "assigned";
+  scope: TicketScope;
   live?: boolean;
 }) {
   const { tickets, setTickets, loading, error, syncedAt, hold, refresh } = useLiveTickets({
@@ -391,6 +453,13 @@ export function TicketsWorkspace({
   // the chat icon on a row can go straight to the conversation.
   const [tab, setTab] = useState<SheetTab>("details");
   const [mineOnly, setMineOnly] = useState(false);
+  /** Ticked for deletion. Ids rather than rows, so a refresh cannot stale them. */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** What the confirm box is about: the ticked set, or one row's trash button. */
+  const [removing, setRemoving] = useState<TicketRecord[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  /** The batch the reassign box is about. */
+  const [handingOver, setHandingOver] = useState<TicketRecord[] | null>(null);
   const { session } = useAuth();
   const { items: feed } = useNotifications();
   const toast = useToast();
@@ -410,14 +479,42 @@ export function TicketsWorkspace({
   // A ticket can sit with several people; it is mine if I am one of them.
   const isMine = useCallback(
     (ticket: TicketRecord) =>
-      scope === "assigned" && ticket.assignees.some((person) => person.id === meId),
+      scope !== "mine" && ticket.assignees.some((person) => person.id === meId),
     [scope, meId],
   );
 
   const manager = isAdmin(session);
+
   const myDepartmentIds = useMemo(
     () => new Set((session?.departments ?? []).map((membership) => membership.id)),
     [session],
+  );
+
+  /**
+   * Who may hand a ticket on: the department it sits with, and any manager.
+   * The same right that lets somebody work one ticket lets them work twenty.
+   */
+  const canWorkTicket = useCallback(
+    (ticket: TicketRecord) => manager || myDepartmentIds.has(ticket.department.id),
+    [manager, myDepartmentIds],
+  );
+
+  /**
+   * Who may take a ticket away.
+   *
+   * A manager may, but only from the page built for overseeing - the everyday
+   * queues are for working tickets, not for clearing them out. Anyone else may
+   * take back what they raised themselves, and only while it is new enough
+   * that the department cannot have started on it. The API applies the same
+   * two rules, so a stale button is refused rather than obeyed.
+   */
+  const canDeleteTicket = useCallback(
+    (ticket: TicketRecord) => {
+      if (manager && scope === "all") return true;
+      if (ticket.raisedBy.id !== meId) return false;
+      return Date.now() - Date.parse(ticket.createdAt) <= DELETE_WINDOW_MS;
+    },
+    [manager, scope, meId],
   );
 
   /**
@@ -486,7 +583,34 @@ export function TicketsWorkspace({
     });
   }, [inScope, deferredQuery, statuses, priorities, departmentIds, mineOnly, isMine]);
 
-  const columns = scope === "mine" ? 8 : 9;
+  /** The tick column appears when something in view could be acted on at all. */
+  const selectable = useMemo(
+    () => rows.filter((ticket) => canWorkTicket(ticket) || canDeleteTicket(ticket)),
+    [rows, canWorkTicket, canDeleteTicket],
+  );
+  const showPicks = selectable.length > 0;
+
+  const chosen = useMemo(
+    () => rows.filter((ticket) => picked.has(ticket.id)),
+    [rows, picked],
+  );
+
+  /**
+   * An assignee belongs to one department, so handing a batch over only means
+   * something while the batch sits with one. A mixed selection says so rather
+   * than offering a list that would be wrong for half of it.
+   */
+  const chosenDepartment =
+    chosen.length > 0 && chosen.every((ticket) => ticket.department.id === chosen[0].department.id)
+      ? chosen[0].department
+      : null;
+
+  const canReassignPicked =
+    chosen.length > 0 && chosenDepartment !== null && chosen.every(canWorkTicket);
+
+  const canDeletePicked = chosen.length > 0 && chosen.every(canDeleteTicket);
+
+  const columns = (scope === "mine" ? 8 : 9) + (showPicks ? 1 : 0);
 
   /**
    * Arriving from a notification: find the ticket it named, clear whatever
@@ -567,6 +691,15 @@ export function TicketsWorkspace({
     [hold, setTickets, toast],
   );
 
+  const pickOne = useCallback((id: string, on: boolean) => {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
   const openTicket = useCallback((ticket: TicketRecord, next: SheetTab = "details") => {
     setViewing(ticket);
     setTab(next);
@@ -637,7 +770,36 @@ export function TicketsWorkspace({
             />
           </div>
 
-          {scope === "assigned" && (
+          {canReassignPicked && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0 px-2.5 text-[12px]"
+              onClick={() => setHandingOver(chosen)}
+            >
+              <UserCheck className="size-3.5" />
+              Reassign {chosen.length}
+            </Button>
+          )}
+
+          {canDeletePicked && (
+            <Button
+              size="sm"
+              className="h-7 shrink-0 px-2.5 text-[12px]"
+              onClick={() => setRemoving(chosen)}
+            >
+              <Trash2 className="size-3.5" />
+              Delete {chosen.length}
+            </Button>
+          )}
+
+          {chosen.length > 1 && !chosenDepartment && (
+            <span className="text-[11px] font-medium text-ink-400">
+              Pick one department to reassign
+            </span>
+          )}
+
+          {scope !== "mine" && (
             <button
               type="button"
               onClick={() => setMineOnly((current) => !current)}
@@ -692,13 +854,35 @@ export function TicketsWorkspace({
           <table className="w-full min-w-[820px] border-collapse">
             <thead className="sticky top-0 z-10 border-b border-line bg-ink-50 shadow-[0_1px_0_var(--color-line)]">
               <tr>
+                {showPicks && (
+                  <TableHead className="w-8 px-2 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Select every ticket that can be deleted"
+                      checked={
+                        selectable.length > 0 &&
+                        selectable.every((ticket) => picked.has(ticket.id))
+                      }
+                      onChange={(event) =>
+                        // Only what is on screen and can be acted on: a filter
+                        // is a decision about what you meant.
+                        setPicked(
+                          event.target.checked
+                            ? new Set(selectable.map((ticket) => ticket.id))
+                            : new Set(),
+                        )
+                      }
+                      className="size-4 cursor-pointer accent-brand-600"
+                    />
+                  </TableHead>
+                )}
                 <TableHead sortable className="px-2 py-2">
                   Ticket
                 </TableHead>
                 <TableHead sortable className="w-[24%] px-2 py-2">
                   Subject
                 </TableHead>
-                {scope === "assigned" && (
+                {scope !== "mine" && (
                   <TableHead sortable className="px-2 py-2">
                     Raised By
                   </TableHead>
@@ -733,7 +917,9 @@ export function TicketsWorkspace({
                         ? "Nothing assigned to you"
                         : scope === "mine"
                           ? "No requests yet"
-                          : "Nothing in your queue"}
+                          : scope === "all"
+                            ? "No tickets yet"
+                            : "Nothing in your queue"}
                     </p>
                     <p className="mt-0.5 text-sm text-ink-400">
                       {unitName && tickets.length > 0
@@ -742,7 +928,9 @@ export function TicketsWorkspace({
                           ? "Tickets picked up in your name show here."
                           : scope === "mine"
                             ? "Raise one and it lands in that department's queue."
-                            : "Tickets raised to your departments will appear here."}
+                            : scope === "all"
+                              ? "Every ticket you oversee will appear here."
+                              : "Tickets raised to your departments will appear here."}
                     </p>
                   </td>
                 </tr>
@@ -755,12 +943,18 @@ export function TicketsWorkspace({
                     ticket={ticket}
                     scope={scope}
                     mine={isMine(ticket)}
-                    byMe={scope === "assigned" && ticket.raisedBy.id === meId}
+                    byMe={scope !== "mine" && ticket.raisedBy.id === meId}
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
                     unreadMessages={unreadByTicket.get(ticket.id) ?? 0}
+                    showPick={showPicks}
+                    canPick={canWorkTicket(ticket) || canDeleteTicket(ticket)}
+                    canDelete={canDeleteTicket(ticket)}
+                    picked={picked.has(ticket.id)}
+                    onPick={pickOne}
                     onOpen={openTicket}
                     onStatus={applyStatus}
+                    onDelete={(one) => setRemoving([one])}
                   />
                 ))}
             </tbody>
@@ -780,6 +974,62 @@ export function TicketsWorkspace({
       {/* Both rights are read off the ticket, not off the page: someone in two
           departments who raises from one to the other may edit the request and
           work it, and sees the same sheet from either list. */}
+      <ReassignTicketsModal
+        tickets={handingOver}
+        department={chosenDepartment}
+        onClose={() => setHandingOver(null)}
+        onDone={(saved, names) => {
+          const ids = new Set(saved.map((ticket) => ticket.id));
+          setHandingOver(null);
+          setPicked(new Set());
+          // The rows themselves are refreshed by the next poll; this only
+          // stops the toolbar counting a batch that has already moved.
+          refresh();
+          toast.success(
+            saved.length === 1
+              ? `#${saved[0].number} reassigned`
+              : `${saved.length} tickets reassigned`,
+            `Now with ${names}`,
+          );
+          if (viewing && ids.has(viewing.id)) setViewing(null);
+        }}
+        onError={(message) => toast.error("Could not reassign", message)}
+      />
+
+      <DeleteTicketsModal
+        tickets={removing}
+        pending={deleting}
+        onClose={() => setRemoving(null)}
+        onConfirm={async () => {
+          if (!removing) return;
+          const ids = removing.map((ticket) => ticket.id);
+
+          setDeleting(true);
+          try {
+            const result = await deleteTickets(ids);
+            setTickets((current) => current.filter((item) => !ids.includes(item.id)));
+            setPicked((current) => {
+              const next = new Set(current);
+              for (const id of ids) next.delete(id);
+              return next;
+            });
+            // The sheet cannot stay open on a ticket that no longer exists.
+            if (viewing && ids.includes(viewing.id)) setViewing(null);
+            setRemoving(null);
+            toast.success(
+              result.deleted === 1
+                ? `#${result.numbers[0]} deleted`
+                : `${result.deleted} tickets deleted`,
+              result.numbers.join(", "),
+            );
+          } catch (caught) {
+            toast.error("Could not delete", errorMessage(caught));
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
+
       <TicketDetailSheet
         ticket={viewing}
         canWork={viewing ? manager || myDepartmentIds.has(viewing.department.id) : false}
@@ -793,5 +1043,192 @@ export function TicketsWorkspace({
         }}
       />
     </>
+  );
+}
+
+/**
+ * The last word before a ticket goes.
+ *
+ * It names what else goes with it, because a ticket is rarely just a ticket by
+ * the time somebody deletes one: the conversation on it and the record of who
+ * held it go too, and neither comes back.
+ */
+function DeleteTicketsModal({
+  tickets,
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  tickets: TicketRecord[] | null;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const many = (tickets?.length ?? 0) > 1;
+
+  return (
+    <Modal
+      open={tickets !== null && tickets.length > 0}
+      onClose={onClose}
+      title={many ? `Delete ${tickets?.length} tickets?` : "Delete this ticket?"}
+      description="The conversation and the assignment history go with it. This cannot be undone."
+      className="max-w-md"
+    >
+      {tickets && tickets.length > 0 && (
+        <>
+          <ul className="max-h-56 space-y-1 overflow-y-auto rounded-field bg-ink-50 px-3.5 py-3">
+            {tickets.map((ticket) => (
+              <li key={ticket.id} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 font-bold text-brand-600">#{ticket.number}</span>
+                <span className="min-w-0 flex-1 truncate text-ink-700">{ticket.subject}</span>
+                <span className="shrink-0 text-xs text-ink-400">{ticket.department.name}</span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="mt-3 text-xs text-ink-500">
+            The activity log keeps its record that {many ? "these were" : "this was"} raised and
+            deleted.
+          </p>
+
+          <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="button" size="sm" onClick={onConfirm} disabled={pending}>
+              {pending ? "Deleting…" : many ? `Delete ${tickets.length}` : "Delete"}
+            </Button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/**
+ * Hands a batch of tickets to the same people.
+ *
+ * The list of who is on offer comes from the one department the batch sits
+ * with - an assignee belongs to a department, so there is no sensible answer
+ * for a batch spanning two, and the toolbar does not offer the button then.
+ */
+function ReassignTicketsModal({
+  tickets,
+  department,
+  onClose,
+  onDone,
+  onError,
+}: {
+  tickets: TicketRecord[] | null;
+  department: TicketRecord["department"] | null;
+  onClose: () => void;
+  onDone: (tickets: TicketRecord[], names: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [team, setTeam] = useState<MemberOption[] | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [pending, setPending] = useState(false);
+
+  const departmentId = department?.id;
+  const open = tickets !== null && tickets.length > 0 && Boolean(departmentId);
+
+  useEffect(() => {
+    if (!open || !departmentId) return;
+
+    const controller = new AbortController();
+    listDepartmentMembers(departmentId, controller.signal)
+      .then(setTeam)
+      .catch(() => setTeam([]));
+
+    return () => controller.abort();
+  }, [open, departmentId]);
+
+  const close = () => {
+    setChosen([]);
+    setTeam(null);
+    onClose();
+  };
+
+  const confirm = async () => {
+    if (!tickets || chosen.length === 0) return;
+
+    setPending(true);
+    try {
+      const result = await reassignTickets(
+        tickets.map((ticket) => ticket.id),
+        chosen,
+      );
+      onDone(tickets, result.assignees.map((person) => person.name).join(", "));
+      setChosen([]);
+      setTeam(null);
+    } catch (caught) {
+      onError(errorMessage(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const many = (tickets?.length ?? 0) > 1;
+
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title={many ? `Reassign ${tickets?.length} tickets` : "Reassign this ticket"}
+      description={`Everyone named takes it on together. ${department?.name ?? "The department"} keeps it either way.`}
+      className="max-w-md"
+    >
+      {tickets && tickets.length > 0 && (
+        <>
+          <ul className="max-h-40 space-y-1 overflow-y-auto rounded-field bg-ink-50 px-3.5 py-3">
+            {tickets.map((ticket) => (
+              <li key={ticket.id} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 font-bold text-brand-600">#{ticket.number}</span>
+                <span className="min-w-0 flex-1 truncate text-ink-700">{ticket.subject}</span>
+                <span className="shrink-0 text-xs text-ink-400">
+                  {ticket.assignees.map((person) => person.name).join(", ") || "Nobody"}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-4">
+            <p className="mb-1.5 text-sm font-semibold text-ink-800">
+              Hand to
+              <span className="ml-1 font-normal text-ink-400">
+                ({department?.name ?? "this department"}, one or more)
+              </span>
+            </p>
+            <MultiSelect
+              options={(team ?? []).map((member) => ({
+                value: member.id,
+                label: `${member.name} (${member.departmentRole})`,
+              }))}
+              value={chosen}
+              onChange={setChosen}
+              placeholder={team === null ? "Loading..." : "Choose one or more people"}
+              emptyMessage="Nobody is in this department"
+            />
+            <p className="mt-1.5 text-xs text-ink-400">
+              Each handover is written to that ticket&apos;s own history.
+            </p>
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+            <Button type="button" variant="outline" size="sm" onClick={close} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={confirm}
+              disabled={pending || chosen.length === 0}
+            >
+              {pending ? "Reassigning…" : many ? `Reassign ${tickets.length}` : "Reassign"}
+            </Button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

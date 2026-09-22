@@ -76,6 +76,20 @@ export function isAdmin(session: Session | null) {
   return session?.role === "superadmin" || session?.role === "admin";
 }
 
+/** Runs at least one department, whatever their standing across the workspace. */
+export function isHead(session: Session | null) {
+  return (session?.departments ?? []).some((membership) => membership.role === "head");
+}
+
+/**
+ * Who gets the whole picture: a manager sees every ticket in the workspace, a
+ * head sees every ticket their departments have been asked to do. The server
+ * decides which of the two applies - this only decides whether to offer it.
+ */
+export function canSeeAllTickets(session: Session | null) {
+  return isAdmin(session) || isHead(session);
+}
+
 export const ROLE_LABEL: Record<Role, string> = {
   superadmin: "Super Admin",
   admin: "Admin",

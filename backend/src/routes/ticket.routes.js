@@ -4,9 +4,12 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
   createTicket,
+  deleteTicket,
+  deleteTickets,
   getTicket,
   listAssignments,
   listTickets,
+  reassignTickets,
   updateTicket,
 } from '../controllers/ticket.controller.js';
 import {
@@ -26,7 +29,17 @@ router.use(requireAuth);
 router.get('/', asyncHandler(listTickets));
 router.post('/', asyncHandler(createTicket));
 router.get('/:id', asyncHandler(getTicket));
+
+// A batch handed over in one go. Same right as working one ticket, applied to
+// each of them, and each gets its own line in its own trail.
+router.patch('/', asyncHandler(reassignTickets));
 router.patch('/:id', asyncHandler(updateTicket));
+
+// Deleting takes a ticket away from everyone who could see it, along with the
+// conversation on it. Who may do it is decided per ticket in the controller: a
+// manager at any time, and whoever raised it for a short while afterwards.
+router.delete('/', asyncHandler(deleteTickets));
+router.delete('/:id', asyncHandler(deleteTicket));
 
 // The conversation on one ticket. Reading it is the right to read the ticket.
 router.get('/:id/messages', asyncHandler(listMessages));

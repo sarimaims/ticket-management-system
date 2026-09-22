@@ -41,6 +41,10 @@ export type MessageQuote = {
 export type MessageRecord = {
   id: string;
   ticket: string;
+  /** 'text' for something somebody said, 'system' for something that happened. */
+  kind: "text" | "system";
+  /** Which kind of thing happened, on a system line. */
+  event: "raised" | "edited" | "assignment" | null;
   author: { id: string; name: string };
   /** Where the author sits today - named in the menu on their message. */
   authorDepartments: { id: string; name: string; role?: string }[];

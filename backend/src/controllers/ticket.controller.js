@@ -2,11 +2,14 @@ import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
 import Department from '../models/Department.js';
+import Message from '../models/Message.js';
+import Notification from '../models/Notification.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
 import TicketAssignment from '../models/TicketAssignment.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
+import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
 
@@ -235,6 +238,16 @@ export async function createTicket(req, res) {
       actor: req.user,
       kind: 'raised',
     });
+    // The thread opens with the same line a group chat opens with: who
+    // started it. Everything said afterwards has something to follow.
+    // eslint-disable-next-line no-await-in-loop
+    await postSystemMessage({
+      ticket,
+      actor: req.user,
+      event: 'raised',
+      side: 'raiser',
+      body: `raised this ticket to ${ticket.department.name}`,
+    });
     // eslint-disable-next-line no-await-in-loop
     await notifyNewTicket({ ticket, actor: req.user });
   }
@@ -261,11 +274,41 @@ async function fingerprint(filter) {
   return `W/"tk-${count}-${moved}"`;
 }
 
-/** `scope=mine` for what I raised, `scope=assigned` for my departments' queue. */
+/**
+ * `scope=mine` for what I raised, `scope=assigned` for my departments' queue,
+ * `scope=all` for the whole picture.
+ *
+ * The last one is a narrower audience rather than a wider filter: a manager
+ * oversees the workspace and a head runs a department, so those two get a view
+ * of everything in their reach. Everyone else is refused it outright rather
+ * than quietly handed their own tickets back.
+ */
 export async function listTickets(req, res) {
   const { scope, status, department, priority } = req.query;
 
-  const filter = { ...visibilityFilter(req.user) };
+  let filter;
+
+  if (scope === 'all') {
+    if (MANAGER_ROLES.includes(req.user.role)) {
+      // Nothing to narrow by: a manager already sees every department.
+      filter = {};
+    } else {
+      const runs = (req.user.memberships ?? [])
+        .filter((membership) => membership.role === 'head')
+        .map((membership) => membership.department);
+
+      if (runs.length === 0) {
+        throw ApiError.forbidden('Only an admin or a department head can see every ticket.');
+      }
+
+      // Built from scratch rather than layered onto the usual filter, whose
+      // "or anything I raised" would smuggle in tickets from departments this
+      // person does not run.
+      filter = { department: { $in: runs } };
+    }
+  } else {
+    filter = { ...visibilityFilter(req.user) };
+  }
 
   if (scope === 'mine') filter.raisedBy = req.user._id;
   if (scope === 'assigned' && !MANAGER_ROLES.includes(req.user.role)) {
@@ -348,7 +391,16 @@ export async function listAssignments(req, res) {
 
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
-  const trail = await TicketAssignment.find({ ticket: ticket._id }).sort({ createdAt: 1 });
+  const [trail, events] = await Promise.all([
+    TicketAssignment.find({ ticket: ticket._id }).sort({ createdAt: 1 }),
+    // Raising and handing over are already in the trail above, structurally
+    // and with the names on them, so the lines describing those are left out
+    // rather than told twice. What is left is what the trail cannot show: the
+    // request itself being changed.
+    Message.find({ ticket: ticket._id, kind: 'system', event: 'edited' })
+      .select('event body authorName authorRole createdAt')
+      .sort({ createdAt: 1 }),
+  ]);
 
   res.json({
     success: true,
@@ -368,6 +420,236 @@ export async function listAssignments(req, res) {
       kind: entry.kind,
       createdAt: entry.createdAt,
     })),
+    /** Everything else that happened to it: raised, retitled, re-dated. */
+    events: events.map((entry) => ({
+      id: String(entry._id),
+      event: entry.event,
+      body: entry.body,
+      by: { name: entry.authorName, role: entry.authorRole },
+      createdAt: entry.createdAt,
+    })),
+  });
+}
+
+/** As many as one request may remove at once. A mistake should stay small. */
+const MAX_DELETE = 200;
+
+/**
+ * How long somebody has to take back a ticket they raised.
+ *
+ * Long enough to undo a mistake - the wrong department, a duplicate, a subject
+ * typed into the wrong window - and short enough that a department cannot have
+ * built any work on it yet.
+ */
+export const DELETE_WINDOW_MS = 15 * 60 * 1000;
+
+/** Whether this person may delete this particular ticket, and why not. */
+export function deletableBy(user, ticket) {
+  if (MANAGER_ROLES.includes(user.role)) return { allowed: true };
+
+  const raiser = String(ticket.raisedBy?._id ?? ticket.raisedBy);
+  if (raiser !== String(user._id)) {
+    return { allowed: false, reason: `${ticket.number} is not yours to delete.` };
+  }
+
+  const age = Date.now() - new Date(ticket.createdAt).getTime();
+  if (age > DELETE_WINDOW_MS) {
+    return {
+      allowed: false,
+      reason: `${ticket.number} can only be taken back within ${
+        DELETE_WINDOW_MS / 60000
+      } minutes of raising it. Ask an admin to remove it.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Removes tickets, and everything that only existed because of them: the
+ * conversation, the assignment trail, and the bell entries pointing at them.
+ *
+ * The activity log is deliberately left alone and a line is added to it. It is
+ * the workspace's record of what happened, and a ticket having been raised and
+ * then deleted is part of what happened - erasing that would make the log lie
+ * about a busy week.
+ *
+ * Two people may do it: a manager, at any time, and whoever raised the ticket,
+ * for a short while after raising it.
+ */
+async function removeTickets(ids, actor) {
+  const valid = [...new Set(ids.filter((id) => mongoose.isValidObjectId(id)))];
+  if (valid.length === 0) throw ApiError.badRequest('No ticket was named.');
+  if (valid.length > MAX_DELETE) {
+    throw ApiError.badRequest(`Delete at most ${MAX_DELETE} tickets at a time.`);
+  }
+
+  const tickets = await Ticket.find({ _id: { $in: valid } })
+    .populate('department', 'name')
+    .select('number subject department raisedBy createdAt');
+
+  if (tickets.length === 0) throw ApiError.notFound('Ticket not found.');
+
+  // All or nothing: a batch that would half-succeed leaves the person guessing
+  // which half, so the first refusal stops the whole request.
+  for (const ticket of tickets) {
+    const verdict = deletableBy(actor, ticket);
+    if (!verdict.allowed) throw ApiError.forbidden(verdict.reason);
+  }
+
+  const found = tickets.map((ticket) => ticket._id);
+
+  await Message.deleteMany({ ticket: { $in: found } });
+  await TicketAssignment.deleteMany({ ticket: { $in: found } });
+  await Notification.deleteMany({ ticket: { $in: found } });
+  await Ticket.deleteMany({ _id: { $in: found } });
+
+  for (const ticket of tickets) {
+    // eslint-disable-next-line no-await-in-loop
+    await record({
+      actor,
+      department: ticket.department,
+      action: 'ticket.deleted',
+      summary: `deleted ${ticket.number} "${ticket.subject}"`,
+      ticketNumber: ticket.number,
+    });
+  }
+
+  return tickets;
+}
+
+/**
+ * Hands a batch of tickets to the same people at once.
+ *
+ * Every ticket in the batch has to sit with the same department: an assignee
+ * belongs to one, so "give these to Danish" only means something when all of
+ * them are Danish's department's to begin with. The caller must be able to
+ * work each of them, which is the same right that lets them reassign one.
+ *
+ * Each move is written to that ticket's own trail, so the history reads the
+ * same whether the ticket was handed over on its own or as one of twenty.
+ */
+export async function reassignTickets(req, res) {
+  const { ids, assignees } = req.body ?? {};
+
+  if (!Array.isArray(ids)) throw ApiError.badRequest('Send the tickets as a list.');
+  if (!Array.isArray(assignees) || assignees.length === 0) {
+    throw ApiError.badRequest('Choose at least one person to hand them to.');
+  }
+
+  const valid = [...new Set(ids.filter((id) => mongoose.isValidObjectId(id)))];
+  if (valid.length === 0) throw ApiError.badRequest('No ticket was named.');
+  if (valid.length > MAX_DELETE) {
+    throw ApiError.badRequest(`Reassign at most ${MAX_DELETE} tickets at a time.`);
+  }
+
+  const tickets = await Ticket.find({ _id: { $in: valid }, ...visibilityFilter(req.user) });
+  if (tickets.length === 0) throw ApiError.notFound('Ticket not found.');
+
+  // All or nothing, so a half-applied batch never leaves somebody guessing
+  // which half moved.
+  const departments = new Set(tickets.map((ticket) => String(ticket.department)));
+  if (departments.size > 1) {
+    throw ApiError.badRequest(
+      'These tickets sit with different departments. Reassign one department at a time.',
+    );
+  }
+
+  const [departmentId] = [...departments];
+
+  for (const ticket of tickets) {
+    if (!canWorkOn(req.user, ticket)) {
+      throw ApiError.forbidden(`Only the receiving department can work ${ticket.number}.`);
+    }
+  }
+
+  const wanted = [...new Set(assignees.filter(Boolean).map(String))];
+  const people = [];
+
+  for (const userId of wanted) {
+    if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+
+    // eslint-disable-next-line no-await-in-loop
+    const candidate = await User.findById(userId).select('name role memberships status');
+    const belongs =
+      candidate &&
+      candidate.status !== 'suspended' &&
+      (MANAGER_ROLES.includes(candidate.role) || candidate.roleInDepartment(departmentId));
+
+    if (!belongs) throw ApiError.badRequest('That person is not in this department.');
+    people.push(candidate);
+  }
+
+  const held = people.map((person) => person._id);
+  const summary = `assigned to ${people.map((person) => person.name).join(', ')}`;
+  let moved = 0;
+
+  for (const ticket of tickets) {
+    const before = (ticket.assignees ?? []).map(String).sort().join(',');
+    const after = held.map(String).sort().join(',');
+    if (before === after) continue;
+
+    // eslint-disable-next-line no-await-in-loop
+    const from = await User.find({ _id: { $in: ticket.assignees ?? [] } }).select('name');
+
+    ticket.assignees = held;
+    // eslint-disable-next-line no-await-in-loop
+    await ticket.save();
+    moved += 1;
+
+    // eslint-disable-next-line no-await-in-loop
+    await recordAssignment({ ticket, from, to: people, actor: req.user });
+    // eslint-disable-next-line no-await-in-loop
+    await postSystemMessage({
+      ticket,
+      actor: req.user,
+      event: 'assignment',
+      body: `handed this to ${people.map((person) => person.name).join(', ')}`,
+    });
+
+    // eslint-disable-next-line no-await-in-loop
+    const populated = await Ticket.findById(ticket._id)
+      .populate(WITH_DEPARTMENT)
+      .populate('raisedBy', 'name email')
+      .populate(WITH_FROM_DEPARTMENTS)
+      .populate('assignees', 'name email')
+      .populate('committedBy', 'name email');
+
+    // eslint-disable-next-line no-await-in-loop
+    await record({
+      actor: req.user,
+      department: populated.department,
+      action: 'ticket.updated',
+      summary: `updated ${populated.number}: ${summary}`,
+      ticketNumber: populated.number,
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await notifyTicketUpdated({ ticket: populated, actor: req.user, summary });
+  }
+
+  res.json({
+    success: true,
+    reassigned: moved,
+    assignees: people.map((person) => ({ id: String(person._id), name: person.name })),
+  });
+}
+
+/** One ticket, by id. */
+export async function deleteTicket(req, res) {
+  const [ticket] = await removeTickets([req.params.id], req.user);
+  res.json({ success: true, deleted: 1, numbers: [ticket.number] });
+}
+
+/** Several at once: `{ ids: [...] }`. */
+export async function deleteTickets(req, res) {
+  const { ids } = req.body ?? {};
+  if (!Array.isArray(ids)) throw ApiError.badRequest('Send the tickets to delete as a list.');
+
+  const removed = await removeTickets(ids, req.user);
+  res.json({
+    success: true,
+    deleted: removed.length,
+    numbers: removed.map((ticket) => ticket.number),
   });
 }
 
@@ -554,6 +836,12 @@ export async function updateTicket(req, res) {
 
   if (handedTo) {
     await recordAssignment({ ticket, from: handedFrom ?? [], to: handedTo, actor: req.user });
+    await postSystemMessage({
+      ticket,
+      actor: req.user,
+      event: 'assignment',
+      body: `handed this to ${handedTo.map((person) => person.name).join(', ')}`,
+    });
   }
 
   const populated = await Ticket.findById(ticket._id)
@@ -603,6 +891,26 @@ export async function updateTicket(req, res) {
 
   if (changes.length > 0) {
     const summary = changes.join(', ');
+
+    /*
+     * The thread carries what happened as well as what was said: somebody
+     * reading a question about a deadline should see that the deadline moved
+     * without opening another tab for it.
+     *
+     * A handover is left out here and posted beside its own trail entry
+     * below, so the history tab can show that one structurally rather than
+     * twice over.
+     */
+    const said = changes.filter((line) => !line.startsWith('assigned to') && line !== 'unassigned');
+    if (said.length > 0) {
+      await postSystemMessage({
+        ticket: populated,
+        actor: req.user,
+        event: 'edited',
+        side: isRaiser && !worksIt ? 'raiser' : 'department',
+        body: said.join(', '),
+      });
+    }
     await record({
       actor: req.user,
       department: populated.department,
