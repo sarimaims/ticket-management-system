@@ -76,37 +76,46 @@ export const destination = (item: NotificationRecord) => {
 
 type Meta = {
   icon: React.ComponentType<{ className?: string }>;
-  /** The circle behind the icon: tinted, not filled. */
+  /** The filled circle behind the icon. */
   badge: string;
+  /** The same colour as a bar down the edge of an unread row. */
+  rail: string;
   label: string;
 };
 
 /**
  * One look per kind of event, shared by the bell, the sheet and the toasts.
  *
- * The circles are washed rather than solid. Four saturated discs down a short
- * list read as four alerts of equal weight; a tint says the same thing and
- * leaves the headline as the loudest part of the row.
+ * Filled circles, not tints: the icon is the only thing in a row that can
+ * carry colour, and washed out it left a feed of four different events reading
+ * as one grey column. Each kind keeps the colour it already wears elsewhere in
+ * the app - a request in the brand red, work in progress indigo, an edit
+ * amber, and a message in the thread's own teal rather than the brand, so a
+ * page of chat does not read as a page of alerts.
  */
 export const TYPE_META: Record<NotificationType, Meta> = {
   "ticket.new": {
     icon: TicketPlus,
-    badge: "bg-brand-50 text-brand-600",
+    badge: "bg-brand-600 text-white",
+    rail: "bg-brand-600",
     label: "New request",
   },
   "ticket.updated": {
     icon: RefreshCw,
-    badge: "bg-status-progress-bg text-status-progress-fg",
+    badge: "bg-status-progress-fg text-white",
+    rail: "bg-status-progress-fg",
     label: "Update",
   },
   "ticket.edited": {
     icon: PencilLine,
-    badge: "bg-status-waiting-bg text-status-waiting-fg",
+    badge: "bg-status-waiting-fg text-white",
+    rail: "bg-status-waiting-fg",
     label: "Edited",
   },
   "ticket.message": {
     icon: MessageSquare,
-    badge: "bg-ink-100 text-ink-600",
+    badge: "bg-chat-accent text-white",
+    rail: "bg-chat-accent",
     label: "Message",
   },
 };
@@ -133,6 +142,13 @@ export function NotificationCard({
   const meta = TYPE_META[item.type] ?? TYPE_META["ticket.updated"];
   const Icon = meta.icon;
 
+  // The ticket number opens almost every headline. Pulled out, it can carry
+  // the brand and be found by eye; the rest of the line stays plain text.
+  const rest =
+    item.ticketNumber && item.title.startsWith(item.ticketNumber)
+      ? item.title.slice(item.ticketNumber.length)
+      : null;
+
   return (
     <Link
       href={destination(item) as "/"}
@@ -141,16 +157,19 @@ export function NotificationCard({
         onNavigate?.();
       }}
       className={cn(
-        "group flex gap-2.5 transition-colors",
+        "group relative flex gap-2.5 transition-colors",
         compact ? "px-3 py-2" : "px-3.5 py-2.5",
-        item.read ? "hover:bg-ink-50" : "bg-brand-50/30 hover:bg-brand-50/60",
+        item.read ? "hover:bg-ink-50" : "bg-brand-50/40 hover:bg-brand-50/70",
       )}
     >
+      {/* Unread wears a bar in its own colour: it survives scrolling past the
+          icon, and says what kind of event it was before the row is read. */}
+      {!item.read && (
+        <span aria-hidden className={cn("absolute inset-y-0 left-0 w-[3px]", meta.rail)} />
+      )}
+
       <span
-        className={cn(
-          "mt-0.5 grid size-7 shrink-0 place-items-center rounded-full",
-          meta.badge,
-        )}
+        className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-full", meta.badge)}
       >
         <Icon className="size-3.5" />
       </span>
@@ -163,27 +182,39 @@ export function NotificationCard({
               item.read ? "font-medium text-ink-700" : "font-bold text-ink-900",
             )}
           >
-            {item.title}
+            {rest === null ? (
+              item.title
+            ) : (
+              <>
+                <span className="font-bold text-brand-600">{item.ticketNumber}</span>
+                {rest}
+              </>
+            )}
           </span>
           <span className="shrink-0 text-[10px] whitespace-nowrap text-ink-400 tabular-nums">
             {compact ? timeAgo(item.createdAt) : shortTime(item.createdAt)}
           </span>
         </span>
 
-        <span className="mt-0.5 line-clamp-2 block text-[11.5px] leading-snug text-ink-500">
+        <span className="mt-0.5 line-clamp-2 block text-[11.5px] leading-snug text-ink-600">
           {item.body}
         </span>
 
         {/* The icon already says what kind of event this was, so the chip that
             repeated it in words is gone; what is left is who and where. */}
         {(item.departmentName || item.actorName) && (
-          <span className="mt-1 block truncate text-[10px] text-ink-400">
-            {[item.departmentName, item.actorName].filter(Boolean).join(" · ")}
+          <span className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-ink-400">
+            {item.departmentName && (
+              <span className="truncate rounded bg-ink-100 px-1.5 py-px font-semibold text-ink-600">
+                {item.departmentName}
+              </span>
+            )}
+            {item.actorName && <span className="truncate">{item.actorName}</span>}
           </span>
         )}
       </span>
 
-      {!item.read && <span className="mt-2 size-1.5 shrink-0 rounded-full bg-brand-600" />}
+      {!item.read && <span className={cn("mt-2 size-1.5 shrink-0 rounded-full", meta.rail)} />}
     </Link>
   );
 }
