@@ -30,9 +30,31 @@ export type TicketEvent = {
   createdAt: string;
 };
 
+/**
+ * One promise about when the ticket will be resolved, and why that date.
+ *
+ * `previousDate` is what it replaced, so a move reads as a move: the trail is
+ * a sequence, not a pile of dates with the last one winning.
+ */
+export type CommitmentRecord = {
+  id: string;
+  /** What was promised. Null when the promise was withdrawn. */
+  date: string | null;
+  /** What it replaced. Null on the first promise. */
+  previousDate: string | null;
+  kind: "promised" | "extended" | "pulled-in" | "withdrawn";
+  reason: string;
+  by: { name: string; role: Role };
+  createdAt: string;
+};
+
 /** Everything that has happened to this ticket, oldest first. */
 export function listHistory(ticketId: string, signal?: AbortSignal) {
-  return api<{ assignments: AssignmentRecord[]; events: TicketEvent[] }>(
+  return api<{
+    assignments: AssignmentRecord[];
+    events: TicketEvent[];
+    commitments: CommitmentRecord[];
+  }>(
     `/tickets/${ticketId}/assignments`,
     { signal },
   );

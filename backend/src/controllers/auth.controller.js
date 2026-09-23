@@ -1,4 +1,5 @@
 import ApiError from '../utils/ApiError.js';
+import { forgetUser } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { clearAuthCookie, setAuthCookie, signToken } from '../utils/token.js';
 import { isConfigured as storageReady } from '../services/storage.js';
@@ -120,6 +121,7 @@ export async function changePassword(req, res) {
   // The model hashes it on save; the plain value never reaches the database.
   user.password = newPassword;
   await user.save();
+  forgetUser(user._id);
 
   // A fresh cookie, so the browser that made the change keeps its full seven
   // days rather than expiring on the old clock.

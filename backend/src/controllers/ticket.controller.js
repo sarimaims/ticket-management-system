@@ -17,11 +17,13 @@ import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
 import TicketAssignment from '../models/TicketAssignment.js';
+import Unit from '../models/Unit.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
+import { listCommitments, recordCommitment } from '../services/commitment.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
 
 /**
@@ -39,6 +41,73 @@ const WITH_DEPARTMENT = {
 
 /** The same, for the departments a request was raised on behalf of. */
 const WITH_FROM_DEPARTMENTS = { ...WITH_DEPARTMENT, path: 'fromDepartments' };
+
+/**
+ * Fills in the departments, people and units a set of tickets points at.
+ *
+ * Mongoose runs one query per populated path, and each of those is a separate
+ * round trip to a database that is a third of a second away - so a list of
+ * tickets was spending two or three seconds fetching five short lists. This
+ * asks for all of them at once instead: one query for the departments, one for
+ * the people, one for the units, in parallel.
+ *
+ * The result is shaped exactly like a populated document, so `present` cannot
+ * tell the difference.
+ */
+async function hydrate(tickets) {
+  if (tickets.length === 0) return tickets;
+
+  const departmentIds = new Set();
+  const userIds = new Set();
+
+  for (const ticket of tickets) {
+    if (ticket.department) departmentIds.add(String(ticket.department));
+    for (const item of ticket.fromDepartments ?? []) departmentIds.add(String(item));
+    if (ticket.raisedBy) userIds.add(String(ticket.raisedBy));
+    for (const person of ticket.assignees ?? []) userIds.add(String(person));
+    if (ticket.committedBy) userIds.add(String(ticket.committedBy));
+  }
+
+  const [departments, users, units] = await Promise.all([
+    Department.find({ _id: { $in: [...departmentIds] } })
+      .select('name code unit')
+      .lean(),
+    User.find({ _id: { $in: [...userIds] } })
+      .select('name email')
+      .lean(),
+    // Every unit rather than the ones referenced: the collection holds a
+    // handful of rows, and asking for all of them saves waiting for the
+    // departments to come back first.
+    Unit.find({}).select('name code').lean(),
+  ]);
+
+  const unitById = new Map(units.map((unit) => [String(unit._id), unit]));
+  const departmentById = new Map(
+    departments.map((department) => [
+      String(department._id),
+      { ...department, unit: unitById.get(String(department.unit)) ?? department.unit },
+    ]),
+  );
+  const userById = new Map(users.map((user) => [String(user._id), user]));
+
+  const asDepartment = (value) => departmentById.get(String(value)) ?? value;
+  const asUser = (value) => userById.get(String(value)) ?? value;
+
+  return tickets.map((ticket) => ({
+    ...ticket,
+    department: ticket.department ? asDepartment(ticket.department) : ticket.department,
+    fromDepartments: (ticket.fromDepartments ?? []).map(asDepartment),
+    raisedBy: ticket.raisedBy ? asUser(ticket.raisedBy) : ticket.raisedBy,
+    assignees: (ticket.assignees ?? []).map(asUser),
+    committedBy: ticket.committedBy ? asUser(ticket.committedBy) : ticket.committedBy,
+  }));
+}
+
+/** The same, for a single ticket. */
+async function hydrateOne(ticket) {
+  const [filled] = await hydrate([ticket]);
+  return filled;
+}
 
 /** A populated unit, flattened to what the client reads. */
 function presentUnit(unit) {
@@ -68,6 +137,8 @@ function present(ticket) {
       ? { id: String(ticket.committedBy._id), name: ticket.committedBy.name }
       : null,
     committedAt: ticket.committedAt ?? null,
+    /** Why the current promise is the date it is. Empty when none was made. */
+    committedReason: ticket.committedReason ?? '',
     department: populated(department)
       ? {
           id: String(department._id),
@@ -475,29 +546,20 @@ export async function listTickets(req, res) {
     return;
   }
 
-  const tickets = await Ticket.find(filter)
-    .sort({ createdAt: -1 })
-    .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
-    .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+  const tickets = await Ticket.find(filter).sort({ createdAt: -1 }).lean();
 
-  res.json({ success: true, tickets: tickets.map(present) });
+  res.json({ success: true, tickets: (await hydrate(tickets)).map(present) });
 }
 
 export async function getTicket(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  const ticket = await Ticket.findOne({
+  const found = await Ticket.findOne({
     _id: req.params.id,
     ...visibilityFilter(req.user),
-  })
-    .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
-    .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+  }).lean();
+
+  const ticket = found ? await hydrateOne(found) : null;
 
   // Not found and not allowed answer the same, so the endpoint cannot be used
   // to discover which ticket ids exist.
@@ -523,7 +585,7 @@ export async function listAssignments(req, res) {
 
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
-  const [trail, events] = await Promise.all([
+  const [trail, events, commitments] = await Promise.all([
     TicketAssignment.find({ ticket: ticket._id }).sort({ createdAt: 1 }),
     // Raising and handing over are already in the trail above, structurally
     // and with the names on them, so the lines describing those are left out
@@ -532,6 +594,10 @@ export async function listAssignments(req, res) {
     Message.find({ ticket: ticket._id, kind: 'system', event: 'edited' })
       .select('event body authorName authorRole createdAt')
       .sort({ createdAt: 1 }),
+    // Every promise about when this will be done, and why each date was
+    // given. Its own trail, so a date that moved three times reads as three
+    // moves rather than one number that happens to be current.
+    listCommitments(ticket._id),
   ]);
 
   res.json({
@@ -550,6 +616,15 @@ export async function listAssignments(req, res) {
       // What the mover was at the time, not what they are now.
       by: { id: entry.by ? String(entry.by) : null, name: entry.byName, role: entry.byRole },
       kind: entry.kind,
+      createdAt: entry.createdAt,
+    })),
+    commitments: commitments.map((entry) => ({
+      id: String(entry._id),
+      date: entry.date,
+      previousDate: entry.previousDate,
+      kind: entry.kind,
+      reason: entry.reason,
+      by: { name: entry.byName, role: entry.byRole },
       createdAt: entry.createdAt,
     })),
     /** Everything else that happened to it: raised, retitled, re-dated. */
@@ -814,6 +889,7 @@ export async function updateTicket(req, res) {
     status,
     deadline,
     committedDeadline,
+    committedReason,
     assignees,
     priority,
     subject,
@@ -854,6 +930,9 @@ export async function updateTicket(req, res) {
     committedDeadline: asDay(ticket.committedDeadline),
     assignees: (ticket.assignees ?? []).map(String).sort().join(','),
   };
+
+  /** Set when the promise actually moved, so the thread can say so. */
+  let movedCommitment = null;
 
   if (status !== undefined) {
     if (!TICKET_STATUSES.includes(status)) {
@@ -910,9 +989,38 @@ export async function updateTicket(req, res) {
       throw ApiError.badRequest('Invalid committed deadline.');
     }
 
-    ticket.committedDeadline = parsed;
-    ticket.committedBy = parsed ? req.user._id : null;
-    ticket.committedAt = parsed ? new Date() : null;
+    // Only a real move counts. The sheet sends this field on every save, so
+    // resending the date already promised must not demand a fresh reason.
+    const moved = asDay(parsed) !== asDay(ticket.committedDeadline);
+
+    if (moved) {
+      const why = typeof committedReason === 'string' ? committedReason.trim() : '';
+      if (!why) {
+        throw ApiError.badRequest(
+          ticket.committedDeadline
+            ? 'Say why the date is moving. The person waiting is told, so it has to be worth reading.'
+            : 'Say why you can resolve it by that date.',
+        );
+      }
+      if (why.length < 3) throw ApiError.badRequest('That reason is too short to tell anyone anything.');
+      if (why.length > 400) throw ApiError.badRequest('Keep the reason under 400 characters.');
+
+      // The trail is written first and deliberately not swallowed: a promise
+      // that cannot be explained is not recorded at all.
+      await recordCommitment({
+        ticket,
+        previous: ticket.committedDeadline ?? null,
+        next: parsed,
+        reason: why,
+        actor: req.user,
+      });
+
+      ticket.committedReason = parsed ? why : '';
+      ticket.committedDeadline = parsed;
+      ticket.committedBy = parsed ? req.user._id : null;
+      ticket.committedAt = parsed ? new Date() : null;
+      movedCommitment = { previous: before.committedDeadline, next: asDay(parsed), reason: why };
+    }
   }
 
   /**
@@ -1008,8 +1116,13 @@ export async function updateTicket(req, res) {
   }
   const nowCommitted = asDay(populated.committedDeadline);
   if (before.committedDeadline !== nowCommitted) {
+    const why = movedCommitment?.reason ? ` - ${movedCommitment.reason}` : '';
     changes.push(
-      nowCommitted ? `committed to finish by ${nowCommitted}` : 'withdrew the committed date',
+      nowCommitted
+        ? before.committedDeadline
+          ? `moved the promised date from ${before.committedDeadline} to ${nowCommitted}${why}`
+          : `promised to finish by ${nowCommitted}${why}`
+        : `withdrew the promised date${why}`,
     );
   }
   const nowAssignees = (populated.assignees ?? []).map((person) => String(person._id)).sort();

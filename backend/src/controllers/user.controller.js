@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { forgetUser } from '../middleware/auth.js';
 import Department from '../models/Department.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES, USER_STATUSES } from '../models/User.js';
 import { presentUser, WITH_DEPARTMENTS } from './auth.controller.js';
@@ -113,6 +114,10 @@ export async function createUser(req, res) {
 
   // Populated, so the new row arrives with department and unit names on it
   // rather than bare ids the directory cannot label.
+  // The session cache holds this account for a few seconds; a change to it
+  // must not wait that long to take effect.
+  forgetUser(user._id);
+
   const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
   res.status(201).json({ success: true, user: presentUser(populated) });
 }
@@ -191,6 +196,10 @@ export async function updateUser(req, res) {
 
   await user.save({ validateBeforeSave: true });
 
+  // The session cache holds this account for a few seconds; a change to it
+  // must not wait that long to take effect.
+  forgetUser(user._id);
+
   const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
   res.json({ success: true, user: presentUser(populated) });
 }
@@ -211,5 +220,6 @@ export async function deleteUser(req, res) {
   }
 
   await user.deleteOne();
+  forgetUser(user._id);
   res.json({ success: true });
 }

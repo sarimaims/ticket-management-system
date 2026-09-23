@@ -1,11 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, ArrowRight, History } from "lucide-react";
+import { AlertCircle, ArrowRight, CalendarCheck, CalendarClock, History } from "lucide-react";
 
 import { OriginTag } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/api";
-import { listHistory, type AssignmentRecord, type TicketEvent } from "@/lib/assignments";
+import {
+  listHistory,
+  type AssignmentRecord,
+  type CommitmentRecord,
+  type TicketEvent,
+} from "@/lib/assignments";
 import type { TicketRecord } from "@/lib/tickets";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
 
@@ -29,7 +34,49 @@ const names = (people: { name?: string }[]) =>
  */
 type Moment =
   | ({ at: string; sort: number } & { type: "handover"; entry: AssignmentRecord })
-  | ({ at: string; sort: number } & { type: "event"; entry: TicketEvent });
+  | ({ at: string; sort: number } & { type: "event"; entry: TicketEvent })
+  | ({ at: string; sort: number } & { type: "promise"; entry: CommitmentRecord });
+
+/** How each kind of promise announces itself, and in what colour. */
+const PROMISE_META: Record<
+  CommitmentRecord["kind"],
+  { label: string; dot: string; chip: string; icon: typeof CalendarCheck }
+> = {
+  promised: {
+    label: "Promised",
+    dot: "bg-status-completed-fg",
+    chip: "bg-status-completed-bg text-status-completed-fg",
+    icon: CalendarCheck,
+  },
+  extended: {
+    label: "Extended",
+    dot: "bg-status-waiting-fg",
+    chip: "bg-status-waiting-bg text-status-waiting-fg",
+    icon: CalendarClock,
+  },
+  "pulled-in": {
+    label: "Brought forward",
+    dot: "bg-status-progress-fg",
+    chip: "bg-status-progress-bg text-status-progress-fg",
+    icon: CalendarClock,
+  },
+  withdrawn: {
+    label: "Withdrawn",
+    dot: "bg-status-overdue-fg",
+    chip: "bg-status-overdue-bg text-status-overdue-fg",
+    icon: CalendarClock,
+  },
+};
+
+/** "4 days later", which is the thing being asked when a date moves. */
+function distance(from: string, to: string) {
+  const days = Math.round(
+    (Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10))) / 86_400_000,
+  );
+  if (days === 0) return null;
+  const count = Math.abs(days);
+  return `${count} day${count === 1 ? "" : "s"} ${days > 0 ? "later" : "earlier"}`;
+}
 
 export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
   const [trail, setTrail] = useState<Moment[] | null>(null);
@@ -49,6 +96,12 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
           })),
           ...data.events.map((entry) => ({
             type: "event" as const,
+            entry,
+            at: entry.createdAt,
+            sort: Date.parse(entry.createdAt),
+          })),
+          ...(data.commitments ?? []).map((entry) => ({
+            type: "promise" as const,
             entry,
             at: entry.createdAt,
             sort: Date.parse(entry.createdAt),
@@ -99,8 +152,8 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
           <History className="mx-auto size-6 text-ink-300" />
           <p className="mt-2 text-sm font-semibold text-ink-700">Nothing recorded yet</p>
           <p className="mt-0.5 text-sm text-ink-400">
-            This ticket was raised before the trail was kept. Every handover from now on is
-            listed here.
+            This ticket was raised before the trail was kept. Every handover, and every date
+            promised for it, is listed here from now on.
           </p>
         </div>
       )}
@@ -113,6 +166,7 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
             const by =
               moment.type === "handover" ? moment.entry.by : { ...moment.entry.by, id: null };
 
+
             return (
               <li key={`${moment.type}-${moment.entry.id}`} className="flex gap-3">
                 {/* The dot marks the moment; the line carries the eye to the
@@ -121,7 +175,11 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                   <span
                     className={cn(
                       "mt-1.5 size-2.5 shrink-0 rounded-full",
-                      opening ? "bg-brand-600" : "bg-ink-300",
+                      moment.type === "promise"
+                        ? PROMISE_META[moment.entry.kind].dot
+                        : opening
+                          ? "bg-brand-600"
+                          : "bg-ink-300",
                     )}
                   />
                   {!last && <span className="w-px flex-1 bg-line" />}
@@ -129,7 +187,47 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
 
                 <div className={cn("min-w-0 flex-1", last ? "pb-1" : "pb-5")}>
                   <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-ink-900">
-                    {moment.type === "handover" ? (
+                    {moment.type === "promise" ? (
+                      (() => {
+                        const meta = PROMISE_META[moment.entry.kind];
+                        const Icon = meta.icon;
+                        const moved =
+                          moment.entry.previousDate && moment.entry.date
+                            ? distance(moment.entry.previousDate, moment.entry.date)
+                            : null;
+
+                        return (
+                          <>
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
+                                meta.chip,
+                              )}
+                            >
+                              <Icon className="size-3" />
+                              {meta.label}
+                            </span>
+
+                            {/* The move itself: what was promised, what it
+                                became, and how much later that is. */}
+                            {moment.entry.previousDate && (
+                              <>
+                                <span className="text-ink-400 line-through">
+                                  {formatDateOf(moment.entry.previousDate)}
+                                </span>
+                                <ArrowRight className="size-3.5 shrink-0 text-ink-300" />
+                              </>
+                            )}
+                            <span>
+                              {moment.entry.date ? formatDateOf(moment.entry.date) : "no date"}
+                            </span>
+                            {moved && (
+                              <span className="text-xs font-medium text-ink-400">({moved})</span>
+                            )}
+                          </>
+                        );
+                      })()
+                    ) : moment.type === "handover" ? (
                       opening ? (
                         <>
                           <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-brand-700 uppercase">
@@ -160,6 +258,12 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                       </>
                     )}
                   </p>
+
+                  {moment.type === "promise" && (
+                    <p className="mt-1 rounded-md border-l-2 border-line-strong bg-ink-50 px-2 py-1.5 text-[13px] leading-snug text-ink-700">
+                      {moment.entry.reason}
+                    </p>
+                  )}
 
                   <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
                     by {by.name}

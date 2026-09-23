@@ -32,6 +32,8 @@ export type TicketRecord = {
   committedDeadline: string | null;
   committedBy: { id: string; name?: string } | null;
   committedAt: string | null;
+  /** Why the current promise is that date. Empty when nothing is promised. */
+  committedReason: string;
   /** The unit rides along, so a list can be scoped without a second request. */
   department: { id: string; name?: string; code?: string; unit?: TicketUnit };
   fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
@@ -146,6 +148,8 @@ export function updateTicket(
     project?: string;
     deadline?: string | null;
     committedDeadline?: string | null;
+    /** Required by the API whenever the promised date actually moves. */
+    committedReason?: string;
     assignees?: string[];
   },
 ) {
