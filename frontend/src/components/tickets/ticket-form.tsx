@@ -732,18 +732,27 @@ export function TicketForm() {
         }
 
         setUploading(0);
-        const stored = [];
-        for (const [index, file] of files.entries()) {
-          // Sequentially, so the percentage means something: one bar for the
-          // whole set reads better than four racing each other.
-          stored.push(
-            await uploadTicketFile(file, {
-              onProgress: (percent) =>
-                setUploading(Math.round(((index + percent / 100) / files.length) * 100)),
+
+        /**
+         * All at once, with one bar for the set.
+         *
+         * The bucket is far enough away that a file costs most of a second on
+         * its own; three of them in turn was most of the wait before a ticket
+         * appeared. The percentage is the sum of their progress, so it still
+         * reads as one honest number.
+         */
+        const progress = new Array(files.length).fill(0);
+        attachments = await Promise.all(
+          files.map((file, index) =>
+            uploadTicketFile(file, {
+              onProgress: (percent) => {
+                progress[index] = percent;
+                const done = progress.reduce((sum, value) => sum + value, 0) / files.length;
+                setUploading(Math.round(done));
+              },
             }),
-          );
-        }
-        attachments = stored;
+          ),
+        );
       }
 
       // `{ departmentId: [userId, ...] }`, and only for the departments that
