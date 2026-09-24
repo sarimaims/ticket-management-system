@@ -125,6 +125,16 @@ const ticketSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /**
+     * Why the current promise is the date it is. Written with the date and
+     * cleared with it; every earlier answer lives on in the commitment trail.
+     */
+    committedReason: {
+      type: String,
+      trim: true,
+      maxlength: 400,
+      default: '',
+    },
     project: {
       type: String,
       trim: true,

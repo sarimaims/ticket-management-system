@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 
+import { inAnchoredPanel, useAnchoredPanel } from "@/components/ui/use-anchored-panel";
 import { cn } from "@/lib/utils";
 
 export type Option = { value: string; label: string };
@@ -86,6 +88,7 @@ export function MultiSelect({
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState("");
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
 
   const withSearch = searchable ?? options.length >= SEARCH_FROM;
@@ -101,7 +104,10 @@ export function MultiSelect({
     if (!open) return;
 
     const onPointerDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) close();
+      if (root.current?.contains(event.target as Node)) return;
+      // The panel is drawn on the body, so it is not inside the root.
+      if (inAnchoredPanel(event.target)) return;
+      close();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
@@ -127,6 +133,8 @@ export function MultiSelect({
 
   const labelFor = (item: string) => options.find((option) => option.value === item)?.label ?? item;
 
+  const at = useAnchoredPanel(open, trigger);
+
   const needle = term.trim().toLowerCase();
   const shown = needle
     ? options.filter((option) => option.label.toLowerCase().includes(needle))
@@ -136,6 +144,7 @@ export function MultiSelect({
     <div ref={root} className="relative">
       <button
         id={id}
+        ref={trigger}
         type="button"
         disabled={disabled}
         onClick={() => (open ? close() : setOpen(true))}
@@ -220,8 +229,18 @@ export function MultiSelect({
       {/* The panel is wider than the control when the control is narrow: a
           filter box is sized for its summary, not for the longest option in
           it. */}
-      {open && options.length > 0 && (
-        <div className="absolute z-30 mt-1 w-full min-w-56 overflow-hidden rounded-md border border-line bg-surface shadow-xl shadow-ink-900/10">
+      {/* Drawn on the body: a card with hidden overflow, a table that scrolls
+          sideways, or any later stacking context would otherwise clip it or
+          cover it however high its z-index went. */}
+      {open &&
+        options.length > 0 &&
+        at &&
+        createPortal(
+          <div
+            data-anchored-panel
+            style={{ left: at.left, top: at.top, bottom: at.bottom, width: at.width }}
+            className="fixed z-50 overflow-hidden rounded-md border border-line bg-surface shadow-xl shadow-ink-900/10"
+          >
           {withSearch && (
             <div className="relative border-b border-line">
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-400" />
@@ -270,8 +289,9 @@ export function MultiSelect({
               })}
             </ul>
           )}
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

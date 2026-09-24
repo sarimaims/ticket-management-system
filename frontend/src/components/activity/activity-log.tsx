@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/field";
-import { MultiSelect } from "@/components/ui/multi-select";
+import { ScopeFilter, type ScopeOption } from "@/components/ui/scope-filter";
 import { Modal } from "@/components/ui/modal";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { dayLabel } from "@/components/notifications/notification-shared";
@@ -36,6 +36,8 @@ const ACTION_DOTS: Record<string, string> = {
   "unit.created": "bg-tile-admin-fg",
   "unit.updated": "bg-status-progress-fg",
   "unit.deleted": "bg-status-overdue-fg",
+  "message.edited": "bg-chat-accent",
+  "message.deleted": "bg-ink-400",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -49,6 +51,8 @@ const ACTION_LABELS: Record<string, string> = {
   "unit.created": "Unit created",
   "unit.updated": "Unit updated",
   "unit.deleted": "Unit deleted",
+  "message.edited": "Message edited",
+  "message.deleted": "Message withdrawn",
 };
 
 /** "3 hours ago" reads better than a timestamp for a feed this recent. */
@@ -93,17 +97,35 @@ export function ActivityLog() {
 
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  const [where, setWhere] = useState<{ units: string[]; departments: string[] }>({
+    units: [],
+    departments: [],
+  });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const toast = useToast();
 
+  /**
+   * A chosen unit stands for its departments, and the API only knows about
+   * departments - so the unit is spent here, on the way out.
+   */
+  const departmentIds = useMemo(() => {
+    const byUnit = departments
+      .filter((item) => item.unit?.id && where.units.includes(item.unit.id))
+      .map((item) => item.id);
+    return [...new Set([...where.departments, ...byUnit])];
+  }, [departments, where]);
+
+  // Compared by value: the array is rebuilt on every render, and the loader
+  // below would otherwise fetch forever.
+  const askedFor = departmentIds.join(",");
+
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        setEntries(await listActivity({ departments: departmentIds }, signal));
+        setEntries(await listActivity({ departments: askedFor ? askedFor.split(",") : [] }, signal));
         setError("");
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -115,7 +137,7 @@ export function ActivityLog() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [departmentIds],
+    [askedFor],
   );
 
   useEffect(() => {
@@ -132,6 +154,22 @@ export function ActivityLog() {
     departmentIds.length === 1
       ? (departments.find((item) => item.id === departmentIds[0]) ?? null)
       : null;
+
+  /** Every department this reader may narrow by, under its unit. */
+  const scopeOptions = useMemo<ScopeOption[]>(() => {
+    const seen = new Map<string, number>();
+    for (const entry of entries) {
+      if (!entry.department) continue;
+      seen.set(entry.department.id, (seen.get(entry.department.id) ?? 0) + 1);
+    }
+
+    return departments.map((item) => ({
+      id: item.id,
+      name: item.name,
+      unit: item.unit?.id ? { id: item.unit.id, name: item.unit.name ?? "Unit" } : null,
+      count: seen.get(item.id) ?? 0,
+    }));
+  }, [departments, entries]);
 
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -168,15 +206,9 @@ export function ActivityLog() {
             />
           </div>
 
-          <div className="w-48 shrink-0">
-            <MultiSelect
-              options={departments.map((item) => ({ value: item.id, label: item.name }))}
-              value={departmentIds}
-              onChange={setDepartmentIds}
-              display="summary"
-              placeholder={canClear ? "All departments" : "All my departments"}
-              emptyMessage="No departments yet"
-            />
+          {/* One control for both depths, the same as the ticket queues. */}
+          <div className="w-52 shrink-0">
+            <ScopeFilter id="activity-where" options={scopeOptions} value={where} onChange={setWhere} />
           </div>
 
           {canClear && (

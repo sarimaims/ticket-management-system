@@ -12,17 +12,17 @@ import {
   type TooltipContentProps,
 } from "recharts";
 
-import { DEPARTMENT_LOAD } from "@/lib/dashboard-data";
+export type DepartmentPoint = { department: string; tickets: number };
 
 /* Magnitude comparison -> one hue, more = darker. The rows are sorted high to
    low so the sequential ramp and the bar length tell the same story. */
 const RAMP = [
-  "var(--color-chart-seq-6)",
-  "var(--color-chart-seq-5)",
-  "var(--color-chart-seq-4)",
-  "var(--color-chart-seq-3)",
-  "var(--color-chart-seq-2)",
-  "var(--color-chart-seq-1)",
+  "var(--color-royal-800)",
+  "var(--color-royal-700)",
+  "var(--color-royal-600)",
+  "var(--color-royal-500)",
+  "var(--color-royal-400)",
+  "var(--color-royal-300)",
 ];
 
 function DepartmentTooltip({ active, payload }: TooltipContentProps) {
@@ -39,12 +39,23 @@ function DepartmentTooltip({ active, payload }: TooltipContentProps) {
   );
 }
 
-export function DepartmentChart() {
+export function DepartmentChart({ data }: { data: DepartmentPoint[] }) {
+  if (data.length === 0) {
+    return (
+      <div className="grid h-[280px] place-items-center rounded-xl bg-ink-50 text-center">
+        <div>
+          <p className="text-sm font-bold text-ink-700">No open workload</p>
+          <p className="mt-1 text-xs text-ink-400">There are no active department tickets.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-[280px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
-          data={DEPARTMENT_LOAD}
+          data={data}
           layout="vertical"
           margin={{ top: 0, right: 34, bottom: 0, left: 0 }}
           barCategoryGap={10}
@@ -60,7 +71,7 @@ export function DepartmentChart() {
           />
           <Tooltip content={DepartmentTooltip} cursor={{ fill: "var(--color-ink-50)" }} />
           <Bar dataKey="tickets" barSize={16} radius={[0, 4, 4, 0]} isAnimationActive={false}>
-            {DEPARTMENT_LOAD.map((entry, index) => (
+            {data.map((entry, index) => (
               <Cell key={entry.department} fill={RAMP[index]} />
             ))}
             <LabelList

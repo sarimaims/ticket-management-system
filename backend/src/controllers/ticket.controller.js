@@ -17,11 +17,13 @@ import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
 import TicketAssignment from '../models/TicketAssignment.js';
+import Unit from '../models/Unit.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
+import { listCommitments, recordCommitment } from '../services/commitment.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
 
 /**
@@ -39,6 +41,73 @@ const WITH_DEPARTMENT = {
 
 /** The same, for the departments a request was raised on behalf of. */
 const WITH_FROM_DEPARTMENTS = { ...WITH_DEPARTMENT, path: 'fromDepartments' };
+
+/**
+ * Fills in the departments, people and units a set of tickets points at.
+ *
+ * Mongoose runs one query per populated path, and each of those is a separate
+ * round trip to a database that is a third of a second away - so a list of
+ * tickets was spending two or three seconds fetching five short lists. This
+ * asks for all of them at once instead: one query for the departments, one for
+ * the people, one for the units, in parallel.
+ *
+ * The result is shaped exactly like a populated document, so `present` cannot
+ * tell the difference.
+ */
+async function hydrate(tickets) {
+  if (tickets.length === 0) return tickets;
+
+  const departmentIds = new Set();
+  const userIds = new Set();
+
+  for (const ticket of tickets) {
+    if (ticket.department) departmentIds.add(String(ticket.department));
+    for (const item of ticket.fromDepartments ?? []) departmentIds.add(String(item));
+    if (ticket.raisedBy) userIds.add(String(ticket.raisedBy));
+    for (const person of ticket.assignees ?? []) userIds.add(String(person));
+    if (ticket.committedBy) userIds.add(String(ticket.committedBy));
+  }
+
+  const [departments, users, units] = await Promise.all([
+    Department.find({ _id: { $in: [...departmentIds] } })
+      .select('name code unit')
+      .lean(),
+    User.find({ _id: { $in: [...userIds] } })
+      .select('name email')
+      .lean(),
+    // Every unit rather than the ones referenced: the collection holds a
+    // handful of rows, and asking for all of them saves waiting for the
+    // departments to come back first.
+    Unit.find({}).select('name code').lean(),
+  ]);
+
+  const unitById = new Map(units.map((unit) => [String(unit._id), unit]));
+  const departmentById = new Map(
+    departments.map((department) => [
+      String(department._id),
+      { ...department, unit: unitById.get(String(department.unit)) ?? department.unit },
+    ]),
+  );
+  const userById = new Map(users.map((user) => [String(user._id), user]));
+
+  const asDepartment = (value) => departmentById.get(String(value)) ?? value;
+  const asUser = (value) => userById.get(String(value)) ?? value;
+
+  return tickets.map((ticket) => ({
+    ...ticket,
+    department: ticket.department ? asDepartment(ticket.department) : ticket.department,
+    fromDepartments: (ticket.fromDepartments ?? []).map(asDepartment),
+    raisedBy: ticket.raisedBy ? asUser(ticket.raisedBy) : ticket.raisedBy,
+    assignees: (ticket.assignees ?? []).map(asUser),
+    committedBy: ticket.committedBy ? asUser(ticket.committedBy) : ticket.committedBy,
+  }));
+}
+
+/** The same, for a single ticket. */
+async function hydrateOne(ticket) {
+  const [filled] = await hydrate([ticket]);
+  return filled;
+}
 
 /** A populated unit, flattened to what the client reads. */
 function presentUnit(unit) {
@@ -68,6 +137,8 @@ function present(ticket) {
       ? { id: String(ticket.committedBy._id), name: ticket.committedBy.name }
       : null,
     committedAt: ticket.committedAt ?? null,
+    /** Why the current promise is the date it is. Empty when none was made. */
+    committedReason: ticket.committedReason ?? '',
     department: populated(department)
       ? {
           id: String(department._id),
@@ -425,34 +496,31 @@ export async function listTickets(req, res) {
       // Nothing to narrow by: a manager already sees every department.
       filter = {};
     } else {
-      const runs = (req.user.memberships ?? [])
-        .filter((membership) => membership.role === 'head')
-        .map((membership) => membership.department);
+      const departments = (req.user.memberships ?? []).map(
+        (membership) => membership.department,
+      );
 
-      if (runs.length === 0) {
-        throw ApiError.forbidden('Only an admin or a department head can see every ticket.');
-      }
-
-      // Built from scratch rather than layered onto the usual filter, whose
-      // "or anything I raised" would smuggle in tickets from departments this
-      // person does not run.
-      filter = { department: { $in: runs } };
+      // Everything the departments this person belongs to have been asked to
+      // do - their own assignments included. Built from scratch rather than
+      // layered onto the usual filter, whose "or anything I raised" would put
+      // requests they sent elsewhere into a queue that is about incoming work.
+      filter =
+        departments.length > 0
+          ? { department: { $in: departments } }
+          : // Nobody's department: all that is left is what is on them by name.
+            { assignees: req.user._id };
     }
   } else {
     filter = { ...visibilityFilter(req.user) };
   }
 
   if (scope === 'mine') filter.raisedBy = req.user._id;
-  if (scope === 'assigned' && !MANAGER_ROLES.includes(req.user.role)) {
-    // Everything my departments have been asked to do, including what I asked
-    // them myself: someone in two departments raises from one to the other,
-    // and that ticket is still their department's work to pick up.
-    //
-    // A manager belongs to no department but oversees all of them, so their
-    // queue is every department's - otherwise it would always be empty and an
-    // admin could not open any thread at all.
-    const departmentIds = (req.user.memberships ?? []).map((membership) => membership.department);
-    filter.department = { $in: departmentIds };
+  if (scope === 'assigned') {
+    // Only what is on this person by name. A department's whole queue lives on
+    // All Tickets; this page answers the narrower question people actually
+    // open it for - what have *I* been asked to do. The same rule holds for an
+    // admin: overseeing every department does not put their work on your desk.
+    filter.assignees = req.user._id;
   }
 
   if (status) filter.status = status;
@@ -475,29 +543,20 @@ export async function listTickets(req, res) {
     return;
   }
 
-  const tickets = await Ticket.find(filter)
-    .sort({ createdAt: -1 })
-    .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
-    .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+  const tickets = await Ticket.find(filter).sort({ createdAt: -1 }).lean();
 
-  res.json({ success: true, tickets: tickets.map(present) });
+  res.json({ success: true, tickets: (await hydrate(tickets)).map(present) });
 }
 
 export async function getTicket(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  const ticket = await Ticket.findOne({
+  const found = await Ticket.findOne({
     _id: req.params.id,
     ...visibilityFilter(req.user),
-  })
-    .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
-    .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+  }).lean();
+
+  const ticket = found ? await hydrateOne(found) : null;
 
   // Not found and not allowed answer the same, so the endpoint cannot be used
   // to discover which ticket ids exist.
@@ -523,7 +582,7 @@ export async function listAssignments(req, res) {
 
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
-  const [trail, events] = await Promise.all([
+  const [trail, events, touched, commitments] = await Promise.all([
     TicketAssignment.find({ ticket: ticket._id }).sort({ createdAt: 1 }),
     // Raising and handing over are already in the trail above, structurally
     // and with the names on them, so the lines describing those are left out
@@ -532,6 +591,20 @@ export async function listAssignments(req, res) {
     Message.find({ ticket: ticket._id, kind: 'system', event: 'edited' })
       .select('event body authorName authorRole createdAt')
       .sort({ createdAt: 1 }),
+    // What happened to the conversation itself. Read off the messages rather
+    // than written twice: a line carries when it was corrected and when it was
+    // withdrawn, so the history can be built from what is already there.
+    Message.find({
+      ticket: ticket._id,
+      kind: { $ne: 'system' },
+      $or: [{ editedAt: { $ne: null } }, { deletedAt: { $ne: null } }],
+    })
+      .select('authorName authorRole editedAt deletedAt deletedByName revisions')
+      .sort({ createdAt: 1 }),
+    // Every promise about when this will be done, and why each date was
+    // given. Its own trail, so a date that moved three times reads as three
+    // moves rather than one number that happens to be current.
+    listCommitments(ticket._id),
   ]);
 
   res.json({
@@ -552,14 +625,56 @@ export async function listAssignments(req, res) {
       kind: entry.kind,
       createdAt: entry.createdAt,
     })),
-    /** Everything else that happened to it: raised, retitled, re-dated. */
-    events: events.map((entry) => ({
+    commitments: commitments.map((entry) => ({
       id: String(entry._id),
-      event: entry.event,
-      body: entry.body,
-      by: { name: entry.authorName, role: entry.authorRole },
+      date: entry.date,
+      previousDate: entry.previousDate,
+      kind: entry.kind,
+      reason: entry.reason,
+      by: { name: entry.byName, role: entry.byRole },
       createdAt: entry.createdAt,
     })),
+    /** Everything else that happened to it: raised, retitled, re-dated. */
+    events: [
+      ...events.map((entry) => ({
+        id: String(entry._id),
+        event: entry.event,
+        body: entry.body,
+        by: { name: entry.authorName, role: entry.authorRole },
+        createdAt: entry.createdAt,
+      })),
+      ...touched.flatMap((message) => {
+        const lines = [];
+
+        if (message.editedAt) {
+          lines.push({
+            id: `${String(message._id)}-edited`,
+            event: 'message.edited',
+            body:
+              message.revisions.length > 1
+                ? `edited a message (${message.revisions.length} versions)`
+                : 'edited a message',
+            by: { name: message.authorName, role: message.authorRole },
+            createdAt: message.editedAt,
+          });
+        }
+
+        if (message.deletedAt) {
+          lines.push({
+            id: `${String(message._id)}-deleted`,
+            event: 'message.deleted',
+            body: 'withdrew a message',
+            by: {
+              name: message.deletedByName || message.authorName,
+              role: message.authorRole,
+            },
+            createdAt: message.deletedAt,
+          });
+        }
+
+        return lines;
+      }),
+    ],
   });
 }
 
@@ -662,10 +777,19 @@ async function removeTickets(ids, actor) {
  * same whether the ticket was handed over on its own or as one of twenty.
  */
 export async function reassignTickets(req, res) {
-  const { ids, assignees } = req.body ?? {};
+  const { ids, assignees, department: target } = req.body ?? {};
 
   if (!Array.isArray(ids)) throw ApiError.badRequest('Send the tickets as a list.');
-  if (!Array.isArray(assignees) || assignees.length === 0) {
+  if (!Array.isArray(assignees)) throw ApiError.badRequest('Send the people as a list.');
+
+  // Moving a ticket to another department is not working it: it takes it away
+  // from the people who were, and hands it to people who never agreed to it.
+  // That is a manager's call, not a department's.
+  const moving = target !== undefined && target !== null && target !== '';
+  if (moving && !MANAGER_ROLES.includes(req.user.role)) {
+    throw ApiError.forbidden('Only an admin can move a ticket to another department.');
+  }
+  if (!moving && assignees.length === 0) {
     throw ApiError.badRequest('Choose at least one person to hand them to.');
   }
 
@@ -687,13 +811,30 @@ export async function reassignTickets(req, res) {
     );
   }
 
-  const [departmentId] = [...departments];
+  const [fromDepartmentId] = [...departments];
 
   for (const ticket of tickets) {
     if (!canWorkOn(req.user, ticket)) {
       throw ApiError.forbidden(`Only the receiving department can work ${ticket.number}.`);
     }
   }
+
+  /**
+   * Where they are going, and where the named people have to belong.
+   *
+   * Without a move that is simply where they already are, so the rest of this
+   * reads the same either way.
+   */
+  let destination = null;
+  if (moving) {
+    if (!mongoose.isValidObjectId(target)) throw ApiError.badRequest('Invalid department.');
+
+    destination = await Department.findOne({ _id: target, isActive: true });
+    if (!destination) throw ApiError.badRequest('That department does not exist.');
+  }
+
+  const departmentId = destination ? String(destination._id) : fromDepartmentId;
+  const changingDepartment = destination && String(destination._id) !== fromDepartmentId;
 
   const wanted = [...new Set(assignees.filter(Boolean).map(String))];
   const people = [];
@@ -708,35 +849,58 @@ export async function reassignTickets(req, res) {
       candidate.status !== 'suspended' &&
       (MANAGER_ROLES.includes(candidate.role) || candidate.roleInDepartment(departmentId));
 
-    if (!belongs) throw ApiError.badRequest('That person is not in this department.');
+    if (!belongs) {
+      throw ApiError.badRequest(
+        changingDepartment
+          ? `That person is not in ${destination.name}.`
+          : 'That person is not in this department.',
+      );
+    }
     people.push(candidate);
   }
 
   const held = people.map((person) => person._id);
-  const summary = `assigned to ${people.map((person) => person.name).join(', ')}`;
+  const named = people.map((person) => person.name).join(', ');
+
+  const summary = changingDepartment
+    ? `moved to ${destination.name}${named ? `, assigned to ${named}` : ''}`
+    : `assigned to ${named}`;
+
   let moved = 0;
 
   for (const ticket of tickets) {
     const before = (ticket.assignees ?? []).map(String).sort().join(',');
     const after = held.map(String).sort().join(',');
-    if (before === after) continue;
+    if (before === after && !changingDepartment) continue;
 
     // eslint-disable-next-line no-await-in-loop
     const from = await User.find({ _id: { $in: ticket.assignees ?? [] } }).select('name');
 
+    // Whoever was holding it cannot keep holding it from another department,
+    // so an unnamed move leaves it with the new department rather than with
+    // people who can no longer see it.
+    if (changingDepartment) ticket.department = destination._id;
     ticket.assignees = held;
     // eslint-disable-next-line no-await-in-loop
     await ticket.save();
     moved += 1;
 
-    // eslint-disable-next-line no-await-in-loop
-    await recordAssignment({ ticket, from, to: people, actor: req.user });
+    // Only when the holders actually changed: a move with nobody named on
+    // either side would otherwise leave "Nobody -> Nobody" in the history,
+    // which is a line that says nothing. The system message below carries the
+    // move itself.
+    if (before !== after) {
+      // eslint-disable-next-line no-await-in-loop
+      await recordAssignment({ ticket, from, to: people, actor: req.user });
+    }
     // eslint-disable-next-line no-await-in-loop
     await postSystemMessage({
       ticket,
       actor: req.user,
       event: 'assignment',
-      body: `handed this to ${people.map((person) => person.name).join(', ')}`,
+      body: changingDepartment
+        ? `moved this to ${destination.name}${named ? ` and handed it to ${named}` : ''}`
+        : `handed this to ${named}`,
     });
 
     // eslint-disable-next-line no-await-in-loop
@@ -762,6 +926,7 @@ export async function reassignTickets(req, res) {
   res.json({
     success: true,
     reassigned: moved,
+    department: destination ? { id: String(destination._id), name: destination.name } : null,
     assignees: people.map((person) => ({ id: String(person._id), name: person.name })),
   });
 }
@@ -814,6 +979,7 @@ export async function updateTicket(req, res) {
     status,
     deadline,
     committedDeadline,
+    committedReason,
     assignees,
     priority,
     subject,
@@ -854,6 +1020,9 @@ export async function updateTicket(req, res) {
     committedDeadline: asDay(ticket.committedDeadline),
     assignees: (ticket.assignees ?? []).map(String).sort().join(','),
   };
+
+  /** Set when the promise actually moved, so the thread can say so. */
+  let movedCommitment = null;
 
   if (status !== undefined) {
     if (!TICKET_STATUSES.includes(status)) {
@@ -910,9 +1079,38 @@ export async function updateTicket(req, res) {
       throw ApiError.badRequest('Invalid committed deadline.');
     }
 
-    ticket.committedDeadline = parsed;
-    ticket.committedBy = parsed ? req.user._id : null;
-    ticket.committedAt = parsed ? new Date() : null;
+    // Only a real move counts. The sheet sends this field on every save, so
+    // resending the date already promised must not demand a fresh reason.
+    const moved = asDay(parsed) !== asDay(ticket.committedDeadline);
+
+    if (moved) {
+      const why = typeof committedReason === 'string' ? committedReason.trim() : '';
+      if (!why) {
+        throw ApiError.badRequest(
+          ticket.committedDeadline
+            ? 'Say why the date is moving. The person waiting is told, so it has to be worth reading.'
+            : 'Say why you can resolve it by that date.',
+        );
+      }
+      if (why.length < 3) throw ApiError.badRequest('That reason is too short to tell anyone anything.');
+      if (why.length > 400) throw ApiError.badRequest('Keep the reason under 400 characters.');
+
+      // The trail is written first and deliberately not swallowed: a promise
+      // that cannot be explained is not recorded at all.
+      await recordCommitment({
+        ticket,
+        previous: ticket.committedDeadline ?? null,
+        next: parsed,
+        reason: why,
+        actor: req.user,
+      });
+
+      ticket.committedReason = parsed ? why : '';
+      ticket.committedDeadline = parsed;
+      ticket.committedBy = parsed ? req.user._id : null;
+      ticket.committedAt = parsed ? new Date() : null;
+      movedCommitment = { previous: before.committedDeadline, next: asDay(parsed), reason: why };
+    }
   }
 
   /**
@@ -1008,8 +1206,13 @@ export async function updateTicket(req, res) {
   }
   const nowCommitted = asDay(populated.committedDeadline);
   if (before.committedDeadline !== nowCommitted) {
+    const why = movedCommitment?.reason ? ` - ${movedCommitment.reason}` : '';
     changes.push(
-      nowCommitted ? `committed to finish by ${nowCommitted}` : 'withdrew the committed date',
+      nowCommitted
+        ? before.committedDeadline
+          ? `moved the promised date from ${before.committedDeadline} to ${nowCommitted}${why}`
+          : `promised to finish by ${nowCommitted}${why}`
+        : `withdrew the promised date${why}`,
     );
   }
   const nowAssignees = (populated.assignees ?? []).map((person) => String(person._id)).sort();

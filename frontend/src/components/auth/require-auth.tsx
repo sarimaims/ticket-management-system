@@ -24,6 +24,7 @@ export function RequireAuth({
   children,
   role,
   allow,
+  fallback,
 }: {
   children: React.ReactNode;
   /** when set, the session must carry one of these roles or it is bounced */
@@ -33,6 +34,12 @@ export function RequireAuth({
    * a membership, not on the account, so it cannot be spelled as a role.
    */
   allow?: (session: Session) => boolean;
+  /**
+   * What to show while the session is being checked. A page that knows its own
+   * shape should pass it, so the wait looks like the page filling in rather
+   * than a spinner where the page was.
+   */
+  fallback?: React.ReactNode;
 }) {
   const { session, ready } = useAuth();
   const router = useRouter();
@@ -48,7 +55,7 @@ export function RequireAuth({
     else if (!permitted) router.replace("/dashboard");
   }, [ready, session, permitted, router]);
 
-  if (!ready || !allowed) return <Splash />;
+  if (!ready || !allowed) return <>{fallback ?? <Splash />}</>;
 
   return <>{children}</>;
 }

@@ -7,6 +7,7 @@ import Ticket from '../models/Ticket.js';
 import { isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { notifyNewMessage } from '../services/notify.js';
+import { record } from '../services/activity.js';
 import {
   ATTACHMENT_KINDS,
   buildKey,
@@ -75,6 +76,24 @@ async function affiliationsFor(authorIds) {
   );
 }
 
+/**
+ * Who is expected to read this thread: the person who raised the ticket and
+ * whoever is holding it.
+ *
+ * Deliberately not "everyone who can see the ticket" - an admin can open any
+ * thread in the workspace, and a line would never go blue if it waited for all
+ * of them. The author is left out of their own audience.
+ */
+function audienceFor(ticket) {
+  const people = new Set();
+
+  const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+  if (raiser) people.add(String(raiser));
+  for (const person of ticket.assignees ?? []) people.add(String(person?._id ?? person));
+
+  return people;
+}
+
 /** The originals quoted by these messages, in one query. */
 async function repliesFor(messages) {
   const ids = [
@@ -109,12 +128,28 @@ async function present(message, viewer, context = {}) {
   const attachment = hidden ? null : message.attachment;
 
   const affiliation = context.affiliations?.get(String(message.author));
+
+  /**
+   * How far this line has got: sent, seen by some of the people it was for, or
+   * seen by all of them. Read from when each of them last had the thread open,
+   * which is the honest version of a read receipt.
+   */
+  const audience = [...(context.audience ?? [])].filter(
+    (id) => id !== String(message.author),
+  );
+  const written = new Date(message.createdAt ?? Date.now()).getTime();
+  const seenBy = audience.filter((id) => {
+    const at = context.lastSeen?.get(id);
+    return at ? new Date(at).getTime() >= written : false;
+  }).length;
   const original = message.replyTo ? context.replies?.get(String(message.replyTo)) : null;
   const quoteHidden = Boolean(original?.deletedAt) && !manager;
 
   return {
     id: String(message._id),
     ticket: String(message.ticket),
+    /** Delivered, and how much of its audience has had the thread open since. */
+    seen: { by: seenBy, of: audience.length },
     /** 'text' for something somebody said, 'system' for something that happened. */
     kind: message.kind ?? 'text',
     event: message.event ?? null,
@@ -174,12 +209,19 @@ async function present(message, viewer, context = {}) {
 }
 
 /** The same, for an answer that carries one message rather than a thread. */
-async function presentOne(message, viewer) {
-  const [affiliations, replies] = await Promise.all([
+async function presentOne(message, viewer, ticket) {
+  const [affiliations, replies, reads] = await Promise.all([
     affiliationsFor([message.author]),
     repliesFor([message]),
+    ThreadRead.find({ ticket: message.ticket }).select('user lastSeenAt').lean(),
   ]);
-  return present(message, viewer, { affiliations, replies });
+
+  return present(message, viewer, {
+    affiliations,
+    replies,
+    audience: ticket ? audienceFor(ticket) : new Set(),
+    lastSeen: new Map(reads.map((read) => [String(read.user), read.lastSeenAt])),
+  });
 }
 
 /** The message named in the URL, on the ticket named in the URL. */
@@ -328,16 +370,24 @@ export async function listMessages(req, res) {
 
   const messages = await Message.find({ ticket: ticket._id }).sort({ createdAt: 1 });
 
-  // Two queries for the whole thread rather than two per line.
-  const [affiliations, replies] = await Promise.all([
+  // Three queries for the whole thread rather than three per line, and all of
+  // them at once - the database is far enough away that a round trip costs
+  // more than everything else here put together.
+  const [affiliations, replies, reads] = await Promise.all([
     affiliationsFor(messages.map((message) => message.author)),
     repliesFor(messages),
+    ThreadRead.find({ ticket: ticket._id }).select('user lastSeenAt').lean(),
   ]);
+
+  const lastSeen = new Map(reads.map((read) => [String(read.user), read.lastSeenAt]));
+  const audience = audienceFor(ticket);
 
   res.json({
     success: true,
     messages: await Promise.all(
-      messages.map((message) => present(message, req.user, { affiliations, replies })),
+      messages.map((message) =>
+        present(message, req.user, { affiliations, replies, audience, lastSeen }),
+      ),
     ),
   });
 }
@@ -426,7 +476,7 @@ export async function createMessage(req, res) {
     preview: trimmed || (attachment ? ATTACHMENT_KINDS[attachment.kind].label : ''),
   });
 
-  res.status(201).json({ success: true, message: await presentOne(message, req.user) });
+  res.status(201).json({ success: true, message: await presentOne(message, req.user, ticket) });
 }
 
 /**
@@ -456,9 +506,20 @@ export async function updateMessage(req, res) {
     message.body = body;
     message.editedAt = new Date();
     await message.save();
+
+    // Changing what was said is worth a line of its own: the thread shows
+    // that it happened, the log shows who and when, and an admin can still
+    // read both versions on the message itself.
+    await record({
+      actor: req.user,
+      department: ticket.department,
+      action: 'message.edited',
+      summary: `edited a message on ${ticket.number}`,
+      ticketNumber: ticket.number,
+    });
   }
 
-  res.json({ success: true, message: await presentOne(message, req.user) });
+  res.json({ success: true, message: await presentOne(message, req.user, ticket) });
 }
 
 /**
@@ -483,9 +544,17 @@ export async function deleteMessage(req, res) {
 
     // The ticket's own counter follows what the thread now shows.
     await Ticket.updateOne({ _id: ticket._id }, { $inc: { messageCount: -1 } });
+
+    await record({
+      actor: req.user,
+      department: ticket.department,
+      action: 'message.deleted',
+      summary: `withdrew a message on ${ticket.number}`,
+      ticketNumber: ticket.number,
+    });
   }
 
-  res.json({ success: true, message: await presentOne(message, req.user) });
+  res.json({ success: true, message: await presentOne(message, req.user, ticket) });
 }
 
 /**

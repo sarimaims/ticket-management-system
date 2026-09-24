@@ -14,8 +14,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
-  ArrowRight,
   Building,
+  ArrowRight,
   Trash2,
   Inbox,
   MessagesSquare,
@@ -32,14 +32,21 @@ import { Modal } from "@/components/ui/modal";
 import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { SearchSelect } from "@/components/ui/search-select";
 import {
   DeadlineVerdict,
   TicketDetailSheet,
   type SheetTab,
 } from "@/components/tickets/ticket-detail-sheet";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { ScopeFilter, type ScopeOption } from "@/components/ui/scope-filter";
 import { useNotifications } from "@/components/notifications/notification-provider";
-import { listDepartmentMembers, type MemberOption } from "@/lib/departments";
+import {
+  listDepartmentMembers,
+  listDepartmentOptions,
+  type DepartmentOption,
+  type MemberOption,
+} from "@/lib/departments";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
@@ -230,8 +237,8 @@ const TicketRow = memo(function TicketRow({
       )}
 
       <TableCell className={cn(CELL, "relative")}>
-        {/* A bar on the row's edge rather than a word: it says the same thing
-            in three pixels. */}
+        {/* Only on a list that holds other people's work too. On Assigned to
+            Me every row is yours, and marking all of them marks none. */}
         {mine && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />}
         <span className="block font-bold whitespace-nowrap text-brand-600">#{ticket.number}</span>
         {mine && (
@@ -268,26 +275,7 @@ const TicketRow = memo(function TicketRow({
 
       {/* Where it came from and where it went, read as one move. */}
       <TableCell className={cn(CELL, "whitespace-normal")}>
-        <span className="flex flex-wrap items-center gap-1">
-          {ticket.fromDepartments.length === 0 ? (
-            // Empty for a manager: they sit above the departments, so the
-            // Raised By tag carries the origin instead.
-            <span className="text-ink-300">—</span>
-          ) : (
-            ticket.fromDepartments.map((item) => (
-              <span
-                key={item.id}
-                className="rounded bg-ink-100 px-1 py-px text-[10px] font-medium text-ink-600"
-              >
-                {item.name}
-              </span>
-            ))
-          )}
-          <ArrowRight className="size-3 shrink-0 text-ink-300" />
-          <span className="rounded bg-brand-50 px-1 py-px text-[10px] font-semibold text-brand-700">
-            {ticket.department.name}
-          </span>
-        </span>
+        <Route ticket={ticket} />
       </TableCell>
 
       <TableCell className={CELL}>
@@ -393,6 +381,73 @@ const TicketRow = memo(function TicketRow({
  * beat even when the answer is instant, because a button that does nothing
  * visible reads as broken.
  */
+/**
+ * Which departments a ticket moved between, and - underneath, quietly - which
+ * units those sit in.
+ *
+ * One line rather than a unit tag beside every department: in a table this
+ * narrow, four chips on a row is unreadable, and the question being asked is
+ * about the move as a whole. It says "within Head Office" when both ends share
+ * a unit, and names both when they do not - which is the case worth noticing.
+ */
+function Route({ ticket }: { ticket: TicketRecord }) {
+  const toUnit = ticket.department.unit ?? null;
+
+  // Distinct, because several departments of one unit say the same thing once.
+  const fromUnits = [
+    ...new Map(
+      ticket.fromDepartments
+        .map((item) => item.unit)
+        .filter((unit): unit is NonNullable<typeof unit> => Boolean(unit?.name))
+        .map((unit) => [unit.id, unit]),
+    ).values(),
+  ];
+
+  const within =
+    fromUnits.length === 1 && toUnit && fromUnits[0].id === toUnit.id ? toUnit.name : null;
+
+  return (
+    <span className="block">
+      <span className="flex flex-wrap items-center gap-1">
+        {ticket.fromDepartments.length === 0 ? (
+          // Empty for a manager: they sit above the departments, so the
+          // Raised By tag carries the origin instead.
+          <span className="text-ink-300">—</span>
+        ) : (
+          ticket.fromDepartments.map((item) => (
+            <span
+              key={item.id}
+              className="rounded bg-ink-100 px-1 py-px text-[10px] font-medium text-ink-600"
+            >
+              {item.name}
+            </span>
+          ))
+        )}
+        <ArrowRight className="size-3 shrink-0 text-ink-300" />
+        <span className="rounded bg-brand-50 px-1 py-px text-[10px] font-semibold text-brand-700">
+          {ticket.department.name}
+        </span>
+      </span>
+
+      {(within || toUnit) && (
+        <span className="mt-0.5 block truncate text-[10px] leading-none text-ink-400">
+          {within ? (
+            `within ${within}`
+          ) : fromUnits.length === 0 ? (
+            `into ${toUnit?.name}`
+          ) : (
+            <>
+              {fromUnits.map((unit) => unit.name).join(", ")}
+              <span className="px-1 text-ink-300">→</span>
+              {toUnit?.name}
+            </>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function RefreshButton({ onRefresh, syncedAt }: { onRefresh: () => void; syncedAt: number | null }) {
   const [spinning, setSpinning] = useState(false);
 
@@ -440,7 +495,10 @@ export function TicketsWorkspace({
   const [query, setQuery] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
   const [priorities, setPriorities] = useState<string[]>([]);
-  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  const [where, setWhere] = useState<{ units: string[]; departments: string[] }>({
+    units: [],
+    departments: [],
+  });
 
   /**
    * The unit chosen on the profile menu. It scopes the list rather than the
@@ -543,18 +601,27 @@ export function TicketsWorkspace({
    * enough, and across units the unit rides along.
    */
   const departmentOptions = useMemo(() => {
-    const byId = new Map<string, string>();
+    const byId = new Map<string, ScopeOption>();
+
     for (const ticket of inScope) {
-      const name = ticket.department.name ?? "Department";
-      byId.set(
-        ticket.department.id,
-        !unit && ticket.department.unit?.name
-          ? `${name} · ${ticket.department.unit.name}`
-          : name,
-      );
+      const found = byId.get(ticket.department.id);
+      if (found) {
+        found.count += 1;
+        continue;
+      }
+
+      byId.set(ticket.department.id, {
+        id: ticket.department.id,
+        name: ticket.department.name ?? "Department",
+        unit: ticket.department.unit?.id
+          ? { id: ticket.department.unit.id, name: ticket.department.unit.name ?? "Unit" }
+          : null,
+        count: 1,
+      });
     }
-    return [...byId].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [inScope, unit]);
+
+    return [...byId.values()];
+  }, [inScope]);
 
   /** The unit in view, named, so the bar can say what is being left out. */
   const unitName = useMemo(
@@ -577,11 +644,17 @@ export function TicketsWorkspace({
       // An empty filter asks nothing of the row, so it lets everything past.
       if (statuses.length > 0 && !statuses.includes(ticket.status)) return false;
       if (priorities.length > 0 && !priorities.includes(ticket.priority)) return false;
-      if (departmentIds.length > 0 && !departmentIds.includes(ticket.department.id)) return false;
+      // A unit stands for everything under it, so either half of the choice
+      // can match on its own.
+      if (where.units.length > 0 || where.departments.length > 0) {
+        const byUnit = where.units.includes(ticket.department.unit?.id ?? "");
+        const byDepartment = where.departments.includes(ticket.department.id);
+        if (!byUnit && !byDepartment) return false;
+      }
       if (mineOnly && !isMine(ticket)) return false;
       return true;
     });
-  }, [inScope, deferredQuery, statuses, priorities, departmentIds, mineOnly, isMine]);
+  }, [inScope, deferredQuery, statuses, priorities, where, mineOnly, isMine]);
 
   /** The tick column appears when something in view could be acted on at all. */
   const selectable = useMemo(
@@ -637,7 +710,7 @@ export function TicketsWorkspace({
     setQuery("");
     setStatuses([]);
     setPriorities([]);
-    setDepartmentIds([]);
+    setWhere({ units: [], departments: [] });
     setMineOnly(false);
     setFlashed(target.id);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -735,6 +808,18 @@ export function TicketsWorkspace({
             />
           </div>
 
+          {/* Unit and department are the same axis at two depths, so they are
+              one control: tick a unit for all of it, or reach in for two of
+              its departments. */}
+          <div className="w-52 shrink-0">
+            <ScopeFilter
+              id="filter-where"
+              options={departmentOptions}
+              value={where}
+              onChange={setWhere}
+            />
+          </div>
+
           <div className="w-40 shrink-0">
             <MultiSelect
               display="summary"
@@ -754,18 +839,6 @@ export function TicketsWorkspace({
               value={priorities}
               onChange={setPriorities}
               placeholder="All Priorities"
-            />
-          </div>
-
-          <div className="w-48 shrink-0">
-            <MultiSelect
-              display="summary"
-              id="filter-department"
-              options={departmentOptions.map((item) => ({ value: item.id, label: item.label }))}
-              value={departmentIds}
-              onChange={setDepartmentIds}
-              placeholder="All Departments"
-              emptyMessage="No departments in view"
             />
           </div>
 
@@ -798,7 +871,7 @@ export function TicketsWorkspace({
             </span>
           )}
 
-          {scope !== "mine" && (
+          {scope === "all" && (
             <button
               type="button"
               onClick={() => setMineOnly((current) => !current)}
@@ -821,16 +894,6 @@ export function TicketsWorkspace({
                 {mineCount}
               </span>
             </button>
-          )}
-
-          {unitName && (
-            <span
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-brand-200 bg-brand-50 px-2.5 text-[12px] font-semibold text-brand-700"
-              title="Set on your profile, at the foot of the sidebar"
-            >
-              <Building className="size-3.5" />
-              {unitName}
-            </span>
           )}
 
           {live && <RefreshButton onRefresh={refresh} syncedAt={syncedAt} />}
@@ -912,24 +975,20 @@ export function TicketsWorkspace({
                   <td colSpan={columns} className="px-3 py-12 text-center">
                     <Inbox className="mx-auto size-6 text-ink-300" />
                     <p className="mt-2 text-sm font-semibold text-ink-700">
-                      {mineOnly
+                      {mineOnly || scope === "assigned"
                         ? "Nothing assigned to you"
                         : scope === "mine"
                           ? "No requests yet"
-                          : scope === "all"
-                            ? "No tickets yet"
-                            : "Nothing in your queue"}
+                          : "No tickets yet"}
                     </p>
                     <p className="mt-0.5 text-sm text-ink-400">
                       {unitName && tickets.length > 0
                         ? `Nothing in ${unitName}. Switch units on your profile to see the rest.`
-                        : mineOnly
-                          ? "Tickets picked up in your name show here."
+                        : mineOnly || scope === "assigned"
+                          ? "Work handed to you by name shows here. Your department's whole queue is under All Tickets."
                           : scope === "mine"
                             ? "Raise one and it lands in that department's queue."
-                            : scope === "all"
-                              ? "Every ticket you oversee will appear here."
-                              : "Tickets raised to your departments will appear here."}
+                            : "Every ticket your departments have been asked to do will appear here."}
                     </p>
                   </td>
                 </tr>
@@ -941,7 +1000,7 @@ export function TicketsWorkspace({
                     key={ticket.id}
                     ticket={ticket}
                     scope={scope}
-                    mine={isMine(ticket)}
+                    mine={scope === "all" && isMine(ticket)}
                     byMe={scope !== "mine" && ticket.raisedBy.id === meId}
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
@@ -976,6 +1035,7 @@ export function TicketsWorkspace({
       <ReassignTicketsModal
         tickets={handingOver}
         department={chosenDepartment}
+        canMove={manager}
         onClose={() => setHandingOver(null)}
         onDone={(saved, names) => {
           const ids = new Set(saved.map((ticket) => ticket.id));
@@ -1114,12 +1174,15 @@ function DeleteTicketsModal({
 function ReassignTicketsModal({
   tickets,
   department,
+  canMove,
   onClose,
   onDone,
   onError,
 }: {
   tickets: TicketRecord[] | null;
   department: TicketRecord["department"] | null;
+  /** An admin may send the batch to another department, not only other people. */
+  canMove: boolean;
   onClose: () => void;
   onDone: (tickets: TicketRecord[], names: string) => void;
   onError: (message: string) => void;
@@ -1127,39 +1190,68 @@ function ReassignTicketsModal({
   const [team, setTeam] = useState<MemberOption[] | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  /** Where they are going. Starts where they are, so nothing moves by accident. */
+  const [target, setTarget] = useState("");
 
   const departmentId = department?.id;
   const open = tickets !== null && tickets.length > 0 && Boolean(departmentId);
+  /** The department the people are picked from: the destination, if there is one. */
+  const pickFrom = target || departmentId;
+  const moving = Boolean(target) && target !== departmentId;
 
   useEffect(() => {
-    if (!open || !departmentId) return;
+    if (!open || !pickFrom) return;
 
     const controller = new AbortController();
-    listDepartmentMembers(departmentId, controller.signal)
+    listDepartmentMembers(pickFrom, controller.signal)
       .then(setTeam)
       .catch(() => setTeam([]));
 
     return () => controller.abort();
-  }, [open, departmentId]);
+  }, [open, pickFrom]);
+
+  // Only an admin is offered the move, so only an admin loads the list.
+  useEffect(() => {
+    if (!open || !canMove) return;
+
+    const controller = new AbortController();
+    listDepartmentOptions(controller.signal)
+      .then(setDepartments)
+      .catch(() => setDepartments([]));
+
+    return () => controller.abort();
+  }, [open, canMove]);
 
   const close = () => {
     setChosen([]);
     setTeam(null);
+    setTarget("");
     onClose();
   };
 
   const confirm = async () => {
-    if (!tickets || chosen.length === 0) return;
+    if (!tickets || (chosen.length === 0 && !moving)) return;
 
     setPending(true);
     try {
       const result = await reassignTickets(
         tickets.map((ticket) => ticket.id),
         chosen,
+        moving ? target : undefined,
       );
-      onDone(tickets, result.assignees.map((person) => person.name).join(", "));
+      const names = result.assignees.map((person) => person.name).join(", ");
+      onDone(
+        tickets,
+        result.department
+          ? names
+            ? `${result.department.name} · ${names}`
+            : result.department.name
+          : names,
+      );
       setChosen([]);
       setTeam(null);
+      setTarget("");
     } catch (caught) {
       onError(errorMessage(caught));
     } finally {
@@ -1168,13 +1260,18 @@ function ReassignTicketsModal({
   };
 
   const many = (tickets?.length ?? 0) > 1;
+  const targetName = departments.find((item) => item.id === target)?.name;
 
   return (
     <Modal
       open={open}
       onClose={close}
       title={many ? `Reassign ${tickets?.length} tickets` : "Reassign this ticket"}
-      description={`Everyone named takes it on together. ${department?.name ?? "The department"} keeps it either way.`}
+      description={
+        canMove
+          ? "Send them to another department, or hand them to other people in this one."
+          : `Everyone named takes it on together. ${department?.name ?? "The department"} keeps it either way.`
+      }
       className="max-w-md"
     >
       {tickets && tickets.length > 0 && (
@@ -1191,11 +1288,44 @@ function ReassignTicketsModal({
             ))}
           </ul>
 
+          {/* A department is the ticket's home; the people are who holds it
+              there. Picking a new home empties the second question, because
+              nobody in the old department can answer it any more. */}
+          {canMove && (
+            <div className="mt-4">
+              <p className="mb-1.5 text-sm font-semibold text-ink-800">
+                Department
+                <span className="ml-1 font-normal text-ink-400">
+                  (now with {department?.name ?? "this department"})
+                </span>
+              </p>
+              <SearchSelect
+                icon={<Building className="text-ink-500" />}
+                options={departments.map((item) => ({
+                  value: item.id,
+                  label: item.name,
+                  hint: item.unit?.name,
+                }))}
+                value={target || (departmentId ?? "")}
+                onChange={(next) => {
+                  setTarget(next);
+                  // The people belonged to the department they were picked
+                  // from, so both the choice and the list go with it.
+                  setChosen([]);
+                  setTeam(null);
+                }}
+                placeholder="Keep it where it is"
+                emptyMessage="No departments yet"
+              />
+            </div>
+          )}
+
           <div className="mt-4">
             <p className="mb-1.5 text-sm font-semibold text-ink-800">
               Hand to
               <span className="ml-1 font-normal text-ink-400">
-                ({department?.name ?? "this department"}, one or more)
+                ({targetName ?? department?.name ?? "this department"},{" "}
+                {moving ? "optional" : "one or more"})
               </span>
             </p>
             <MultiSelect
@@ -1209,7 +1339,9 @@ function ReassignTicketsModal({
               emptyMessage="Nobody is in this department"
             />
             <p className="mt-1.5 text-xs text-ink-400">
-              Each handover is written to that ticket&apos;s own history.
+              {moving
+                ? `Leave this empty and ${targetName ?? "the new department"} picks it up itself. Either way it is written to each ticket's history.`
+                : "Each handover is written to that ticket's own history."}
             </p>
           </div>
 
@@ -1221,9 +1353,17 @@ function ReassignTicketsModal({
               type="button"
               size="sm"
               onClick={confirm}
-              disabled={pending || chosen.length === 0}
+              disabled={pending || (chosen.length === 0 && !moving)}
             >
-              {pending ? "Reassigning…" : many ? `Reassign ${tickets.length}` : "Reassign"}
+              {pending
+                ? moving
+                  ? "Moving…"
+                  : "Reassigning…"
+                : moving
+                  ? `Move ${many ? tickets.length : ""}`.trim()
+                  : many
+                    ? `Reassign ${tickets.length}`
+                    : "Reassign"}
             </Button>
           </div>
         </>
