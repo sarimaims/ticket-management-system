@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { timings } from '../utils/timings.js';
 import {
   buildTicketKey,
   createDownloadUrl,
@@ -237,36 +238,46 @@ async function resolveAttachments(req) {
   }
 
   const prefix = ticketKeyPrefixFor(String(req.user._id));
-  const files = [];
 
   for (const entry of input) {
     const key = entry?.key;
     if (typeof key !== 'string' || !key) throw ApiError.badRequest('An upload key is missing.');
     if (!key.startsWith(prefix)) throw ApiError.badRequest('That upload is not yours to attach.');
+  }
 
-    let object;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      object = await describeObject(key);
-    } catch (error) {
-      if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
-      throw ApiError.badRequest('An upload did not finish. Try attaching it again.');
-    }
+  /**
+   * Every file is inspected at once rather than one after the next.
+   *
+   * The bucket is a long way from this server - a single HEAD costs most of a
+   * second - so three attachments used to add nearly two seconds to raising a
+   * ticket, spent waiting in turn for answers that never depended on each
+   * other.
+   */
+  const described = await Promise.all(
+    input.map(async (entry) => {
+      try {
+        return await describeObject(entry.key);
+      } catch (error) {
+        if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+        throw ApiError.badRequest('An upload did not finish. Try attaching it again.');
+      }
+    }),
+  );
 
+  return input.map((entry, index) => {
+    const object = described[index];
     const problem = validateTicketUpload({ contentType: object.contentType, size: object.size });
     if (problem) throw ApiError.badRequest(problem);
 
-    files.push({
-      key,
+    return {
+      key: entry.key,
       filename: typeof entry.filename === 'string' ? entry.filename.slice(0, 160) : '',
       mimeType: object.contentType,
       size: object.size,
       uploadedBy: req.user._id,
       uploadedAt: new Date(),
-    });
-  }
-
-  return files;
+    };
+  });
 }
 
 /**
@@ -296,6 +307,10 @@ export async function downloadAttachment(req, res) {
 }
 
 export async function createTicket(req, res) {
+  // Reported back in Server-Timing, so a slow raise can be read off the
+  // browser's own network panel rather than guessed at.
+  const clock = timings(res);
+
   const {
     department,
     departments,
@@ -356,9 +371,15 @@ export async function createTicket(req, res) {
       const held = [];
       for (const userId of wanted) {
         if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+      }
 
-        // eslint-disable-next-line no-await-in-loop
-        const candidate = await User.findById(userId);
+      // Everyone named for this department is fetched at once: one wait for
+      // the set rather than one per person.
+      const candidates = await User.find({ _id: { $in: wanted } });
+      const byId = new Map(candidates.map((person) => [String(person._id), person]));
+
+      for (const userId of wanted) {
+        const candidate = byId.get(String(userId));
         const belongs =
           candidate &&
           candidate.status !== 'suspended' &&
@@ -382,9 +403,12 @@ export async function createTicket(req, res) {
   const stranger = fromIds.find((id) => !mine.has(id));
   if (stranger) throw ApiError.badRequest('You can only raise on behalf of your own departments.');
 
+  clock.step('validate');
+
   // Checked against the bucket before anything is written: a ticket must not
   // end up pointing at an upload that never landed.
   const attachments = await resolveAttachments(req);
+  clock.step('attachments');
 
   const shared = {
     subject: subject.trim(),
@@ -417,51 +441,62 @@ export async function createTicket(req, res) {
     );
   }
 
-  const populated = await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
-    .sort({ number: 1 })
-    .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
-    .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+  // One parallel step for every reference instead of a populate per path -
+  // the same reason the queues stopped using them.
+  clock.step('insert');
+
+  const populated = await hydrate(
+    await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
+      .sort({ number: 1 })
+      .lean(),
+  );
+
+  clock.step('read-back');
 
   const tickets = populated.map(present);
 
-  for (const ticket of populated) {
-    // eslint-disable-next-line no-await-in-loop
-    await record({
-      actor: req.user,
-      department: ticket.department,
-      action: 'ticket.created',
-      summary:
-        (ticket.assignees ?? []).length > 0
-          ? `raised ${ticket.number} "${ticket.subject}" for ${ticket.assignees
-              .map((person) => person.name)
-              .join(', ')}`
-          : `raised ${ticket.number} "${ticket.subject}"`,
-      ticketNumber: ticket.number,
-    });
-    // eslint-disable-next-line no-await-in-loop
-    await recordAssignment({
-      ticket,
-      from: [],
-      to: ticket.assignees ?? [],
-      actor: req.user,
-      kind: 'raised',
-    });
-    // The thread opens with the same line a group chat opens with: who
-    // started it. Everything said afterwards has something to follow.
-    // eslint-disable-next-line no-await-in-loop
-    await postSystemMessage({
-      ticket,
-      actor: req.user,
-      event: 'raised',
-      side: 'raiser',
-      body: `raised this ticket to ${ticket.department.name}`,
-    });
-    // eslint-disable-next-line no-await-in-loop
-    await notifyNewTicket({ ticket, actor: req.user });
-  }
+  /**
+   * The log, the assignment trail, the opening line of the thread and the
+   * bells. None of them depends on another, and none of them changes the
+   * answer - so they run together rather than one after the next. Each one
+   * already swallows its own failures, which is what makes that safe.
+   */
+  await Promise.all(
+    populated.flatMap((ticket) => [
+      record({
+        actor: req.user,
+        department: ticket.department,
+        action: 'ticket.created',
+        summary:
+          (ticket.assignees ?? []).length > 0
+            ? `raised ${ticket.number} "${ticket.subject}" for ${ticket.assignees
+                .map((person) => person.name)
+                .join(', ')}`
+            : `raised ${ticket.number} "${ticket.subject}"`,
+        ticketNumber: ticket.number,
+      }),
+      recordAssignment({
+        ticket,
+        from: [],
+        to: ticket.assignees ?? [],
+        actor: req.user,
+        kind: 'raised',
+      }),
+      // The thread opens with the same line a group chat opens with: who
+      // started it. Everything said afterwards has something to follow.
+      postSystemMessage({
+        ticket,
+        actor: req.user,
+        event: 'raised',
+        side: 'raiser',
+        body: `raised this ticket to ${ticket.department.name}`,
+      }),
+      notifyNewTicket({ ticket, actor: req.user }),
+    ]),
+  );
+
+  clock.step('log-and-notify');
+  clock.send();
 
   res.status(201).json({ success: true, tickets, ticket: tickets[0] });
 }

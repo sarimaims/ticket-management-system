@@ -36,7 +36,22 @@ function allowedOrigin(origin, callback) {
   return callback(new Error(`Origin not allowed by CORS: ${origin}`));
 }
 
-app.use(cors({ origin: allowedOrigin, credentials: true, exposedHeaders: ['ETag'] }));
+// Server-Timing is exposed so the browser's network panel can draw where a
+// slow request spent its time; ETag is what the polling clients send back.
+app.use(
+  cors({
+    origin: allowedOrigin,
+    credentials: true,
+    exposedHeaders: ['ETag', 'Server-Timing'],
+    /**
+     * A day. Every request carrying JSON is preceded by a preflight the
+     * browser must wait for, and across a continent that is a round trip
+     * spent asking permission rather than doing the work. Telling the browser
+     * to remember the answer pays for itself on the second request.
+     */
+    maxAge: 86_400,
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
