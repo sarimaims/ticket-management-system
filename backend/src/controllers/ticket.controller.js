@@ -16,11 +16,13 @@ import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import HandoverRequest from '../models/HandoverRequest.js';
 import TicketAssignment from '../models/TicketAssignment.js';
 import Unit from '../models/Unit.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
+import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
@@ -117,7 +119,7 @@ function presentUnit(unit) {
     : { id: String(unit) };
 }
 
-function present(ticket) {
+function present(ticket, { awaiting } = {}) {
   const department = ticket.department;
   const raisedBy = ticket.raisedBy;
   const populated = (value) => value && typeof value === 'object' && !(value instanceof mongoose.Types.ObjectId);
@@ -174,6 +176,12 @@ function present(ticket) {
     })),
     // How much has been said on it, so a row can show there is a conversation
     // without the list loading a single message.
+    /**
+     * Somebody has asked this particular reader to take it on and is waiting
+     * for an answer. Per-viewer, so it is computed where the request is, not
+     * stored on the ticket.
+     */
+    awaitingMe: Boolean(awaiting?.has(String(ticket._id))),
     messageCount: ticket.messageCount ?? 0,
     lastMessageAt: ticket.lastMessageAt ?? null,
     createdAt: ticket.createdAt,
@@ -516,11 +524,26 @@ export async function listTickets(req, res) {
 
   if (scope === 'mine') filter.raisedBy = req.user._id;
   if (scope === 'assigned') {
-    // Only what is on this person by name. A department's whole queue lives on
-    // All Tickets; this page answers the narrower question people actually
-    // open it for - what have *I* been asked to do. The same rule holds for an
-    // admin: overseeing every department does not put their work on your desk.
-    filter.assignees = req.user._id;
+    /*
+     * What is on this person by name, plus what somebody is asking them to
+     * take on.
+     *
+     * A department's whole queue lives on All Tickets; this page answers the
+     * narrower question people actually open it for - what is on my desk. An
+     * unanswered request belongs there too: it is waiting on this person, and
+     * a request they cannot find is one they will not answer.
+     *
+     * Combined under $and so the visibility filter above keeps its own $or.
+     */
+    const asked = await HandoverRequest.find({
+      to: req.user._id,
+      status: 'pending',
+    }).distinct('ticket');
+
+    filter.$and = [
+      ...(filter.$and ?? []),
+      { $or: [{ assignees: req.user._id }, { _id: { $in: asked } }] },
+    ];
   }
 
   if (status) filter.status = status;
@@ -545,7 +568,21 @@ export async function listTickets(req, res) {
 
   const tickets = await Ticket.find(filter).sort({ createdAt: -1 }).lean();
 
-  res.json({ success: true, tickets: (await hydrate(tickets)).map(present) });
+  // Which of these are waiting on an answer from the person reading them.
+  const awaiting = new Set(
+    (
+      await HandoverRequest.find({
+        to: req.user._id,
+        status: 'pending',
+        ticket: { $in: tickets.map((ticket) => ticket._id) },
+      }).distinct('ticket')
+    ).map(String),
+  );
+
+  res.json({
+    success: true,
+    tickets: (await hydrate(tickets)).map((ticket) => present(ticket, { awaiting })),
+  });
 }
 
 export async function getTicket(req, res) {
@@ -816,6 +853,11 @@ export async function reassignTickets(req, res) {
   for (const ticket of tickets) {
     if (!canWorkOn(req.user, ticket)) {
       throw ApiError.forbidden(`Only the receiving department can work ${ticket.number}.`);
+    }
+    if (!assignsDirectly(req.user, ticket)) {
+      throw ApiError.forbidden(
+        'Only the department head can reassign. Ask a colleague to take a ticket on instead.',
+      );
     }
   }
 
@@ -1127,6 +1169,13 @@ export async function updateTicket(req, res) {
 
   if (assignees !== undefined) {
     if (!Array.isArray(assignees)) throw ApiError.badRequest('Assignees must be a list.');
+
+    // A head hands work out; anyone else asks and waits to be taken up on it.
+    if (!assignsDirectly(req.user, ticket)) {
+      throw ApiError.forbidden(
+        'Only the department head can reassign this. Ask a colleague to take it on instead.',
+      );
+    }
 
     const held = (ticket.assignees ?? []).map(String);
     const wanted = [...new Set(assignees.filter(Boolean).map(String))];

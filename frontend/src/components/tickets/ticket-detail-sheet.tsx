@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarCheck,
   CalendarClock,
@@ -21,12 +21,20 @@ import { DateField } from "@/components/tickets/date-field";
 import { TicketChat } from "@/components/tickets/ticket-chat";
 import { TicketHistory } from "@/components/tickets/ticket-history";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { useAuth } from "@/components/auth/auth-provider";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
 import { attachmentHref, updateTicket, type TicketRecord } from "@/lib/tickets";
 import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
+import { isAdmin } from "@/lib/auth";
+import {
+  answerHandover,
+  askHandover,
+  listHandovers,
+  type HandoverRecord,
+} from "@/lib/handovers";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { TicketPriority, TicketStatus } from "@/lib/types";
 
@@ -494,6 +502,21 @@ export function TicketDetailSheet({
   );
 }
 
+/**
+ * Who hands a ticket over, and who has to ask.
+ *
+ * A head runs the department and a manager oversees all of them, so both move
+ * work directly. Everyone else asks a colleague and waits to be taken up on
+ * it: putting a deadline on somebody's desk without their knowing is how work
+ * goes missing. The API applies the same rule.
+ */
+function assignsDirectly(session: ReturnType<typeof useAuth>["session"], ticket: TicketRecord) {
+  if (isAdmin(session)) return true;
+  return (session?.departments ?? []).some(
+    (membership) => membership.id === ticket.department.id && membership.role === "head",
+  );
+}
+
 function SheetBody({
   ticket,
   canWork,
@@ -529,6 +552,10 @@ function SheetBody({
   const [movingDate, setMovingDate] = useState(!ticket.committedDeadline);
   const [assignees, setAssignees] = useState(ticket.assignees.map((person) => person.id));
   const [members, setMembers] = useState<Member[]>([]);
+  /** Every ask on this ticket, so both sides of one can be shown. */
+  const [handovers, setHandovers] = useState<HandoverRecord[]>([]);
+  /** Who this person is proposing to hand it to, before they send the ask. */
+  const [asking, setAsking] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const toast = useToast();
 
@@ -582,6 +609,82 @@ function SheetBody({
     });
     setInvalid([]);
     setEditing(false);
+  };
+
+  const { session } = useAuth();
+  const direct = assignsDirectly(session, ticket);
+  const meId = session?.id;
+
+  const loadHandovers = useCallback(() => {
+    listHandovers(ticket.id)
+      .then(setHandovers)
+      .catch(() => setHandovers([]));
+  }, [ticket.id]);
+
+  useEffect(() => {
+    if (!canWork) return;
+    const controller = new AbortController();
+    listHandovers(ticket.id, controller.signal)
+      .then(setHandovers)
+      .catch(() => setHandovers([]));
+    return () => controller.abort();
+  }, [ticket.id, canWork]);
+
+  /** The one open ask addressed to this person, if there is one. */
+  const waitingOnMe = handovers.find(
+    (item) => item.status === "pending" && item.to.some((person) => person.id === meId),
+  );
+
+  /** And the one they sent themselves, still unanswered. */
+  const sentByMe = handovers.find(
+    (item) => item.status === "pending" && item.requestedBy.id === meId,
+  );
+
+  /** Only somebody holding a ticket has anything to hand on. */
+  const holdsIt = ticket.assignees.some((person) => person.id === meId);
+
+  /** Puts the ask in front of the people chosen above. */
+  const sendAsk = async () => {
+    if (asking.length === 0) return;
+
+    setPending(true);
+    try {
+      await askHandover(ticket.id, asking);
+      setAsking([]);
+      loadHandovers();
+      toast.success(
+        `Asked ${asking.length === 1 ? "1 person" : `${asking.length} people`}`,
+        "It moves to whoever accepts first.",
+      );
+    } catch (caught) {
+      toast.error("Could not send the request", errorMessage(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  /** Accepting is what actually moves the ticket; declining just passes. */
+  const answer = async (request: HandoverRecord, choice: "accept" | "decline" | "cancel") => {
+    setPending(true);
+    try {
+      await answerHandover(ticket.id, request.id, choice);
+      loadHandovers();
+
+      if (choice === "accept") {
+        // The ticket itself moved, so the pane behind this has to be told.
+        const fresh = await updateTicket(ticket.id, {});
+        onSaved(fresh);
+        toast.success(`#${ticket.number} is yours`, `Taken on from ${request.requestedBy.name}`);
+      } else if (choice === "decline") {
+        toast.show({ title: `#${ticket.number} declined`, tone: "info" });
+      } else {
+        toast.show({ title: "Request withdrawn", tone: "info" });
+      }
+    } catch (caught) {
+      toast.error("Could not answer", errorMessage(caught));
+    } finally {
+      setPending(false);
+    }
   };
 
   /** Sends the request as the raiser now wants it; the department is told. */
@@ -661,7 +764,7 @@ function SheetBody({
         status: nextStatus,
         committedDeadline: committed || null,
         ...(promiseMoved ? { committedReason: why.trim() } : {}),
-        assignees,
+        ...(direct ? { assignees } : {}),
       });
       onSaved(saved);
 
@@ -868,20 +971,136 @@ function SheetBody({
               </div>
 
               <div className="min-w-0">
-                <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
-                <MultiSelect
-                  id="sheet-assignee"
-                  options={members.map((member) => ({
-                    value: member.id,
-                    label: `${member.name} (${member.departmentRole})`,
-                  }))}
-                  value={assignees}
-                  onChange={setAssignees}
-                  display="summary"
-                  placeholder="Nobody yet"
-                  emptyMessage="Nobody is in this department"
-                />
+                {direct ? (
+                  <>
+                    <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
+                    <MultiSelect
+                      id="sheet-assignee"
+                      options={members.map((member) => ({
+                        value: member.id,
+                        label: `${member.name} (${member.departmentRole})`,
+                      }))}
+                      value={assignees}
+                      onChange={setAssignees}
+                      display="summary"
+                      placeholder="Nobody yet"
+                      emptyMessage="Nobody is in this department"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <MiniLabel htmlFor="sheet-ask">Ask someone to take it</MiniLabel>
+                    <MultiSelect
+                      id="sheet-ask"
+                      // Only people who are not already on it: the rest have
+                      // nothing to accept.
+                      options={members
+                        .filter(
+                          (member) =>
+                            !ticket.assignees.some((person) => person.id === member.id),
+                        )
+                        .map((member) => ({
+                          value: member.id,
+                          label: `${member.name} (${member.departmentRole})`,
+                        }))}
+                      value={asking}
+                      onChange={setAsking}
+                      display="summary"
+                      placeholder={sentByMe ? "Waiting on an answer" : "Choose who to ask"}
+                      emptyMessage="Nobody else is in this department"
+                      disabled={Boolean(sentByMe) || !holdsIt}
+                    />
+                  </>
+                )}
               </div>
+
+              {!direct && (
+                <div className="col-span-2 min-w-0 space-y-2">
+                  {/* Somebody is waiting on this person. It is the only thing
+                      in the pane that is a question, so it says so loudly. */}
+                  {waitingOnMe && (
+                    <div className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-2">
+                      <p className="text-[12px] text-ink-700">
+                        <span className="font-bold text-brand-700">
+                          {waitingOnMe.requestedBy.name}
+                        </span>{" "}
+                        asks you to take this ticket on.
+                        {waitingOnMe.note && (
+                          <span className="mt-0.5 block text-ink-500">
+                            &ldquo;{waitingOnMe.note}&rdquo;
+                          </span>
+                        )}
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-7 px-2.5 text-[12px]"
+                          disabled={pending}
+                          onClick={() => void answer(waitingOnMe, "accept")}
+                        >
+                          Accept
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2.5 text-[12px]"
+                          disabled={pending}
+                          onClick={() => void answer(waitingOnMe, "decline")}
+                        >
+                          Decline
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Their own ask, still out. */}
+                  {sentByMe && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-ink-50 px-2.5 py-2 text-[12px] text-ink-600">
+                      <span>
+                        Waiting on{" "}
+                        <span className="font-semibold text-ink-800">
+                          {sentByMe.to.map((person) => person.name).join(", ")}
+                        </span>
+                        {sentByMe.declinedBy.length > 0 && (
+                          <span className="text-ink-400">
+                            {" "}
+                            · {sentByMe.declinedBy.length} declined
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => void answer(sentByMe, "cancel")}
+                        className="ml-auto font-semibold text-brand-600 hover:text-brand-700"
+                      >
+                        Withdraw
+                      </button>
+                    </div>
+                  )}
+
+                  {!sentByMe && holdsIt && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-full px-2.5 text-[12px]"
+                      disabled={pending || asking.length === 0}
+                      onClick={() => void sendAsk()}
+                    >
+                      {asking.length > 1 ? `Ask ${asking.length} people` : "Send request"}
+                    </Button>
+                  )}
+
+                  {!holdsIt && !waitingOnMe && (
+                    <p className="text-[11px] text-ink-400">
+                      Only somebody holding this ticket can ask a colleague to take it on.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* The requested date used to be repeated here as a locked box.
                   It is already two rows up under Dates; what this pane needs is

@@ -173,6 +173,7 @@ const TicketRow = memo(function TicketRow({
   selected,
   flashed,
   unreadMessages,
+  askedOfMe,
   showPick,
   canPick,
   canDelete,
@@ -192,6 +193,8 @@ const TicketRow = memo(function TicketRow({
   flashed: boolean;
   /** How many messages on this ticket the reader has not opened yet. */
   unreadMessages: number;
+  /** Somebody has asked this person to take this ticket on. */
+  askedOfMe: boolean;
   /** Whether this reader may remove tickets at all. */
   /** Whether the table is showing the tick column at all. */
   showPick: boolean;
@@ -213,6 +216,16 @@ const TicketRow = memo(function TicketRow({
       className={cn(
         "cursor-pointer border-b border-line transition-colors last:border-0",
         selected ? "bg-brand-50" : "hover:bg-ink-50/70",
+        // Done, and readable as done at a glance rather than by reading the
+        // status column. A question still outranks it: something waiting on
+        // this person matters more than something already finished.
+        ticket.status === "Completed" &&
+          !selected &&
+          !askedOfMe &&
+          "bg-status-completed-bg/60 hover:bg-status-completed-bg",
+        askedOfMe &&
+          !selected &&
+          "bg-status-waiting-bg/60 hover:bg-status-waiting-bg",
         // Outlined rather than recoloured, so it reads as "this one" without
         // competing with the status tints the row already carries.
         flashed &&
@@ -241,6 +254,12 @@ const TicketRow = memo(function TicketRow({
             Me every row is yours, and marking all of them marks none. */}
         {mine && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />}
         <span className="block font-bold whitespace-nowrap text-brand-600">#{ticket.number}</span>
+        {/* The one thing on a row that is a question rather than a fact. */}
+        {askedOfMe && (
+          <span className="mt-0.5 inline-block rounded bg-brand-600 px-1 py-px text-[9px] font-bold tracking-wide text-white uppercase">
+            Take it?
+          </span>
+        )}
         {mine && (
           <span className="mt-0.5 inline-block rounded bg-brand-50 px-1 py-px text-[9px] font-bold tracking-wide text-brand-700 uppercase">
             Mine
@@ -1005,6 +1024,7 @@ export function TicketsWorkspace({
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
                     unreadMessages={unreadByTicket.get(ticket.id) ?? 0}
+                    askedOfMe={ticket.awaitingMe}
                     showPick={showPicks}
                     canPick={canWorkTicket(ticket) || canDeleteTicket(ticket)}
                     canDelete={canDeleteTicket(ticket)}

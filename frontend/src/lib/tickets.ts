@@ -44,6 +44,11 @@ export type TicketRecord = {
   assignees: { id: string; name?: string }[];
   /** The paperwork that came with the request. */
   attachments: TicketAttachment[];
+  /**
+   * Somebody has asked you to take this on and is waiting for an answer. Per
+   * viewer, so two people reading the same ticket see different values.
+   */
+  awaitingMe: boolean;
   /** How long the conversation on this ticket is, without loading any of it. */
   messageCount: number;
   lastMessageAt: string | null;
