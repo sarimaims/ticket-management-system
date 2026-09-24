@@ -178,6 +178,11 @@ const ticketSchema = new mongoose.Schema(
 // person can see, and which of them moved most recently. These cover both
 // halves of the visibility filter so neither question scans the collection.
 ticketSchema.index({ department: 1, updatedAt: -1 });
+
+// The two shapes the queues ask for: "what is on this person" and "what is in
+// this state", newest first. Declared here so a fresh database gets them too.
+ticketSchema.index({ assignees: 1, updatedAt: -1 });
+ticketSchema.index({ status: 1, updatedAt: -1 });
 ticketSchema.index({ raisedBy: 1, updatedAt: -1 });
 
 ticketSchema.pre('save', async function assignNumber() {

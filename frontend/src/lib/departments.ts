@@ -1,4 +1,11 @@
 import { api } from "./api";
+import { cached, forget } from "./cache";
+
+/** Anything that writes a department makes the remembered lists wrong. */
+const dropLists = () => {
+  forget("departments:");
+  forget("units:");
+};
 import type { DepartmentRole, Membership } from "./auth";
 
 /** The unit a department sits under, as the API sends it alongside. */
@@ -64,9 +71,10 @@ export function listPeopleOptions(
   if (filter.department) query.set("department", filter.department);
   const suffix = query.toString() ? `?${query}` : "";
 
-  return api<{ members: PersonOption[] }>(`/departments/members/options${suffix}`, { signal }).then(
-    (data) => data.members,
-  );
+  return api<{ members: PersonOption[] }>(
+    `/departments/members/options${suffix}`,
+    { signal },
+  ).then((data) => data.members);
 }
 
 /**
@@ -76,15 +84,21 @@ export function listPeopleOptions(
  * proper still needs {@link getDepartment}.
  */
 export function listDepartmentMembers(id: string, signal?: AbortSignal) {
-  return api<{ members: MemberOption[] }>(`/departments/${id}/members/options`, { signal }).then(
-    (data) => data.members,
-  );
+  return api<{ members: MemberOption[] }>(
+    `/departments/${id}/members/options`,
+    { signal },
+  ).then((data) => data.members);
 }
 
 /** Every department, names only - what you may send a ticket to. */
 export function listDepartmentOptions(signal?: AbortSignal) {
-  return api<{ departments: DepartmentOption[] }>("/departments/options", { signal }).then(
-    (data) => data.departments,
+  return cached(
+    "departments:options",
+    () =>
+      api<{ departments: DepartmentOption[] }>("/departments/options").then(
+        (data) => data.departments,
+      ),
+    signal,
   );
 }
 
@@ -94,19 +108,37 @@ export function listDepartmentOptions(signal?: AbortSignal) {
  */
 export function listDepartments(signal?: AbortSignal, unit?: string) {
   const query = unit ? `?unit=${encodeURIComponent(unit)}` : "";
-  return api<{ departments: Department[] }>(`/departments${query}`, { signal }).then(
-    (data) => data.departments,
+  return cached(
+    `departments:list:${unit ?? "all"}`,
+    () =>
+      api<{ departments: Department[] }>(`/departments${query}`).then(
+        (data) => data.departments,
+      ),
+    signal,
   );
 }
 
 export function getDepartment(id: string, signal?: AbortSignal) {
-  return api<{ department: Department; members: Member[] }>(`/departments/${id}`, { signal });
+  return api<{ department: Department; members: Member[] }>(
+    `/departments/${id}`,
+    { signal },
+  );
 }
 
-export function createDepartment(input: { name: string; unit: string; description?: string }) {
-  return api<{ department: Department }>("/departments", { method: "POST", body: input }).then(
-    (data) => data.department,
-  );
+export function createDepartment(input: {
+  name: string;
+  unit: string;
+  description?: string;
+}) {
+  return api<{ department: Department }>("/departments", {
+    method: "POST",
+    body: input,
+  })
+    .then((data) => data.department)
+    .finally(() => {
+      forget("departments:");
+      forget("units:");
+    });
 }
 
 /** Renames a department, or moves it to another unit. */
@@ -117,32 +149,67 @@ export function updateDepartment(
   return api<{ department: Department }>(`/departments/${id}`, {
     method: "PATCH",
     body: input,
-  }).then((data) => data.department);
+  })
+    .then((data) => data.department)
+    .finally(() => {
+      forget("departments:");
+      forget("units:");
+    });
 }
 
 export function deleteDepartment(id: string) {
-  return api<{ success: boolean }>(`/departments/${id}`, { method: "DELETE" });
+  return api<{ success: boolean }>(`/departments/${id}`, {
+    method: "DELETE",
+  }).finally(() => {
+    forget("departments:");
+    forget("units:");
+  });
 }
 
 export function addMember(
   departmentId: string,
-  input: { name?: string; email: string; password?: string; role: DepartmentRole },
+  input: {
+    name?: string;
+    email: string;
+    password?: string;
+    role: DepartmentRole;
+  },
 ) {
   return api<{ member: Member }>(`/departments/${departmentId}/members`, {
     method: "POST",
     body: input,
-  }).then((data) => data.member);
+  })
+    .then((data) => data.member)
+    .finally(() => {
+      forget("departments:");
+      forget("units:");
+    });
 }
 
-export function updateMemberRole(departmentId: string, userId: string, role: DepartmentRole) {
-  return api<{ member: Member }>(`/departments/${departmentId}/members/${userId}`, {
-    method: "PATCH",
-    body: { role },
-  }).then((data) => data.member);
+export function updateMemberRole(
+  departmentId: string,
+  userId: string,
+  role: DepartmentRole,
+) {
+  return api<{ member: Member }>(
+    `/departments/${departmentId}/members/${userId}`,
+    {
+      method: "PATCH",
+      body: { role },
+    },
+  )
+    .then((data) => data.member)
+    .finally(() => {
+      forget("departments:");
+      forget("units:");
+    });
 }
 
 export function removeMember(departmentId: string, userId: string) {
-  return api<{ success: boolean }>(`/departments/${departmentId}/members/${userId}`, {
-    method: "DELETE",
-  });
+  return api<{ success: boolean }>(
+    `/departments/${departmentId}/members/${userId}`,
+    {
+      method: "DELETE",
+    },
+  ).finally(dropLists);
 }
