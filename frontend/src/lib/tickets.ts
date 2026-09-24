@@ -32,6 +32,8 @@ export type TicketRecord = {
   committedDeadline: string | null;
   committedBy: { id: string; name?: string } | null;
   committedAt: string | null;
+  /** Why the current promise is that date. Empty when nothing is promised. */
+  committedReason: string;
   /** The unit rides along, so a list can be scoped without a second request. */
   department: { id: string; name?: string; code?: string; unit?: TicketUnit };
   fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
@@ -128,10 +130,19 @@ export function deleteTickets(ids: string[]) {
  * department, because an assignee belongs to one - the API refuses a mixed
  * batch rather than half-applying it.
  */
-export function reassignTickets(ids: string[], assignees: string[]) {
-  return api<{ reassigned: number; assignees: { id: string; name: string }[] }>("/tickets", {
+/**
+ * Hands a batch to other people, and - for an admin - to another department
+ * entirely. `department` is the id to move them to; leave it out to keep them
+ * where they are.
+ */
+export function reassignTickets(ids: string[], assignees: string[], department?: string) {
+  return api<{
+    reassigned: number;
+    department: { id: string; name: string } | null;
+    assignees: { id: string; name: string }[];
+  }>("/tickets", {
     method: "PATCH",
-    body: { ids, assignees },
+    body: { ids, assignees, ...(department ? { department } : {}) },
   });
 }
 
@@ -146,6 +157,8 @@ export function updateTicket(
     project?: string;
     deadline?: string | null;
     committedDeadline?: string | null;
+    /** Required by the API whenever the promised date actually moves. */
+    committedReason?: string;
     assignees?: string[];
   },
 ) {

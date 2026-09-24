@@ -217,13 +217,55 @@ function People({
  * Centred and quiet, the way a messaging app marks its own announcements, so
  * it reads as part of the story without pretending somebody said it.
  */
+/**
+ * The shape of a conversation, while the real one is on its way.
+ *
+ * Bubbles rather than a spinner: the pane keeps the height and rhythm it is
+ * about to have, so nothing jumps when the messages land. The rows fade in
+ * turn, which reads as "arriving" rather than "stuck".
+ */
+function ChatSkeleton() {
+  const rows = [
+    { mine: false, width: "w-44", height: "h-11" },
+    { mine: true, width: "w-32", height: "h-8" },
+    { mine: false, width: "w-52", height: "h-14" },
+    { mine: true, width: "w-40", height: "h-8" },
+    { mine: false, width: "w-36", height: "h-8" },
+  ];
+
+  return (
+    <div aria-hidden="true" className="space-y-3">
+      <p className="text-center">
+        <span className="inline-block h-5 w-14 animate-pulse rounded-full bg-ink-100" />
+      </p>
+
+      {rows.map((row, index) => (
+        <div key={index} className={cn("flex", row.mine ? "justify-end" : "justify-start")}>
+          <span
+            // Staggered, so the column ripples instead of blinking as one.
+            style={{ animationDelay: `${index * 120}ms` }}
+            className={cn(
+              "block animate-pulse rounded-lg",
+              row.width,
+              row.height,
+              row.mine ? "rounded-tr-none bg-chat-mine-bg" : "rounded-tl-none bg-ink-100",
+            )}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SystemLine({ message }: { message: MessageRecord }) {
   return (
-    <p className="px-6 text-center text-[11px] leading-relaxed text-ink-400">
-      <span className="rounded-full bg-ink-100 px-2.5 py-1">
-        <span className="font-semibold text-ink-600">{message.author.name}</span>{" "}
-        {message.body}
-        <span className="ml-1.5 text-ink-400">{formatTime(message.createdAt)}</span>
+    <p className="px-6 text-center text-[11px] leading-relaxed">
+      {/* Amber rather than grey: what happened to the request is not another
+          grey message, and a thread of both should say which is which at a
+          glance. */}
+      <span className="rounded-full bg-chat-system-bg px-2.5 py-1 text-chat-system-fg">
+        <span className="font-semibold">{message.author.name}</span> {message.body}
+        <span className="ml-1.5 opacity-70">{formatTime(message.createdAt)}</span>
       </span>
     </p>
   );
@@ -292,7 +334,11 @@ export function TicketChat({
       }
     } finally {
       if (inFlight.current === controller) inFlight.current = null;
-      if (alive.current) setLoading(false);
+      // An aborted request is not an answer. React mounts an effect twice in
+      // development, so the first fetch is always cancelled - and clearing the
+      // flag here declared "no messages yet" while the real request was still
+      // in the air, which is the flash this guard removes.
+      if (alive.current && !controller.signal.aborted) setLoading(false);
     }
   }, [ticketId]);
 
@@ -549,6 +595,8 @@ export function TicketChat({
           }
         : null,
       authorRole: session?.role ?? "user",
+      // Nobody can have seen it yet; the server's answer replaces this.
+      seen: { by: 0, of: 0 },
       side: ticket.raisedBy.id === meId ? "raiser" : "department",
       body,
       editedAt: null,
@@ -655,9 +703,7 @@ export function TicketChat({
       />
 
       <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
-        {loading && thread.length === 0 && (
-          <p className="py-8 text-center text-sm text-ink-400">Loading the conversation...</p>
-        )}
+        {loading && thread.length === 0 && <ChatSkeleton />}
 
         {!loading && thread.length === 0 && (
           <div className="py-10 text-center">

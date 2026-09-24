@@ -67,7 +67,10 @@ export const destination = (item: NotificationRecord) => {
   // written for. Rows from before that flag fall back to the old rule: "new"
   // and "edited" are the department's business, "updated" is the raiser's.
   const forRaiser = item.forRaiser ?? item.type === "ticket.updated";
-  const page = forRaiser ? "/my-requests" : "/assigned-to-me";
+  // All Tickets rather than Assigned to Me for the department's side: the
+  // latter now lists only what is on you by name, and a notification must land
+  // on a page that actually holds the row it is about.
+  const page = forRaiser ? "/my-requests" : "/all-tickets";
 
   // The id is exact; the number still finds the row if the id is missing.
   const key = item.ticket ?? item.ticketNumber;

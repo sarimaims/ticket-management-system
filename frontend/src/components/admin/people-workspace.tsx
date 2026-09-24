@@ -23,6 +23,7 @@ import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
@@ -95,12 +96,6 @@ function statsFor(users: DirectoryUser[], scope: Scope): Stat[] {
       caption: "Access revoked",
       tone: "overdue",
     },
-    {
-      label: "Super Admins",
-      value: count((user) => user.role === "superadmin"),
-      caption: "Full access",
-      tone: "admin",
-    },
   ];
 }
 
@@ -123,8 +118,8 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const [query, setQuery] = useState("");
   // Every filter takes a set: "Finance or IT Support" is one question, and
   // one-at-a-time made it two.
-  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
-  const [unitIds, setUnitIds] = useState<string[]>([]);
+  /** Unit and department are the same axis at two depths, so they are one. */
+  const [where, setWhere] = useState<ScopeValue>({ units: [], departments: [] });
 
   // The units represented by the departments in this workspace. One person
   // can hold departments in several of them, so both are worth filtering by
@@ -177,27 +172,41 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
 
   const stats = useMemo(() => statsFor(users, scope), [users, scope]);
 
+  const scopeOptions = useMemo<ScopeOption[]>(
+    () =>
+      departments.map((department) => ({
+        id: department.id,
+        name: department.name,
+        unit: department.unit
+          ? { id: department.unit.id, name: department.unit.name ?? "Unit" }
+          : null,
+        count: users.filter((user) => user.departments.some((item) => item.id === department.id))
+          .length,
+      })),
+    [departments, users],
+  );
+
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
     return users.filter((user) => {
       if (term && !`${user.name} ${user.email} ${shortId(user.id)}`.toLowerCase().includes(term))
         return false;
       // An empty filter asks nothing of the row, so it lets everything past.
-      if (
-        departmentIds.length > 0 &&
-        !user.departments.some((item) => departmentIds.includes(item.id))
-      )
-        return false;
-      if (
-        unitIds.length > 0 &&
-        !user.departments.some((item) => item.unit?.id && unitIds.includes(item.unit.id))
-      )
-        return false;
+      // A ticked unit means everything under it, so either half of the answer
+      // is enough for a row to stay.
+      if (where.units.length > 0 || where.departments.length > 0) {
+        const kept = user.departments.some(
+          (item) =>
+            where.departments.includes(item.id) ||
+            (item.unit?.id ? where.units.includes(item.unit.id) : false),
+        );
+        if (!kept) return false;
+      }
       if (statuses.length > 0 && !statuses.includes(user.status)) return false;
       if (roles.length > 0 && !roles.includes(effectiveRole(user))) return false;
       return true;
     });
-  }, [users, query, departmentIds, unitIds, statuses, roles]);
+  }, [users, query, where, statuses, roles]);
 
   const setStatusFor = async (user: DirectoryUser, next: DirectoryUser["status"]) => {
     try {
@@ -229,48 +238,11 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             />
           </div>
 
-          {units.length > 1 && (
-            <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
-              <MultiSelect
-                options={units.map((item) => ({ value: item.id, label: item.name }))}
-                value={unitIds}
-                onChange={(next) => {
-                  setUnitIds(next);
-                  // A department outside the units now in view would filter
-                  // every row away, so it goes with them.
-                  if (next.length === 0) return;
-                  const allowed = new Set(
-                    departments
-                      .filter((item) => item.unit?.id && next.includes(item.unit.id))
-                      .map((item) => item.id),
-                  );
-                  setDepartmentIds((current) => current.filter((id) => allowed.has(id)));
-                }}
-                display="summary"
-                placeholder="All Units"
-              />
-            </div>
-          )}
-
-          <div className="min-w-[132px] flex-1 lg:w-48 lg:flex-none">
-            <MultiSelect
-              options={departments
-                .filter((item) => unitIds.length === 0 || (item.unit?.id && unitIds.includes(item.unit.id)))
-                .map((item) => ({
-                  value: item.id,
-                  // Across units the name alone can be ambiguous; inside one
-                  // it would only be repetition.
-                  label:
-                    unitIds.length !== 1 && units.length > 1 && item.unit?.name
-                      ? `${item.name} · ${item.unit.name}`
-                      : item.name,
-                }))}
-              value={departmentIds}
-              onChange={setDepartmentIds}
-              display="summary"
-              placeholder="All Departments"
-              emptyMessage="Nothing in those units"
-            />
+          {/* Unit and department are the same axis at two depths, so they are
+              one control: tick a unit for all of it, or reach in for two of
+              its departments. */}
+          <div className="min-w-[132px] flex-1 lg:w-52 lg:flex-none">
+            <ScopeFilter id="people-where" options={scopeOptions} value={where} onChange={setWhere} />
           </div>
 
           {scope === "all" && (

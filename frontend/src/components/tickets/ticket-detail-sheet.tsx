@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarCheck,
+  CalendarClock,
   CheckCircle2,
   Download,
   History,
@@ -395,6 +396,16 @@ function MiniLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?:
   );
 }
 
+/** The units a set of departments sit in, named once each. */
+function Unit({ of }: { of: { unit?: { id: string; name?: string } | null }[] }) {
+  const names = [
+    ...new Set(of.map((item) => item.unit?.name).filter((name): name is string => Boolean(name))),
+  ];
+  if (names.length === 0) return null;
+
+  return <span className="w-full text-[10px] font-normal text-ink-400">{names.join(", ")}</span>;
+}
+
 function Chips({ items }: { items: { id: string; name?: string }[] }) {
   if (items.length === 0) return <Blank />;
   return (
@@ -505,6 +516,17 @@ function SheetBody({
   const [committed, setCommitted] = useState(
     ticket.committedDeadline ? ticket.committedDeadline.slice(0, 10) : "",
   );
+  /**
+   * Why that date. Required by the API whenever the date moves, so it is asked
+   * for here rather than discovered when the save is refused - and it starts
+   * empty on every open, because last week's reason does not explain this
+   * week's date.
+   */
+  const [why, setWhy] = useState("");
+  const [whyMissing, setWhyMissing] = useState(false);
+  /** The promise is not editable until they ask for it: a date already given
+      is a commitment, not a field to brush past. */
+  const [movingDate, setMovingDate] = useState(!ticket.committedDeadline);
   const [assignees, setAssignees] = useState(ticket.assignees.map((person) => person.id));
   const [members, setMembers] = useState<Member[]>([]);
   const [pending, setPending] = useState(false);
@@ -618,11 +640,27 @@ function SheetBody({
 
   /** Saving closes the sheet; the toast carries what changed. */
   const save = async (nextStatus: TicketStatus = status) => {
+    const promiseMoved = committed !== (ticket.committedDeadline?.slice(0, 10) ?? "");
+
+    // The reason is the whole point of the date: the person waiting is told
+    // both, and "moved to the 30th" on its own answers nothing.
+    if (promiseMoved && !why.trim()) {
+      setWhyMissing(true);
+      setMovingDate(true);
+      toast.error(
+        committed ? "Say why this date" : "Say why you are withdrawing the date",
+        `${ticket.raisedBy.name} sees the reason with the date.`,
+      );
+      document.getElementById("sheet-committed-why")?.focus();
+      return;
+    }
+
     setPending(true);
     try {
       const saved = await updateTicket(ticket.id, {
         status: nextStatus,
         committedDeadline: committed || null,
+        ...(promiseMoved ? { committedReason: why.trim() } : {}),
         assignees,
       });
       onSaved(saved);
@@ -703,7 +741,13 @@ function SheetBody({
           <Group title="Where it goes" tone="route">
             <Fact label="From">
               {ticket.fromDepartments.length > 0 ? (
-                <Chips items={ticket.fromDepartments} />
+                <>
+                  <Chips items={ticket.fromDepartments} />
+                  {/* The unit under the department, quietly: the queue answers
+                      this in one line, and there is room here to name each
+                      side of the move. */}
+                  <Unit of={ticket.fromDepartments} />
+                </>
               ) : (
                 <Blank>Raised directly</Blank>
               )}
@@ -712,6 +756,7 @@ function SheetBody({
               <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
                 {ticket.department.name}
               </span>
+              <Unit of={[ticket.department]} />
             </Fact>
           </Group>
 
@@ -851,13 +896,89 @@ function SheetBody({
                     </span>
                   )}
                 </MiniLabel>
-                <DateField
-                  id="sheet-committed"
-                  value={committed}
-                  onChange={setCommitted}
-                  placeholder="Pick a date"
-                  className="gap-1.5 px-2.5 [&>span]:text-[13px]"
-                />
+
+                {/* A promise already given is shown as one, with the reason it
+                    was given for. Moving it is a deliberate second click, and
+                    it costs a new reason. */}
+                {!movingDate && ticket.committedDeadline ? (
+                  <div className="rounded-md border border-line-strong bg-ink-50/60 px-2.5 py-2">
+                    <p className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-[13px] font-bold text-ink-900">
+                        <CalendarCheck className="size-3.5 shrink-0 text-ink-400" />
+                        {formatDate(ticket.committedDeadline.slice(0, 10))}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMovingDate(true)}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+                      >
+                        <CalendarClock className="size-3.5" />
+                        Extend or change
+                      </button>
+                    </p>
+                    {ticket.committedReason && (
+                      <p className="mt-1 text-[11px] leading-snug text-ink-500">
+                        “{ticket.committedReason}”
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <DateField
+                      id="sheet-committed"
+                      value={committed}
+                      onChange={setCommitted}
+                      placeholder="Pick a date"
+                      className="gap-1.5 px-2.5 [&>span]:text-[13px]"
+                    />
+
+                    {/* Only once the date has actually moved: asking why before
+                        anything has changed is a box in the way. */}
+                    {committed !== (ticket.committedDeadline?.slice(0, 10) ?? "") && (
+                      <div>
+                        <Textarea
+                          id="sheet-committed-why"
+                          value={why}
+                          invalid={whyMissing}
+                          maxLength={400}
+                          placeholder={
+                            ticket.committedDeadline
+                              ? "Why is the date moving? e.g. the supplier pushed delivery to Friday"
+                              : "Why this date? e.g. the design is queued behind two releases"
+                          }
+                          onChange={(event) => {
+                            setWhy(event.target.value);
+                            if (event.target.value.trim()) setWhyMissing(false);
+                          }}
+                          className="min-h-14 text-[13px]"
+                        />
+                        <p
+                          className={cn(
+                            "mt-0.5 text-[11px]",
+                            whyMissing ? "font-semibold text-brand-600" : "text-ink-400",
+                          )}
+                        >
+                          Required · {ticket.raisedBy.name} is told the date and the reason.
+                        </p>
+                      </div>
+                    )}
+
+                    {ticket.committedDeadline && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommitted(ticket.committedDeadline!.slice(0, 10));
+                          setWhy("");
+                          setWhyMissing(false);
+                          setMovingDate(false);
+                        }}
+                        className="text-[11px] font-semibold text-ink-500 transition-colors hover:text-ink-800"
+                      >
+                        Keep {formatDate(ticket.committedDeadline.slice(0, 10))}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -871,8 +992,8 @@ function SheetBody({
               </p>
             ) : (
               <p className="mt-1.5 text-[11px] leading-snug text-ink-400">
-                Anyone in {departmentName} can take this on; every handover is listed under
-                History.
+                Anyone in {departmentName} can take this on; every handover and every promised
+                date is listed under History.
               </p>
             )}
           </div>
