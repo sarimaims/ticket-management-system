@@ -15,6 +15,11 @@ import {
   updateTicket,
 } from '../controllers/ticket.controller.js';
 import {
+  answerHandover,
+  createHandover,
+  listHandovers,
+} from '../controllers/handover.controller.js';
+import {
   createMessage,
   createUploadTarget,
   deleteMessage,
@@ -62,6 +67,12 @@ router.get('/:id/messages/:messageId/info', asyncHandler(messageInfo));
 // An author corrects or withdraws their own line; the controller checks that.
 router.patch('/:id/messages/:messageId', asyncHandler(updateMessage));
 router.delete('/:id/messages/:messageId', asyncHandler(deleteMessage));
+
+// Asking somebody to take a ticket on, and their answer. A head assigns
+// instead, through PATCH above - see the controller for which is which.
+router.get('/:id/handovers', asyncHandler(listHandovers));
+router.post('/:id/handovers', asyncHandler(createHandover));
+router.patch('/:id/handovers/:handoverId', asyncHandler(answerHandover));
 
 // Who has held it, and who handed it on. Written by raising and updating a
 // ticket, never posted to directly - a history anyone can write is not one.

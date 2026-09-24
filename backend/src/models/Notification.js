@@ -10,6 +10,10 @@ export const NOTIFICATION_TYPES = [
   'ticket.updated',
   'ticket.edited',
   'ticket.message',
+  /** Somebody is asking you to take a ticket on. */
+  'ticket.handover',
+  /** They answered the one you sent. */
+  'ticket.handover.answered',
 ];
 
 const notificationSchema = new mongoose.Schema(
