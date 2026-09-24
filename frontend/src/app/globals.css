@@ -29,6 +29,26 @@
   --color-brand-900: #7f1d1d;
   --color-brand-950: #450a0a;
 
+  /* --- Dashboard: royal command surface -------------------------------- */
+  --color-royal-50: #eff6ff;
+  --color-royal-100: #dbeafe;
+  --color-royal-200: #bfdbfe;
+  --color-royal-300: #93c5fd;
+  --color-royal-400: #60a5fa;
+  --color-royal-500: #3b82f6;
+  --color-royal-600: #2563eb;
+  --color-royal-700: #1d4ed8;
+  --color-royal-800: #1e3a8a;
+  --color-royal-900: #102a5c;
+  --color-royal-950: #07152f;
+
+  --color-gold-50: #fffbeb;
+  --color-gold-100: #fef3c7;
+  --color-gold-300: #fcd878;
+  --color-gold-400: #e6bf55;
+  --color-gold-500: #c8941f;
+  --color-gold-700: #8a6012;
+
   /* --- Ink: neutral text, surfaces, borders ----------------------------- */
   --color-ink-50: #f8fafc;
   --color-ink-100: #f1f5f9;

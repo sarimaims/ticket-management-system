@@ -1,5 +1,6 @@
-import { STATUS_SHARE } from "@/lib/dashboard-data";
 import type { TicketStatus } from "@/lib/types";
+
+export type StatusPoint = { status: TicketStatus; count: number };
 
 /* Part-to-whole -> one stacked bar, segments separated by a 2px surface gap
    (never a stroke). Segment colours are the STATUS tokens, so a segment here
@@ -14,13 +15,24 @@ const SEGMENT_COLOR: Record<TicketStatus, string> = {
   Overdue: "var(--color-status-overdue-fg)",
 };
 
-export function StatusShare() {
-  const total = STATUS_SHARE.reduce((sum, slice) => sum + slice.count, 0);
+export function StatusShare({ data }: { data: StatusPoint[] }) {
+  const total = data.reduce((sum, slice) => sum + slice.count, 0);
+
+  if (total === 0) {
+    return (
+      <div className="grid min-h-56 place-items-center rounded-xl bg-ink-50 text-center">
+        <div>
+          <p className="text-sm font-bold text-ink-700">No status data yet</p>
+          <p className="mt-1 text-xs text-ink-400">The breakdown will fill as tickets arrive.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       <div className="flex gap-[2px] overflow-hidden rounded-full">
-        {STATUS_SHARE.map((slice) => (
+        {data.map((slice) => (
           <div
             key={slice.status}
             className="h-3 first:rounded-l-full last:rounded-r-full"
@@ -34,7 +46,7 @@ export function StatusShare() {
       </div>
 
       <ul className="mt-5 space-y-3">
-        {STATUS_SHARE.map((slice) => (
+        {data.map((slice) => (
           <li key={slice.status} className="flex items-center gap-3 text-sm">
             <span
               className="size-2.5 shrink-0 rounded-full"
