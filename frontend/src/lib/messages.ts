@@ -43,6 +43,12 @@ export type MessageRecord = {
   ticket: string;
   /** 'text' for something somebody said, 'system' for something that happened. */
   kind: "text" | "system";
+  /**
+   * How far this line has got: how many of the people it was written for have
+   * had the thread open since. `of` is the raiser plus whoever holds the
+   * ticket, minus the author.
+   */
+  seen: { by: number; of: number };
   /** Which kind of thing happened, on a system line. */
   event: "raised" | "edited" | "assignment" | null;
   author: { id: string; name: string };

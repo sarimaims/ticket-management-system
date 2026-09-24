@@ -22,6 +22,27 @@ export function listUsers(
   return api<{ users: DirectoryUser[] }>(`/users${suffix}`, { signal }).then((data) => data.users);
 }
 
+/**
+ * A head's own team: everyone in the departments they run.
+ *
+ * The scope is the server's to decide, not a parameter here - there is no
+ * department id to pass, and nothing this call can be edited into showing.
+ */
+export function listMyTeam(
+  filters: { role?: DepartmentRole; status?: string } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) query.set(key, value);
+  });
+  const suffix = query.toString() ? `?${query}` : "";
+
+  return api<{ users: DirectoryUser[]; departments: string[] }>(`/users/team${suffix}`, {
+    signal,
+  });
+}
+
 export function createUser(input: {
   name: string;
   email: string;

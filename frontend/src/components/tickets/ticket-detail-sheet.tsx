@@ -396,6 +396,16 @@ function MiniLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?:
   );
 }
 
+/** The units a set of departments sit in, named once each. */
+function Unit({ of }: { of: { unit?: { id: string; name?: string } | null }[] }) {
+  const names = [
+    ...new Set(of.map((item) => item.unit?.name).filter((name): name is string => Boolean(name))),
+  ];
+  if (names.length === 0) return null;
+
+  return <span className="w-full text-[10px] font-normal text-ink-400">{names.join(", ")}</span>;
+}
+
 function Chips({ items }: { items: { id: string; name?: string }[] }) {
   if (items.length === 0) return <Blank />;
   return (
@@ -731,7 +741,13 @@ function SheetBody({
           <Group title="Where it goes" tone="route">
             <Fact label="From">
               {ticket.fromDepartments.length > 0 ? (
-                <Chips items={ticket.fromDepartments} />
+                <>
+                  <Chips items={ticket.fromDepartments} />
+                  {/* The unit under the department, quietly: the queue answers
+                      this in one line, and there is room here to name each
+                      side of the move. */}
+                  <Unit of={ticket.fromDepartments} />
+                </>
               ) : (
                 <Blank>Raised directly</Blank>
               )}
@@ -740,6 +756,7 @@ function SheetBody({
               <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
                 {ticket.department.name}
               </span>
+              <Unit of={[ticket.department]} />
             </Fact>
           </Group>
 

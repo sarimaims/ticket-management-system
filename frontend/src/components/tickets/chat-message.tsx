@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import {
   Building2,
   Check,
+  CheckCheck,
   ChevronDown,
   CornerUpLeft,
   Eye,
@@ -520,6 +521,36 @@ export function ChatMessage({
     </p>
   );
 
+  /**
+   * One tick for sent, two once somebody it was written for has had the thread
+   * open since, and two in blue once all of them have - the shorthand every
+   * messaging app has trained people to read. Only ever on your own lines.
+   */
+  const ticks = (() => {
+    if (!mine || message.deleted || pending) return null;
+
+    const { by, of } = message.seen ?? { by: 0, of: 0 };
+    const all = of > 0 && by >= of;
+    const title =
+      of === 0
+        ? "Sent"
+        : by === 0
+          ? "Sent · nobody has opened it yet"
+          : all
+            ? `Seen by ${of === 1 ? "them" : "everyone"}`
+            : `Seen by ${by} of ${of}`;
+
+    return (
+      <span title={title} className={cn("inline-flex", all && "text-chat-seen")}>
+        {by === 0 ? (
+          <Check className="size-3.5" strokeWidth={2.5} />
+        ) : (
+          <CheckCheck className="size-3.5" strokeWidth={2.5} />
+        )}
+      </span>
+    );
+  })();
+
   const meta = (
     <span
       className={cn(
@@ -529,6 +560,7 @@ export function ChatMessage({
     >
       {message.editedAt && !message.deleted && <span className="italic">edited</span>}
       {pending ? "Sending..." : formatTime(message.createdAt)}
+      {ticks}
     </span>
   );
 

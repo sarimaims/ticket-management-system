@@ -86,6 +86,11 @@ export function isHead(session: Session | null) {
  * head sees every ticket their departments have been asked to do. The server
  * decides which of the two applies - this only decides whether to offer it.
  */
+/** The departments this person runs, which is the whole scope of a head. */
+export function headDepartments(session: Session | null) {
+  return (session?.departments ?? []).filter((membership) => membership.role === "head");
+}
+
 export function canSeeAllTickets(session: Session | null) {
   return isAdmin(session) || isHead(session);
 }

@@ -21,7 +21,7 @@ import {
 import { Logo } from "@/components/layout/logo";
 import { SidebarProfile } from "@/components/layout/sidebar-profile";
 import { useAuth } from "@/components/auth/auth-provider";
-import { canSeeAllTickets, isAdmin } from "@/lib/auth";
+import { canSeeAllTickets, isAdmin, isHead } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -36,6 +36,11 @@ type NavItem = {
    * workspace, a head across their own departments.
    */
   overseersOnly?: boolean;
+  /**
+   * Only for someone who runs a department. An admin is not one - managers
+   * hold no departments - and has the whole directory under /admin instead.
+   */
+  headsOnly?: boolean;
 };
 
 const NAV: NavItem[] = [
@@ -45,7 +50,8 @@ const NAV: NavItem[] = [
   { href: "/departments", label: "Departments", icon: Users },
   { href: "/assigned-to-me", label: "Assigned to Me", icon: UserRound },
   { href: "/my-requests", label: "My Requests", icon: FileText },
-  { href: "/all-tickets", label: "All Tickets", icon: Layers, overseersOnly: true },
+  { href: "/team", label: "Users", icon: UserCog, headsOnly: true },
+  { href: "/all-tickets", label: "All Tickets", icon: Layers },
   { href: "/activity", label: "Activity", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -128,7 +134,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {NAV.filter(
             (item) =>
               (!item.adminOnly || isAdmin(session)) &&
-              (!item.overseersOnly || canSeeAllTickets(session)),
+              (!item.overseersOnly || canSeeAllTickets(session)) &&
+              (!item.headsOnly || isHead(session)),
           ).map(renderItem)}
 
           {isAdmin(session) && (

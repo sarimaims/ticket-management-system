@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, ArrowRight, CalendarCheck, CalendarClock, History } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowRight,
+  CalendarCheck,
+  CalendarClock,
+  History,
+} from "lucide-react";
 
 import { OriginTag } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/api";
@@ -16,7 +22,9 @@ import { cn, formatDateOf, formatTime } from "@/lib/utils";
 
 /** The people on one side of a move, or "Nobody" when there are none. */
 const names = (people: { name?: string }[]) =>
-  people.length === 0 ? "Nobody" : people.map((person) => person.name ?? "Someone").join(", ");
+  people.length === 0
+    ? "Nobody"
+    : people.map((person) => person.name ?? "Someone").join(", ");
 
 /**
  * Who has held this ticket, oldest first.
@@ -33,9 +41,15 @@ const names = (people: { name?: string }[]) =>
  * rather than two tabs.
  */
 type Moment =
-  | ({ at: string; sort: number } & { type: "handover"; entry: AssignmentRecord })
+  | ({ at: string; sort: number } & {
+      type: "handover";
+      entry: AssignmentRecord;
+    })
   | ({ at: string; sort: number } & { type: "event"; entry: TicketEvent })
-  | ({ at: string; sort: number } & { type: "promise"; entry: CommitmentRecord });
+  | ({ at: string; sort: number } & {
+      type: "promise";
+      entry: CommitmentRecord;
+    });
 
 /** How each kind of promise announces itself, and in what colour. */
 const PROMISE_META: Record<
@@ -65,6 +79,29 @@ const PROMISE_META: Record<
     dot: "bg-status-overdue-fg",
     chip: "bg-status-overdue-bg text-status-overdue-fg",
     icon: CalendarClock,
+  },
+};
+
+/**
+ * What each kind of event calls itself in the trail.
+ *
+ * A correction to the request and a correction to something said about it are
+ * different things, and a trail that called both "Edited" would make the
+ * second look like the first.
+ */
+const EVENT_META: Record<string, { label: string; chip: string }> = {
+  raised: { label: "Raised", chip: "bg-brand-50 text-brand-700" },
+  edited: {
+    label: "Edited",
+    chip: "bg-status-waiting-bg text-status-waiting-fg",
+  },
+  "message.edited": {
+    label: "Message edited",
+    chip: "bg-chat-accent-soft text-chat-accent-strong",
+  },
+  "message.deleted": {
+    label: "Message withdrawn",
+    chip: "bg-ink-100 text-ink-600",
   },
 };
 
@@ -110,7 +147,8 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
         setTrail(moments.sort((a, b) => a.sort - b.sort));
       })
       .catch((caught: unknown) => {
-        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        if (caught instanceof DOMException && caught.name === "AbortError")
+          return;
         setTrail([]);
         setError(errorMessage(caught));
       });
@@ -143,17 +181,40 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
         </p>
       )}
 
+      {/* The same shape the trail is about to take, so the pane does not
+          jump when it lands. */}
       {trail === null && (
-        <p className="py-8 text-center text-sm text-ink-400">Loading the history...</p>
+        <ul aria-hidden="true" className="space-y-3">
+          {[0, 1, 2].map((row) => (
+            <li key={row} className="flex items-start gap-2.5">
+              <span
+                style={{ animationDelay: `${row * 120}ms` }}
+                className="mt-0.5 size-6 shrink-0 animate-pulse rounded-full bg-ink-100"
+              />
+              <span className="min-w-0 flex-1 space-y-1.5">
+                <span
+                  style={{ animationDelay: `${row * 120}ms` }}
+                  className="block h-3 w-3/5 animate-pulse rounded bg-ink-100"
+                />
+                <span
+                  style={{ animationDelay: `${row * 120 + 60}ms` }}
+                  className="block h-2.5 w-2/5 animate-pulse rounded bg-ink-100"
+                />
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
 
       {trail?.length === 0 && !error && (
         <div className="py-10 text-center">
           <History className="mx-auto size-6 text-ink-300" />
-          <p className="mt-2 text-sm font-semibold text-ink-700">Nothing recorded yet</p>
+          <p className="mt-2 text-sm font-semibold text-ink-700">
+            Nothing recorded yet
+          </p>
           <p className="mt-0.5 text-sm text-ink-400">
-            This ticket was raised before the trail was kept. Every handover, and every date
-            promised for it, is listed here from now on.
+            This ticket was raised before the trail was kept. Every handover,
+            and every date promised for it, is listed here from now on.
           </p>
         </div>
       )}
@@ -162,13 +223,18 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
         <ol className="mt-4">
           {trail.map((moment, index) => {
             const last = index === trail.length - 1;
-            const opening = moment.type === "handover" && moment.entry.kind === "raised";
+            const opening =
+              moment.type === "handover" && moment.entry.kind === "raised";
             const by =
-              moment.type === "handover" ? moment.entry.by : { ...moment.entry.by, id: null };
-
+              moment.type === "handover"
+                ? moment.entry.by
+                : { ...moment.entry.by, id: null };
 
             return (
-              <li key={`${moment.type}-${moment.entry.id}`} className="flex gap-3">
+              <li
+                key={`${moment.type}-${moment.entry.id}`}
+                className="flex gap-3"
+              >
                 {/* The dot marks the moment; the line carries the eye to the
                     next one, and stops at the last. */}
                 <span className="flex flex-col items-center">
@@ -193,7 +259,10 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                         const Icon = meta.icon;
                         const moved =
                           moment.entry.previousDate && moment.entry.date
-                            ? distance(moment.entry.previousDate, moment.entry.date)
+                            ? distance(
+                                moment.entry.previousDate,
+                                moment.entry.date,
+                              )
                             : null;
 
                         return (
@@ -219,10 +288,14 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                               </>
                             )}
                             <span>
-                              {moment.entry.date ? formatDateOf(moment.entry.date) : "no date"}
+                              {moment.entry.date
+                                ? formatDateOf(moment.entry.date)
+                                : "no date"}
                             </span>
                             {moved && (
-                              <span className="text-xs font-medium text-ink-400">({moved})</span>
+                              <span className="text-xs font-medium text-ink-400">
+                                ({moved})
+                              </span>
                             )}
                           </>
                         );
@@ -237,7 +310,9 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                         </>
                       ) : (
                         <>
-                          <span className="text-ink-500">{names(moment.entry.from)}</span>
+                          <span className="text-ink-500">
+                            {names(moment.entry.from)}
+                          </span>
                           <ArrowRight className="size-3.5 shrink-0 text-ink-300" />
                           {names(moment.entry.to)}
                         </>
@@ -247,14 +322,22 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                         <span
                           className={cn(
                             "rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
-                            moment.entry.event === "raised"
-                              ? "bg-brand-50 text-brand-700"
-                              : "bg-status-waiting-bg text-status-waiting-fg",
+                            (
+                              EVENT_META[moment.entry.event ?? "edited"] ??
+                              EVENT_META.edited
+                            ).chip,
                           )}
                         >
-                          {moment.entry.event === "raised" ? "Raised" : "Edited"}
+                          {
+                            (
+                              EVENT_META[moment.entry.event ?? "edited"] ??
+                              EVENT_META.edited
+                            ).label
+                          }
                         </span>
-                        <span className="font-medium text-ink-700">{moment.entry.body}</span>
+                        <span className="font-medium text-ink-700">
+                          {moment.entry.body}
+                        </span>
                       </>
                     )}
                   </p>

@@ -130,10 +130,19 @@ export function deleteTickets(ids: string[]) {
  * department, because an assignee belongs to one - the API refuses a mixed
  * batch rather than half-applying it.
  */
-export function reassignTickets(ids: string[], assignees: string[]) {
-  return api<{ reassigned: number; assignees: { id: string; name: string }[] }>("/tickets", {
+/**
+ * Hands a batch to other people, and - for an admin - to another department
+ * entirely. `department` is the id to move them to; leave it out to keep them
+ * where they are.
+ */
+export function reassignTickets(ids: string[], assignees: string[], department?: string) {
+  return api<{
+    reassigned: number;
+    department: { id: string; name: string } | null;
+    assignees: { id: string; name: string }[];
+  }>("/tickets", {
     method: "PATCH",
-    body: { ids, assignees },
+    body: { ids, assignees, ...(department ? { department } : {}) },
   });
 }
 

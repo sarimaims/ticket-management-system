@@ -29,6 +29,59 @@ export async function listUsers(req, res) {
   res.json({ success: true, users: users.map(presentUser) });
 }
 
+/** The departments this person runs, as ids. Empty for anyone who runs none. */
+function headOf(user) {
+  return (user.memberships ?? [])
+    .filter((membership) => membership.role === 'head')
+    .map((membership) => membership.department);
+}
+
+/**
+ * A head's own directory: everyone in the departments they run.
+ *
+ * Deliberately not the admin list with a filter on it. A head is trusted with
+ * their own team and nothing wider, so the scope is computed from who is
+ * asking rather than taken from the query - there is no parameter here that
+ * could be edited into showing somebody else's department.
+ *
+ * An admin has no memberships by design, so this answers 403 for them; the
+ * whole directory is theirs under /users instead.
+ */
+export async function listMyTeam(req, res) {
+  const departmentIds = headOf(req.user);
+  if (departmentIds.length === 0) {
+    throw ApiError.forbidden('Only a department head can see this.');
+  }
+
+  const { role, status } = req.query;
+
+  const filter = { 'memberships.department': { $in: departmentIds } };
+  if (status && USER_STATUSES.includes(status)) filter.status = status;
+
+  const users = await User.find(filter).sort({ createdAt: -1 }).populate(WITH_DEPARTMENTS);
+
+  // Filtered here rather than in the query: 'memberships.role' would match a
+  // head of some other department who happens to sit on this team, and the
+  // question being asked is what they are *here*.
+  const mine = new Set(departmentIds.map(String));
+  const isHere = (user, wanted) =>
+    (user.memberships ?? []).some(
+      (membership) => mine.has(String(membership.department?._id ?? membership.department)) &&
+        membership.role === wanted,
+    );
+
+  const scoped = DEPARTMENT_ROLES.includes(role)
+    ? users.filter((user) => isHere(user, role))
+    : users;
+
+  res.json({
+    success: true,
+    users: scoped.map(presentUser),
+    /** Which departments this answer covers, so the page can say so. */
+    departments: departmentIds.map(String),
+  });
+}
+
 /**
  * Turns whatever was sent into a clean membership list: one entry per
  * department, a valid role on each, and every department checked to exist.

@@ -19,12 +19,13 @@ export type AssignmentRecord = {
 
 /**
  * Something that happened to the ticket other than a handover: it was raised,
- * retitled, re-dated. Handovers are in {@link AssignmentRecord} instead, where
- * they carry who it moved between.
+ * retitled, re-dated - or a line of its conversation was corrected or
+ * withdrawn. Handovers are in {@link AssignmentRecord} instead, where they
+ * carry who it moved between.
  */
 export type TicketEvent = {
   id: string;
-  event: "raised" | "edited" | "assignment" | null;
+  event: "raised" | "edited" | "assignment" | "message.edited" | "message.deleted" | null;
   body: string;
   by: { name: string; role: Role };
   createdAt: string;
