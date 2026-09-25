@@ -164,7 +164,7 @@ export function UnitDetail({ unitId }: { unitId: string }) {
                 <TableHead>Description</TableHead>
                 <TableHead sortable>Members</TableHead>
                 <TableHead sortable>Heads</TableHead>
-                <TableHead sortable>Team</TableHead>
+                <TableHead sortable>Users</TableHead>
                 <TableHead>Actions</TableHead>
               </tr>
             </thead>

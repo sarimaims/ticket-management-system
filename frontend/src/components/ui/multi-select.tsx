@@ -7,7 +7,12 @@ import { Check, ChevronDown, Search, X } from "lucide-react";
 import { inAnchoredPanel, useAnchoredPanel } from "@/components/ui/use-anchored-panel";
 import { cn } from "@/lib/utils";
 
-export type Option = { value: string; label: string };
+export type Option = {
+  value: string;
+  label: string;
+  /** Shown beside the label in the list only; the chips and search use the label. */
+  badge?: React.ReactNode;
+};
 
 /** Below this many options the eye finds it faster than the keyboard would. */
 const SEARCH_FROM = 7;
@@ -283,6 +288,7 @@ export function MultiSelect({
                         {selected && <Check className="size-2.5" strokeWidth={3.5} />}
                       </span>
                       {option.label}
+                      {option.badge && <span className="ml-auto shrink-0">{option.badge}</span>}
                     </button>
                   </li>
                 );

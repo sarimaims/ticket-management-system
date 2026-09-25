@@ -48,12 +48,25 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
   return rows.length;
 }
 
-/** A ticket just landed in a department: tell its head and its team. */
+/**
+ * A ticket just landed in a department: tell whoever it landed on.
+ *
+ * Which is whoever was named, or - when nobody was - that department's head,
+ * because an unaddressed request is assigned to the head on the way in. The
+ * rest of the department is not rung: the ticket is on their queue either
+ * way, and a bell for every request a colleague was asked for is noise.
+ *
+ * A ticket that landed on nobody at all, which means a department with no
+ * head yet, still tells everyone. Better an unnecessary bell than a request
+ * raised into silence.
+ */
 export async function notifyNewTicket({ ticket, actor }) {
   try {
     const departmentId = ticket.department?._id ?? ticket.department;
+    const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person);
+
     return await deliver({
-      recipients: await departmentMemberIds(departmentId),
+      recipients: holders.length > 0 ? holders : await departmentMemberIds(departmentId),
       exclude: actor._id,
       type: 'ticket.new',
       ticket,

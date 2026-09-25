@@ -8,16 +8,21 @@ import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
 import { postSystemMessage } from '../services/chat.js';
 import { notifyHandoverAnswered, notifyHandoverAsked } from '../services/notify.js';
-import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
+import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 
 /**
  * Who may move a ticket without being asked.
  *
  * A head runs the department and a manager oversees all of them, so both hand
- * work out directly. Everyone else asks, and the person asked decides.
+ * work out directly. So does the person who raised it: they could name who
+ * should pick it up while raising it, and that right does not expire at
+ * submit - it is their request that is sitting there unanswered.
+ *
+ * Everyone else asks, and the person asked decides.
  */
 export function assignsDirectly(user, ticket) {
   if (MANAGER_ROLES.includes(user.role)) return true;
+  if (isRaiser(user, ticket)) return true;
   return user.roleInDepartment(ticket.department?._id ?? ticket.department) === 'head';
 }
 
@@ -98,6 +103,10 @@ export async function createHandover(req, res) {
       (MANAGER_ROLES.includes(candidate.role) || candidate.roleInDepartment(ticket.department));
 
     if (!belongs) throw ApiError.badRequest('That person is not in this department.');
+    // The head is not asked: releasing the ticket is how it goes back to them.
+    if (candidate.roleInDepartment(ticket.department) === 'head') {
+      throw ApiError.badRequest('Release the ticket to hand it back to the head.');
+    }
     people.push(candidate);
   }
 
@@ -262,4 +271,80 @@ export async function answerHandover(req, res) {
   });
 
   res.json({ success: true, handover: present(request) });
+}
+
+/**
+ * Gives a ticket back.
+ *
+ * The holder steps off it. Anyone else still on it keeps it; if that leaves
+ * nobody, it goes back to the department's head, the same place a ticket
+ * nobody was named for starts - "nobody's job" is not a state it should be
+ * released into. Any ask this person still has out is withdrawn with it,
+ * since they no longer have anything to hand on.
+ */
+export async function releaseTicket(req, res) {
+  const ticket = await readableTicket(req);
+
+  if (!canWorkOn(req.user, ticket)) {
+    throw ApiError.forbidden('Only the receiving department can release this ticket.');
+  }
+
+  const me = String(req.user._id);
+  const holders = (ticket.assignees ?? []).map(String);
+  if (!holders.includes(me)) {
+    throw ApiError.forbidden('Only somebody holding this ticket can release it.');
+  }
+
+  const departmentId = ticket.department?._id ?? ticket.department;
+  const from = await User.find({ _id: { $in: ticket.assignees ?? [] } }).select('name');
+
+  let held = holders.filter((id) => id !== me);
+  if (held.length === 0) {
+    const heads = await User.find({
+      _id: { $ne: req.user._id },
+      status: { $ne: 'suspended' },
+      memberships: { $elemMatch: { department: departmentId, role: 'head' } },
+    }).select('_id');
+    held = heads.map((person) => String(person._id));
+  }
+
+  ticket.assignees = held;
+  await ticket.save();
+
+  await HandoverRequest.updateMany(
+    { ticket: ticket._id, requestedBy: req.user._id, status: 'pending' },
+    {
+      $set: {
+        status: 'cancelled',
+        decidedBy: req.user._id,
+        decidedByName: req.user.name,
+        decidedAt: new Date(),
+      },
+    },
+  );
+
+  const to = await User.find({ _id: { $in: ticket.assignees } }).select('name');
+  await recordAssignment({ ticket, from, to, actor: req.user });
+
+  const names = to.map((person) => person.name).join(', ');
+  await postSystemMessage({
+    ticket,
+    actor: req.user,
+    event: 'assignment',
+    body: names ? `released this back to ${names}` : 'released this',
+  });
+
+  const populated = await Ticket.findById(ticket._id).populate('department', 'name');
+  await record({
+    actor: req.user,
+    department: populated.department,
+    action: 'ticket.updated',
+    summary: `updated ${populated.number}: ${names ? `assigned to ${names}` : 'released'}`,
+    ticketNumber: populated.number,
+  });
+
+  res.json({
+    success: true,
+    assignees: to.map((person) => ({ id: String(person._id), name: person.name })),
+  });
 }

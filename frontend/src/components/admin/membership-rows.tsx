@@ -5,7 +5,7 @@ import { Building, Plus, X } from "lucide-react";
 
 import { Select } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
-import type { DepartmentRole } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, type DepartmentRole } from "@/lib/auth";
 import type { Department } from "@/lib/departments";
 import type { MembershipInput } from "@/lib/users";
 
@@ -14,7 +14,7 @@ import type { MembershipInput } from "@/lib/users";
  * vocabulary the rest of the workspace uses; "User" is simply the friendlier
  * word for the ordinary case.
  */
-const ROLE_LABEL: Record<DepartmentRole, string> = { head: "Head", team: "User" };
+const ROLE_LABEL: Record<DepartmentRole, string> = DEPARTMENT_ROLE_LABEL;
 
 type Row = {
   /** Stable across re-renders, so a half-filled row keeps its identity. */

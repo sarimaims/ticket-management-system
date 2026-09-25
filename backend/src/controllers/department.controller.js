@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { workEmail } from '../utils/workEmail.js';
 import Department from '../models/Department.js';
 import Unit from '../models/Unit.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES } from '../models/User.js';
@@ -386,7 +387,9 @@ export async function addMember(req, res) {
 
     user = await User.create({
       name: name.trim(),
-      email: normalisedEmail,
+      // Only a new account is held to the domain; attaching one that already
+      // exists is a lookup, not a sign-up.
+      email: workEmail(normalisedEmail),
       password,
       role: 'user',
       status: 'active',

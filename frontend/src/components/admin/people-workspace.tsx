@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
 import { Modal } from "@/components/ui/modal";
@@ -249,10 +250,14 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
               <MultiSelect
                 options={[
-                  { value: "superadmin", label: "Super Admin" },
+                  // The API does not send the super admin to an admin, so the
+                  // filter does not offer a choice that can only return none.
+                  ...(session?.role === "superadmin"
+                    ? [{ value: "superadmin", label: "Super Admin" }]
+                    : []),
                   { value: "admin", label: "Admin" },
                   { value: "head", label: "Head" },
-                  { value: "team", label: "Team" },
+                  { value: "team", label: "User" },
                 ]}
                 value={roles}
                 onChange={setRoles}
@@ -590,12 +595,11 @@ function CreatePersonModal({
           </Field>
 
           <Field label="Email" required htmlFor="person-email">
-            <Input
+            <WorkEmailInput
               id="person-email"
-              type="email"
-              placeholder="name@flowdesk.com"
+              placeholder="name"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={setEmail}
               name="person-email"
               autoComplete="off"
               data-1p-ignore
@@ -921,12 +925,11 @@ function EditUserForm({
         </Field>
 
         <Field label="Email" required htmlFor="edit-email">
-          <Input
+          <WorkEmailInput
             id="edit-email"
-            type="email"
             className="h-8"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={setEmail}
           />
         </Field>
 

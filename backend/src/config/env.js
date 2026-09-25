@@ -33,6 +33,8 @@ const env = {
   jwtSecret: process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   cookieName: 'flowdesk_token',
+  /** Every account's address is on this domain; the app only asks for the part before it. */
+  emailDomain: (process.env.EMAIL_DOMAIN || 'flowdesk.ae').replace(/^@/, '').trim().toLowerCase(),
   /**
    * Where chat attachments are stored. Leave the bucket empty and the feature
    * reports itself as unavailable rather than half working: the buttons are

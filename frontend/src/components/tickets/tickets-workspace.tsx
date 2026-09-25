@@ -61,7 +61,7 @@ import {
 import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
-import { isAdmin } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
 import { activeUnit, activeUnitOnServer, subscribeActiveUnit } from "@/lib/active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { Stat, TicketStatus } from "@/lib/types";
@@ -652,8 +652,13 @@ export function TicketsWorkspace({
    * The same right that lets somebody work one ticket lets them work twenty.
    */
   const canWorkTicket = useCallback(
-    (ticket: TicketRecord) => manager || myDepartmentIds.has(ticket.department.id),
-    [manager, myDepartmentIds],
+    (ticket: TicketRecord) =>
+      manager ||
+      myDepartmentIds.has(ticket.department.id) ||
+      // Their own request: the raiser may name who should pick it up, here in
+      // a batch exactly as they could one at a time in the sheet.
+      ticket.raisedBy.id === meId,
+    [manager, myDepartmentIds, meId],
   );
 
   /**
@@ -1365,6 +1370,7 @@ function ReassignTicketsModal({
   onDone: (tickets: TicketRecord[], names: string) => void;
   onError: (message: string) => void;
 }) {
+  const { session } = useAuth();
   const [team, setTeam] = useState<MemberOption[] | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
@@ -1507,14 +1513,18 @@ function ReassignTicketsModal({
               </span>
             </p>
             <MultiSelect
-              options={(team ?? []).map((member) => ({
-                value: member.id,
-                label: `${member.name} (${member.departmentRole})`,
-              }))}
+              // Handing work out means handing it to somebody else, so the
+              // person doing the handing is not on the list.
+              options={(team ?? [])
+                .filter((member) => member.id !== session?.id)
+                .map((member) => ({
+                  value: member.id,
+                  label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                }))}
               value={chosen}
               onChange={setChosen}
               placeholder={team === null ? "Loading..." : "Choose one or more people"}
-              emptyMessage="Nobody is in this department"
+              emptyMessage="Nobody else is in this department"
             />
             <p className="mt-1.5 text-xs text-ink-400">
               {moving

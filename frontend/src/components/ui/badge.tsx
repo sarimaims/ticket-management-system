@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { DEPARTMENT_ROLE_LABEL } from "@/lib/auth";
 import type { TicketPriority, TicketStatus } from "@/lib/types";
 
 /* Status + priority colours come straight from the global colour system in
@@ -64,12 +65,12 @@ export function RoleTag({ role, className }: { role: "head" | "team"; className?
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold capitalize",
+        "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold",
         ROLE_STYLES[role],
         className,
       )}
     >
-      {role}
+      {DEPARTMENT_ROLE_LABEL[role]}
     </span>
   );
 }

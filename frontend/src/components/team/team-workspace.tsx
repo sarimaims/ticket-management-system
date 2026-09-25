@@ -7,6 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
@@ -440,13 +441,12 @@ function AddUserModal({
           </Field>
 
           <Field label="Work email" required htmlFor="team-email">
-            <Input
+            <WorkEmailInput
               id="team-email"
               className="h-9"
-              type="email"
-              placeholder="name@flowdesk.com"
+              placeholder="name"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={setEmail}
             />
           </Field>
         </div>
