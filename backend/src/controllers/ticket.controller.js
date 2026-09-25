@@ -347,7 +347,44 @@ export async function createTicket(req, res) {
     throw ApiError.badRequest(`Priority must be one of: ${TICKET_PRIORITIES.join(', ')}.`);
   }
 
-  const targets = await Department.find({ _id: { $in: targetIds }, isActive: true });
+  /**
+   * Everything the answer needs, asked for at once.
+   *
+   * The departments being asked, the departments being asked *from*, the
+   * people named, and the heads who would hold anything nobody named - four
+   * questions that do not depend on each other, and used to be four waits on
+   * a database that is a long way away.
+   */
+  const wantedPeople = [
+    ...new Set(
+      Object.values(assignees && typeof assignees === 'object' && !Array.isArray(assignees) ? assignees : {})
+        .flatMap((picked) => (Array.isArray(picked) ? picked : [picked]))
+        .filter((id) => id && mongoose.isValidObjectId(id))
+        .map(String),
+    ),
+  ];
+
+  const fromWanted = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))].filter((id) =>
+    mongoose.isValidObjectId(id),
+  );
+
+  const [targets, fromDocs, namedPeople, possibleHeads] = await Promise.all([
+    // Populated here so the answer can be built without reading the rows back.
+    Department.find({ _id: { $in: targetIds }, isActive: true }).populate('unit', 'name code'),
+    Department.find({ _id: { $in: fromWanted } })
+      .select('name code unit')
+      .populate('unit', 'name code')
+      .lean(),
+    wantedPeople.length > 0 ? User.find({ _id: { $in: wantedPeople } }) : [],
+    User.find({
+      status: { $ne: 'suspended' },
+      memberships: { $elemMatch: { department: { $in: targetIds }, role: 'head' } },
+    }).select('name email memberships'),
+  ]);
+
+  const peopleById = new Map(
+    [...namedPeople, ...possibleHeads].map((person) => [String(person._id), person]),
+  );
   if (targets.length !== targetIds.length) {
     throw ApiError.badRequest('One or more departments do not exist.');
   }
@@ -387,13 +424,8 @@ export async function createTicket(req, res) {
         }
       }
 
-      // Everyone named for this department is fetched at once: one wait for
-      // the set rather than one per person.
-      const candidates = await User.find({ _id: { $in: wanted } });
-      const byId = new Map(candidates.map((person) => [String(person._id), person]));
-
       for (const userId of wanted) {
-        const candidate = byId.get(String(userId));
+        const candidate = peopleById.get(String(userId));
         const belongs =
           candidate &&
           candidate.status !== 'suspended' &&
@@ -419,27 +451,15 @@ export async function createTicket(req, res) {
    * queue unheld: better an unaddressed ticket than a rejected one.
    */
   const unstaffed = targets.filter((target) => !assignedTo.has(String(target._id)));
-  if (unstaffed.length > 0) {
-    // Every head of every unnamed department in one read, then sorted out in
-    // memory - the same one-wait-per-set rule as the named people above.
-    const heads = await User.find({
-      status: { $ne: 'suspended' },
-      memberships: {
-        $elemMatch: {
-          department: { $in: unstaffed.map((target) => target._id) },
-          role: 'head',
-        },
-      },
-    }).select('memberships');
+  for (const target of unstaffed) {
+    const key = String(target._id);
+    // The heads came back with everything else above; who holds what is
+    // decided here, in memory.
+    const owners = possibleHeads
+      .filter((person) => person.roleInDepartment(key) === 'head')
+      .map((person) => person._id);
 
-    for (const target of unstaffed) {
-      const key = String(target._id);
-      const owners = heads
-        .filter((person) => person.roleInDepartment(key) === 'head')
-        .map((person) => person._id);
-
-      if (owners.length > 0) assignedTo.set(key, owners);
-    }
+    if (owners.length > 0) assignedTo.set(key, owners);
   }
 
   // You may only raise on behalf of a department you actually belong to.
@@ -490,13 +510,27 @@ export async function createTicket(req, res) {
   // the same reason the queues stopped using them.
   clock.step('insert');
 
-  const populated = await hydrate(
-    await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
-      .sort({ number: 1 })
-      .lean(),
-  );
+  /**
+   * Built from what is already in hand rather than read back.
+   *
+   * Every reference a new ticket holds was fetched a moment ago to check it:
+   * the department it goes to, the ones it is raised from, the people on it -
+   * and the person raising it is the caller. Asking the database to hand them
+   * back was a round trip spent learning nothing new.
+   */
+  const departmentById = new Map(targets.map((target) => [String(target._id), target]));
+  const raiser = { _id: req.user._id, name: req.user.name, email: req.user.email };
 
-  clock.step('read-back');
+  const populated = created.map((ticket) => ({
+    ...ticket.toObject(),
+    department: departmentById.get(String(ticket.department)) ?? ticket.department,
+    fromDepartments: fromDocs,
+    raisedBy: raiser,
+    assignees: (ticket.assignees ?? []).map((id) => peopleById.get(String(id)) ?? id),
+    committedBy: null,
+  }));
+
+  clock.step('assemble');
 
   const tickets = populated.map(present);
 
