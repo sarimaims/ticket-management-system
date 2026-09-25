@@ -10,7 +10,6 @@
     "dev": "nodemon src/server.js",
     "seed": "node src/scripts/seed.js",
     "seed:dummy": "node src/scripts/seed-dummy.js",
-    "seed:tickets": "node src/scripts/seed-tickets.js",
     "reset": "node src/scripts/reset.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
