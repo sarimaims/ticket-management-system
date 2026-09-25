@@ -99,9 +99,24 @@ export function DepartmentsWorkspace() {
   const stats: Stat[] = [
     { label: "Departments", value: departments.length, caption: "", tone: "new" },
     { label: "Members", value: totals.members, caption: "", tone: "progress" },
-    { label: "Heads", value: totals.heads, caption: "", tone: "admin" },
-    { label: "Users", value: totals.team, caption: "", tone: "completed" },
+    { label: "Heads", value: totals.heads, caption: "", tone: "admin", key: "head" },
+    { label: "Users", value: totals.team, caption: "", tone: "completed", key: "team" },
   ];
+
+  /**
+   * The counts are of people, and people are listed elsewhere: the whole
+   * directory for an admin, a head's own team for a head. Departments is this
+   * list, so it just clears the search.
+   */
+  const openTile = (key: string) => {
+    if (key === "Departments") {
+      setQuery("");
+      return;
+    }
+    const directory = canManage ? "/admin/users" : "/team";
+    const role = key === "head" || key === "team" ? `?role=${key}` : "";
+    router.push(`${directory}${role}` as "/");
+  };
 
   return (
     <>
@@ -112,7 +127,7 @@ export function DepartmentsWorkspace() {
 
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} className="mb-2" />
+      <StatTiles stats={stats} loading={loading} className="mb-2" onSelect={openTile} />
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">

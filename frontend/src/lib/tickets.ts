@@ -1,5 +1,5 @@
 import { api, apiRevalidate, BASE } from "./api";
-import type { TicketPriority, TicketStatus } from "./types";
+import { isClosed, type TicketPriority, type TicketStatus } from "./types";
 
 /** The unit a department sits under, as the ticket carries it. */
 export type TicketUnit = { id: string; name?: string; code?: string } | null;
@@ -16,6 +16,32 @@ export type TicketAttachment = {
   size: number;
   uploadedAt: string | null;
 };
+
+const startOfToday = () => new Date(new Date().toDateString()).getTime();
+
+const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
+
+/** Past its date and not finished - whatever the status column happens to say. */
+export function isOverdue(ticket: TicketRecord) {
+  if (isClosed(ticket.status)) return false;
+  if (ticket.status === "Overdue") return true;
+
+  const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
+  return due !== null && due < startOfToday();
+}
+
+/** Open and due today, by the promised date where there is one. */
+export function isDueToday(ticket: TicketRecord) {
+  if (isClosed(ticket.status)) return false;
+  return dayOf(ticket.committedDeadline ?? ticket.deadline) === startOfToday();
+}
+
+/** Due today and not already counted as late: what "Due today" means on a card. */
+export const isDueTodayOnly = (ticket: TicketRecord) => isDueToday(ticket) && !isOverdue(ticket);
+
+/** Open with nobody on it. */
+export const isUnassigned = (ticket: TicketRecord) =>
+  !isClosed(ticket.status) && ticket.assignees.length === 0;
 
 export type TicketRecord = {
   id: string;
@@ -34,6 +60,10 @@ export type TicketRecord = {
   committedAt: string | null;
   /** Why the current promise is that date. Empty when nothing is promised. */
   committedReason: string;
+  /** Why it was called off, by whom and when. Empty unless it is Cancelled. */
+  cancelReason?: string;
+  cancelledByName?: string;
+  cancelledAt?: string | null;
   /** The unit rides along, so a list can be scoped without a second request. */
   department: { id: string; name?: string; code?: string; unit?: TicketUnit };
   fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
@@ -123,10 +153,10 @@ export function revalidateTickets(scope: TicketScope, etag: string | null, signa
  * conversation, the assignment trail, the bell entries. Managers only, which
  * the API enforces.
  */
-export function deleteTickets(ids: string[]) {
+export function deleteTickets(ids: string[], reason: string) {
   return api<{ deleted: number; numbers: string[] }>("/tickets", {
     method: "DELETE",
-    body: { ids },
+    body: { ids, reason },
   });
 }
 
@@ -164,6 +194,7 @@ export function updateTicket(
     committedDeadline?: string | null;
     /** Required by the API whenever the promised date actually moves. */
     committedReason?: string;
+    cancelReason?: string;
     assignees?: string[];
   },
 ) {

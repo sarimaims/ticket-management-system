@@ -13,6 +13,7 @@ import {
 
 import { BASE } from "@/lib/api";
 import { useAuth } from "@/components/auth/auth-provider";
+import { canSeeAllTickets } from "@/lib/auth";
 import { destination } from "@/components/notifications/notification-shared";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -101,7 +102,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                   : "update",
             title: item.title,
             description: item.body,
-            href: destination(item),
+            href: destination(item, canSeeAllTickets(session)),
           });
         }
 
@@ -121,7 +122,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [toast],
+    [toast, session],
   );
 
   // One timer, only while signed in and only while the tab is in front.

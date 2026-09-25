@@ -1,4 +1,4 @@
-import { OVERDUE } from '../models/Ticket.js';
+import { CLOSED_STATUSES, OVERDUE } from '../models/Ticket.js';
 
 /**
  * Overdue is a fact about the calendar, not a decision somebody makes.
@@ -28,7 +28,7 @@ export function startOfToday() {
 
 /** Past its date and not finished. */
 export function isOverdue(ticket, today = dayOf(Date.now())) {
-  if (!ticket || ticket.status === 'Completed') return false;
+  if (!ticket || CLOSED_STATUSES.includes(ticket.status)) return false;
 
   const due = dueDate(ticket);
   return Boolean(due) && dayOf(due) < today;

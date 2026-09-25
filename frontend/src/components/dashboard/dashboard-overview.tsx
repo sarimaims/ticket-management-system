@@ -15,16 +15,17 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/components/auth/auth-provider";
+import { canSeeAllTickets, type Session } from "@/lib/auth";
 import { DepartmentChart, type DepartmentPoint } from "@/components/dashboard/department-chart";
 import { StatusShare, type StatusPoint } from "@/components/dashboard/status-share";
 import { StatusBadge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
-import type { TicketRecord } from "@/lib/tickets";
-import type { TicketStatus } from "@/lib/types";
+import { isDueToday, isDueTodayOnly, isOverdue, type TicketRecord } from "@/lib/tickets";
+import { isClosed, type TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STATUS_ORDER: TicketStatus[] = ["New", "In Progress", "Overdue", "Completed"];
+const STATUS_ORDER: TicketStatus[] = ["New", "In Progress", "Overdue", "Completed", "Cancelled"];
 
 const DAY = 86_400_000;
 
@@ -33,21 +34,7 @@ const startOfToday = () => new Date(new Date().toDateString()).getTime();
 
 const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
 
-const isOpen = (ticket: TicketRecord) => ticket.status !== "Completed";
-
-/** Past its date and not finished - whatever the status column happens to say. */
-function isOverdue(ticket: TicketRecord) {
-  if (!isOpen(ticket)) return false;
-  if (ticket.status === "Overdue") return true;
-
-  const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
-  return due !== null && due < startOfToday();
-}
-
-function isDueToday(ticket: TicketRecord) {
-  if (!isOpen(ticket)) return false;
-  return dayOf(ticket.committedDeadline ?? ticket.deadline) === startOfToday();
-}
+const isOpen = (ticket: TicketRecord) => !isClosed(ticket.status);
 
 /** "3 days ago", "in 2 days" - the thing being asked of a date on a queue. */
 function when(value: string | null) {
@@ -180,6 +167,10 @@ function Panel({
 }
 
 /** One row of the work that is actually late, due, or nobody's. */
+/** A plain user has no All Tickets; the queue that holds their rows is Assigned to Me. */
+const ticketsPage = (session: Session | null) =>
+  canSeeAllTickets(session) ? "/all-tickets" : "/assigned-to-me";
+
 function QueueRow({
   ticket,
   reason,
@@ -189,6 +180,7 @@ function QueueRow({
   reason: "overdue" | "today" | "unassigned";
   now: number | null;
 }) {
+  const { session } = useAuth();
   const note =
     reason === "unassigned"
       ? `nobody yet · raised ${relativeTime(ticket.createdAt, now)}`
@@ -197,7 +189,7 @@ function QueueRow({
   return (
     <li>
       <Link
-        href={`/all-tickets?ticket=${ticket.id}` as "/"}
+        href={`${ticketsPage(session)}?ticket=${ticket.id}` as "/"}
         className="group flex items-center gap-2.5 rounded-md px-1.5 py-1.5 transition-colors hover:bg-ink-50"
       >
         <span
@@ -260,11 +252,12 @@ export function DashboardOverview() {
   }, []);
 
   const meId = session?.id;
+  const queue = ticketsPage(session);
 
   const view = useMemo(() => {
     const open = tickets.filter(isOpen);
     const overdue = open.filter(isOverdue);
-    const today = open.filter((ticket) => isDueToday(ticket) && !isOverdue(ticket));
+    const today = open.filter(isDueTodayOnly);
     const unassigned = open.filter((ticket) => ticket.assignees.length === 0);
     const mine = open.filter((ticket) => ticket.assignees.some((person) => person.id === meId));
 
@@ -275,7 +268,7 @@ export function DashboardOverview() {
         label: "Past due",
         value: overdue.length,
         caption: overdue.length ? "date gone, still open" : "nothing is late",
-        href: "/all-tickets",
+        href: `${queue}?view=past`,
         icon: AlarmClock,
         tone: "rose",
       },
@@ -283,7 +276,7 @@ export function DashboardOverview() {
         label: "Due today",
         value: today.length,
         caption: today.length ? "finish or re-commit" : "nothing due today",
-        href: "/all-tickets",
+        href: `${queue}?view=today`,
         icon: CalendarClock,
         tone: "amber",
       },
@@ -291,7 +284,7 @@ export function DashboardOverview() {
         label: "Unassigned",
         value: unassigned.length,
         caption: unassigned.length ? "waiting to be picked up" : "everything has an owner",
-        href: "/all-tickets",
+        href: `${queue}?view=unassigned`,
         icon: UserX,
         tone: "slate",
       },
@@ -336,7 +329,7 @@ export function DashboardOverview() {
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
         .slice(0, 6),
     };
-  }, [tickets, meId]);
+  }, [tickets, meId, queue]);
 
   if (loading && tickets.length === 0) return <DashboardSkeleton />;
 
@@ -397,7 +390,7 @@ export function DashboardOverview() {
           className="xl:col-span-7"
           action={
             <Link
-              href="/all-tickets"
+              href={queue as "/"}
               className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-royal-700 hover:text-royal-800"
             >
               All tickets
@@ -463,7 +456,7 @@ export function DashboardOverview() {
               {view.recent.map((ticket) => (
                 <li key={ticket.id}>
                   <Link
-                    href={`/all-tickets?ticket=${ticket.id}` as "/"}
+                    href={`${ticketsPage(session)}?ticket=${ticket.id}` as "/"}
                     className="group flex items-center gap-2.5 rounded-md px-1.5 py-1.5 transition-colors hover:bg-ink-50"
                   >
                     <span className="min-w-0 flex-1">

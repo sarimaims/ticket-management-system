@@ -71,6 +71,10 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  /** Set by the Heads and Users tiles; Members clears it. */
+  const [roleFilter, setRoleFilter] = useState<DepartmentRole | null>(null);
+  /** The member waiting on a yes before they are taken out. */
+  const [removing, setRemoving] = useState<Member | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -126,8 +130,10 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
     }
   };
 
-  const visible = members.filter((member) =>
-    (member.name + member.email).toLowerCase().includes(query.trim().toLowerCase()),
+  const visible = members.filter(
+    (member) =>
+      (!roleFilter || member.departmentRole === roleFilter) &&
+      (member.name + member.email).toLowerCase().includes(query.trim().toLowerCase()),
   );
 
   const header = (name: string) => (
@@ -190,10 +196,32 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
       <StatTiles
         stats={
           [
-            { label: "Members", value: department.memberCount, caption: "", tone: "progress" },
-            { label: "Heads", value: department.headCount, caption: "", tone: "admin" },
-            { label: "Users", value: department.teamCount, caption: "", tone: "completed" },
+            {
+              label: "Members",
+              value: department.memberCount,
+              caption: "",
+              tone: "progress",
+              key: "all",
+            },
+            {
+              label: "Heads",
+              value: department.headCount,
+              caption: "",
+              tone: "admin",
+              key: "head",
+            },
+            {
+              label: "Users",
+              value: department.teamCount,
+              caption: "",
+              tone: "completed",
+              key: "team",
+            },
           ] satisfies Stat[]
+        }
+        active={roleFilter ?? "all"}
+        onSelect={(key) =>
+          setRoleFilter(key === "all" || key === roleFilter ? null : (key as DepartmentRole))
         }
         className="mb-2"
       />
@@ -286,7 +314,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                         {(isHere || member.departmentRole === "team") && (
                           <button
                             type="button"
-                            onClick={() => remove(member)}
+                            onClick={() => setRemoving(member)}
                             className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-brand-600"
                             aria-label={`Remove ${member.name}`}
                           >
@@ -313,6 +341,34 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
           load();
         }}
       />
+
+      <Modal
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        title={`Remove ${removing?.name ?? ""}?`}
+        description={`They will no longer be part of ${department.name}.`}
+        className="max-w-md"
+      >
+        <p className="text-sm text-ink-600">
+          <span className="font-semibold text-ink-900">{removing?.email}</span> loses access to this
+          department&apos;s tickets. Their account is not deleted.
+        </p>
+        <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+          <Button type="button" variant="outline" size="sm" onClick={() => setRemoving(null)}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              if (removing) void remove(removing);
+              setRemoving(null);
+            }}
+          >
+            Remove
+          </Button>
+        </div>
+      </Modal>
     </>
   );
 }

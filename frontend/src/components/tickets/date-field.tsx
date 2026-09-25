@@ -4,6 +4,13 @@ import { Calendar, X } from "lucide-react";
 
 import { cn, formatDate } from "@/lib/utils";
 
+/** Today where the reader is, as "2026-09-25" - the earliest a deadline can be. */
+export function todayISO() {
+  const now = new Date();
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
 /**
  * Native date input, our chrome. The real <input type="date"> is stretched
  * transparently over the control so clicking anywhere opens the OS picker,
@@ -21,6 +28,7 @@ export function DateField({
   bare = false,
   showIcon = true,
   invalid = false,
+  min,
   className,
 }: {
   value: string;
@@ -31,6 +39,8 @@ export function DateField({
   bare?: boolean;
   showIcon?: boolean;
   invalid?: boolean;
+  /** The earliest day that can be picked, as YYYY-MM-DD. Earlier days are greyed out. */
+  min?: string;
   className?: string;
 }) {
   return (
@@ -61,7 +71,14 @@ export function DateField({
         id={id}
         type="date"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        min={min}
+        // The picker greys out days before `min`, but a date can still be
+        // typed; one before it is not taken.
+        onChange={(event) => {
+          const next = event.target.value;
+          if (min && next && next < min) return;
+          onChange(next);
+        }}
         className="absolute inset-0 cursor-pointer opacity-0"
         aria-label={placeholder}
         aria-invalid={invalid || undefined}

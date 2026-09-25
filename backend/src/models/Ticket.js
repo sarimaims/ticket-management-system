@@ -9,7 +9,13 @@ import { SYSTEM_ROLES } from './User.js';
  * but a fact about the date, so it is worked out on the way out of the API
  * rather than stored - see services/overdue.js.
  */
-export const TICKET_STATUSES = ['New', 'In Progress', 'Completed'];
+export const TICKET_STATUSES = ['New', 'In Progress', 'Completed', 'Cancelled'];
+
+/**
+ * Finished, one way or the other: done, or called off. Neither can be late and
+ * neither is waiting on anybody.
+ */
+export const CLOSED_STATUSES = ['Completed', 'Cancelled'];
 
 /** Past its date and not finished. Assigned by the calendar, never by hand. */
 export const OVERDUE = 'Overdue';
@@ -137,6 +143,25 @@ const ticketSchema = new mongoose.Schema(
       trim: true,
       maxlength: 400,
       default: '',
+    },
+    /**
+     * Why it was called off, by whom and when. A snapshot of the name, like
+     * the activity log, so it still reads correctly after a rename. Cleared
+     * if the ticket is reopened.
+     */
+    cancelReason: {
+      type: String,
+      trim: true,
+      maxlength: 400,
+      default: '',
+    },
+    cancelledByName: {
+      type: String,
+      default: '',
+    },
+    cancelledAt: {
+      type: Date,
+      default: null,
     },
     project: {
       type: String,

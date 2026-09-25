@@ -16,7 +16,12 @@ import {
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
-import Ticket, { OVERDUE, TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import Ticket, {
+  CLOSED_STATUSES,
+  OVERDUE,
+  TICKET_PRIORITIES,
+  TICKET_STATUSES,
+} from '../models/Ticket.js';
 import { pastDue, statusOf } from '../services/overdue.js';
 import HandoverRequest from '../models/HandoverRequest.js';
 import TicketAssignment from '../models/TicketAssignment.js';
@@ -28,7 +33,12 @@ import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
-import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
+import {
+  notifyNewTicket,
+  notifyTicketDeleted,
+  notifyTicketEdited,
+  notifyTicketUpdated,
+} from '../services/notify.js';
 
 /**
  * The department a ticket sits with, and the unit above it.
@@ -145,6 +155,10 @@ function present(ticket, { awaiting } = {}) {
     committedAt: ticket.committedAt ?? null,
     /** Why the current promise is the date it is. Empty when none was made. */
     committedReason: ticket.committedReason ?? '',
+    /** Why it was called off. Empty unless it is Cancelled. */
+    cancelReason: ticket.cancelReason ?? '',
+    cancelledByName: ticket.cancelledByName ?? '',
+    cancelledAt: ticket.cancelledAt ?? null,
     department: populated(department)
       ? {
           id: String(department._id),
@@ -343,6 +357,7 @@ export async function createTicket(req, res) {
   if (!deadline) throw ApiError.badRequest('Deadline is required.');
   const dueDate = new Date(deadline);
   if (Number.isNaN(dueDate.getTime())) throw ApiError.badRequest('Invalid deadline.');
+  if (beforeToday(deadline)) throw ApiError.badRequest('The deadline cannot be in the past.');
   if (priority && !TICKET_PRIORITIES.includes(priority)) {
     throw ApiError.badRequest(`Priority must be one of: ${TICKET_PRIORITIES.join(', ')}.`);
   }
@@ -350,10 +365,9 @@ export async function createTicket(req, res) {
   /**
    * Everything the answer needs, asked for at once.
    *
-   * The departments being asked, the departments being asked *from*, the
-   * people named, and the heads who would hold anything nobody named - four
-   * questions that do not depend on each other, and used to be four waits on
-   * a database that is a long way away.
+   * The departments being asked, the departments being asked *from*, and the
+   * people named on the form - three questions that do not depend on each
+   * other, and used to be three waits on a database a long way away.
    */
   const wantedPeople = [
     ...new Set(
@@ -368,7 +382,7 @@ export async function createTicket(req, res) {
     mongoose.isValidObjectId(id),
   );
 
-  const [targets, fromDocs, namedPeople, possibleHeads] = await Promise.all([
+  const [targets, fromDocs, namedPeople] = await Promise.all([
     // Populated here so the answer can be built without reading the rows back.
     Department.find({ _id: { $in: targetIds }, isActive: true }).populate('unit', 'name code'),
     Department.find({ _id: { $in: fromWanted } })
@@ -376,15 +390,9 @@ export async function createTicket(req, res) {
       .populate('unit', 'name code')
       .lean(),
     wantedPeople.length > 0 ? User.find({ _id: { $in: wantedPeople } }) : [],
-    User.find({
-      status: { $ne: 'suspended' },
-      memberships: { $elemMatch: { department: { $in: targetIds }, role: 'head' } },
-    }).select('name email memberships'),
   ]);
 
-  const peopleById = new Map(
-    [...namedPeople, ...possibleHeads].map((person) => [String(person._id), person]),
-  );
+  const peopleById = new Map(namedPeople.map((person) => [String(person._id), person]));
   if (targets.length !== targetIds.length) {
     throw ApiError.badRequest('One or more departments do not exist.');
   }
@@ -439,29 +447,11 @@ export async function createTicket(req, res) {
     }
   }
 
-  /**
-   * A department nobody was named for goes to whoever runs it.
-   *
-   * Naming somebody stays optional - requiring a name would mean knowing who
-   * works there before you are allowed to ask - but "nobody named" should not
-   * become "nobody's job". The head holds it until they hand it on or pass it
-   * down, which is the decision they are there to make.
-   *
-   * A department with no head yet keeps the older behaviour and lands in its
-   * queue unheld: better an unaddressed ticket than a rejected one.
+  /*
+   * A department nobody was named for is left unassigned. It sits in that
+   * department's All Tickets for the head to hand out; Assigned to Me only
+   * ever holds what has been put on somebody by name.
    */
-  const unstaffed = targets.filter((target) => !assignedTo.has(String(target._id)));
-  for (const target of unstaffed) {
-    const key = String(target._id);
-    // The heads came back with everything else above; who holds what is
-    // decided here, in memory.
-    const owners = possibleHeads
-      .filter((person) => person.roleInDepartment(key) === 'head')
-      .map((person) => person._id);
-
-    if (owners.length > 0) assignedTo.set(key, owners);
-  }
-
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
   const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
@@ -534,13 +524,18 @@ export async function createTicket(req, res) {
 
   const tickets = populated.map(present);
 
+  // The ticket exists now, and that is all the person raising it is waiting
+  // to hear - so they are told before the bookkeeping below, not after it.
+  clock.send();
+  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
+
   /**
    * The log, the assignment trail, the opening line of the thread and the
    * bells. None of them depends on another, and none of them changes the
-   * answer - so they run together rather than one after the next. Each one
-   * already swallows its own failures, which is what makes that safe.
+   * answer - so they run together, after the reply has gone. Each one already
+   * swallows its own failures; the catch is for anything that slips past.
    */
-  await Promise.all(
+  Promise.all(
     populated.flatMap((ticket) => [
       record({
         actor: req.user,
@@ -572,12 +567,7 @@ export async function createTicket(req, res) {
       }),
       notifyNewTicket({ ticket, actor: req.user }),
     ]),
-  );
-
-  clock.step('log-and-notify');
-  clock.send();
-
-  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
+  ).catch((error) => console.error('After-create bookkeeping failed:', error.message));
 }
 
 /**
@@ -667,8 +657,8 @@ export async function listTickets(req, res) {
      * the date has taken away from it.
      */
     if (status === OVERDUE) {
-      filter.$and = [...(filter.$and ?? []), { status: { $ne: 'Completed' } }, pastDue()];
-    } else if (status === 'Completed') {
+      filter.$and = [...(filter.$and ?? []), { status: { $nin: CLOSED_STATUSES } }, pastDue()];
+    } else if (CLOSED_STATUSES.includes(status)) {
       filter.status = status;
     } else {
       filter.$and = [...(filter.$and ?? []), { status }, pastDue(false)];
@@ -842,6 +832,17 @@ export async function listAssignments(req, res) {
   });
 }
 
+/**
+ * Whether a date the client sent falls before today.
+ *
+ * Compared as calendar days, YYYY-MM-DD, because that is what the date pickers
+ * send: a deadline of today is fine all day, whatever the hour.
+ */
+function beforeToday(value) {
+  const day = typeof value === 'string' ? value.slice(0, 10) : new Date(value).toISOString().slice(0, 10);
+  return day < new Date().toLocaleDateString('en-CA');
+}
+
 /** As many as one request may remove at once. A mistake should stay small. */
 const MAX_DELETE = 200;
 
@@ -888,16 +889,24 @@ export function deletableBy(user, ticket) {
  * Two people may do it: a manager, at any time, and whoever raised the ticket,
  * for a short while after raising it.
  */
-async function removeTickets(ids, actor) {
+async function removeTickets(ids, actor, rawReason) {
   const valid = [...new Set(ids.filter((id) => mongoose.isValidObjectId(id)))];
   if (valid.length === 0) throw ApiError.badRequest('No ticket was named.');
+
+  // Why it went is the one thing the department that was asked cannot work
+  // out for themselves, so it is required and travels with the bell and the log.
+  const reason = typeof rawReason === 'string' ? rawReason.trim() : '';
+  if (reason.length < 3) throw ApiError.badRequest('Say why the ticket is being deleted.');
+  if (reason.length > MAX_DELETE_REASON) {
+    throw ApiError.badRequest(`Keep the reason under ${MAX_DELETE_REASON} characters.`);
+  }
   if (valid.length > MAX_DELETE) {
     throw ApiError.badRequest(`Delete at most ${MAX_DELETE} tickets at a time.`);
   }
 
   const tickets = await Ticket.find({ _id: { $in: valid } })
     .populate('department', 'name')
-    .select('number subject department raisedBy createdAt');
+    .select('number subject department raisedBy assignees createdAt');
 
   if (tickets.length === 0) throw ApiError.notFound('Ticket not found.');
 
@@ -921,13 +930,21 @@ async function removeTickets(ids, actor) {
       actor,
       department: ticket.department,
       action: 'ticket.deleted',
-      summary: `deleted ${ticket.number} "${ticket.subject}"`,
+      summary: `deleted ${ticket.number} "${ticket.subject}" · reason: ${reason}`,
       ticketNumber: ticket.number,
     });
   }
 
+  // The people who would otherwise go looking for it: whoever holds it, the
+  // head of the department it was sent to, and the raiser when somebody else
+  // removed it. Sent after the reply, like every other bell.
+  for (const ticket of tickets) void notifyTicketDeleted({ ticket, actor, reason });
+
   return tickets;
 }
+
+/** Long enough for a sentence, short enough to read in a bell. */
+const MAX_DELETE_REASON = 300;
 
 /**
  * Hands a batch of tickets to the same people at once.
@@ -1110,16 +1127,16 @@ export async function reassignTickets(req, res) {
 
 /** One ticket, by id. */
 export async function deleteTicket(req, res) {
-  const [ticket] = await removeTickets([req.params.id], req.user);
+  const [ticket] = await removeTickets([req.params.id], req.user, req.body?.reason);
   res.json({ success: true, deleted: 1, numbers: [ticket.number] });
 }
 
 /** Several at once: `{ ids: [...] }`. */
 export async function deleteTickets(req, res) {
-  const { ids } = req.body ?? {};
+  const { ids, reason } = req.body ?? {};
   if (!Array.isArray(ids)) throw ApiError.badRequest('Send the tickets to delete as a list.');
 
-  const removed = await removeTickets(ids, req.user);
+  const removed = await removeTickets(ids, req.user, reason);
   res.json({
     success: true,
     deleted: removed.length,
@@ -1157,6 +1174,7 @@ export async function updateTicket(req, res) {
     deadline,
     committedDeadline,
     committedReason,
+    cancelReason,
     assignees,
     priority,
     subject,
@@ -1221,6 +1239,22 @@ export async function updateTicket(req, res) {
     if (!TICKET_STATUSES.includes(status)) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
     }
+
+    // Calling a ticket off always says why: the person who asked is told, and
+    // "cancelled" on its own answers nothing.
+    if (status === 'Cancelled' && ticket.status !== 'Cancelled') {
+      const why = typeof cancelReason === 'string' ? cancelReason.trim() : '';
+      if (why.length < 3) throw ApiError.badRequest('Say why the ticket is being cancelled.');
+      if (why.length > 400) throw ApiError.badRequest('Keep the reason under 400 characters.');
+      ticket.cancelReason = why;
+      ticket.cancelledByName = req.user.name;
+      ticket.cancelledAt = new Date();
+    } else if (status !== 'Cancelled' && ticket.status === 'Cancelled') {
+      // Reopened: the old reason no longer describes it.
+      ticket.cancelReason = '';
+      ticket.cancelledByName = '';
+      ticket.cancelledAt = null;
+    }
     ticket.status = status;
   }
 
@@ -1259,6 +1293,11 @@ export async function updateTicket(req, res) {
     if (!deadline) throw ApiError.badRequest('Deadline is required.');
     const parsed = new Date(deadline);
     if (Number.isNaN(parsed.getTime())) throw ApiError.badRequest('Invalid deadline.');
+    // Only a new date is judged: resending the one an old ticket already has
+    // must not be refused just because that day has gone.
+    if (asDay(parsed) !== asDay(ticket.deadline) && beforeToday(deadline)) {
+      throw ApiError.badRequest('The deadline cannot be in the past.');
+    }
     ticket.deadline = parsed;
   }
 
@@ -1275,6 +1314,9 @@ export async function updateTicket(req, res) {
     // Only a real move counts. The sheet sends this field on every save, so
     // resending the date already promised must not demand a fresh reason.
     const moved = asDay(parsed) !== asDay(ticket.committedDeadline);
+    if (moved && parsed && beforeToday(committedDeadline)) {
+      throw ApiError.badRequest('The promised date cannot be in the past.');
+    }
 
     if (moved) {
       const why = typeof committedReason === 'string' ? committedReason.trim() : '';
@@ -1391,7 +1433,11 @@ export async function updateTicket(req, res) {
 
   const changes = [];
   if (before.status !== populated.status) {
-    changes.push(`status ${before.status} -> ${populated.status}`);
+    changes.push(
+      populated.status === 'Cancelled'
+        ? `cancelled the ticket - ${populated.cancelReason}`
+        : `status ${before.status} -> ${populated.status}`,
+    );
   }
   if (before.priority !== populated.priority) {
     changes.push(`priority ${before.priority} -> ${populated.priority}`);

@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  Building2,
   ChevronDown,
   CornerUpLeft,
+  Mail,
   Mic,
   MessagesSquare,
   Paperclip,
@@ -13,13 +15,14 @@ import {
   X,
 } from "lucide-react";
 
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { dayLabel } from "@/components/notifications/notification-shared";
 import { errorMessage } from "@/lib/api";
-import { isAdmin } from "@/lib/auth";
+import { initials, isAdmin } from "@/lib/auth";
 import { listDepartmentMembers, type MemberOption } from "@/lib/departments";
 import {
   deleteMessage,
@@ -31,7 +34,12 @@ import {
 } from "@/lib/messages";
 import { ChatMessage } from "@/components/tickets/chat-message";
 import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
-import { DraftPreview, useVoiceRecorder, type Draft } from "@/components/tickets/chat-attachments";
+import {
+  DraftPreview,
+  PhotoLightbox,
+  useVoiceRecorder,
+  type Draft,
+} from "@/components/tickets/chat-attachments";
 import { attachmentHref, type TicketRecord } from "@/lib/tickets";
 import { cn, formatTime } from "@/lib/utils";
 
@@ -109,11 +117,19 @@ function groupByDay(messages: MessageRecord[]) {
  */
 type Standing = "requester" | "holding" | "head" | "team";
 
-const STANDING: Record<Standing, { label: string; chip: string }> = {
-  requester: { label: "Requester", chip: "bg-brand-50 text-brand-700" },
-  holding: { label: "Holding it", chip: "bg-status-completed-bg text-status-completed-fg" },
-  head: { label: "Head", chip: "bg-role-head-bg text-role-head-fg" },
-  team: { label: "User", chip: "bg-ink-100 text-ink-600" },
+const STANDING: Record<Standing, { label: string; detail: string; chip: string }> = {
+  requester: {
+    label: "Raised by",
+    detail: "Raised this ticket",
+    chip: "bg-brand-50 text-brand-700",
+  },
+  holding: {
+    label: "Handled by",
+    detail: "Handling this ticket",
+    chip: "bg-status-completed-bg text-status-completed-fg",
+  },
+  head: { label: "Head", detail: "Head of the department", chip: "bg-role-head-bg text-role-head-fg" },
+  team: { label: "Member", detail: "Member of the department", chip: "bg-ink-100 text-ink-600" },
 };
 
 type Participant = {
@@ -122,32 +138,43 @@ type Participant = {
   standing: Standing;
   /** Where they sit, as "Unit · Department". Empty for a manager, who sits above both. */
   where: string;
+  /** Only known for the raiser; the member list is names and roles only. */
+  email?: string;
 };
 
+/** How many faces the collapsed header stacks. */
+const FACES = 2;
+
 /**
- * The group, the way a messaging app shows one: a row of faces and a count,
- * opening into the list with each person's part in it.
+ * The group, the way a messaging app shows one: the faces and names that
+ * matter - who raised it and who has it - then "+N" for the rest, opening
+ * into the list with each person's part in it.
  *
- * It is not a guest list anybody chose - it is everybody the ticket is already
- * visible to, which is the raiser plus the department being asked. Two people
- * in the same thread should not have to guess who else is reading it.
+ * It is not a guest list anybody chose - it is the people the ticket is about:
+ * whoever raised it, whoever it is assigned to, and the head of the department
+ * being asked. Colleagues who are not on it are left out.
  */
 function People({
   people,
-  raiser,
-  holders,
   meId,
   open,
   onToggle,
+  onPick,
 }: {
   people: Participant[];
-  raiser: string;
-  holders: string[];
   meId?: string;
   open: boolean;
   onToggle: () => void;
+  onPick: (person: Participant) => void;
 }) {
   if (people.length === 0) return null;
+
+  // The raiser and whoever holds it lead; the rest of the room is the "+N".
+  const key = people.filter(
+    (person) => person.standing === "requester" || person.standing === "holding",
+  );
+  const shown = key.length > 0 ? key : people.slice(0, FACES);
+  const more = people.length - shown.length;
 
   return (
     <div className="shrink-0 border-b border-line px-3 py-2">
@@ -155,26 +182,29 @@ function People({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
+        aria-label={`${people.length} people in this conversation`}
         className="flex w-full items-center gap-2 text-left"
       >
-        {/* The two names that answer the questions people actually open a
-            thread with: who wants this, and who has it. The rest of the room
-            is a tap away. */}
-        <span className="min-w-0 flex-1 leading-tight">
-          <span className="block truncate text-[11px] text-ink-400">
-            Raised by <span className="font-semibold text-ink-700">{raiser}</span>
-          </span>
-          <span className="block truncate text-[11px] text-ink-400">
-            Handled by{" "}
-            {holders.length > 0 ? (
-              <span className="font-semibold text-ink-700">{holders.join(", ")}</span>
-            ) : (
-              <span className="font-semibold text-ink-400">nobody yet</span>
-            )}
-          </span>
+        <span className="flex shrink-0 -space-x-2">
+          {shown.slice(0, FACES).map((person) => (
+            <Avatar
+              key={person.id}
+              initials={initials(person.name)}
+              tone={person.standing === "requester" ? "head" : "team"}
+              className="size-7 text-[10px] ring-2 ring-surface"
+            />
+          ))}
         </span>
 
-        <span className="shrink-0 text-[11px] font-semibold text-ink-400">{people.length}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-800">
+          {shown.map((person) => person.name).join(", ")}
+        </span>
+
+        {more > 0 && (
+          <span className="shrink-0 rounded-full bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">
+            +{more}
+          </span>
+        )}
 
         <ChevronDown
           className={cn("size-4 shrink-0 text-ink-400 transition-transform", open && "rotate-180")}
@@ -182,31 +212,103 @@ function People({
       </button>
 
       {open && (
-        <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
+        <ul className="mt-2 max-h-48 space-y-0.5 overflow-y-auto">
           {people.map((person) => (
-            <li key={person.id} className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate">
-                <span className="text-[13px] font-medium text-ink-800">{person.name}</span>
-                {person.id === meId && <span className="ml-1 text-[13px] text-ink-400">(you)</span>}
-                {/* Where they sit. A thread can span units now, so "who is
-                    this" is half the question and "from where" is the other. */}
-                {person.where && (
-                  <span className="ml-1.5 text-[11px] text-ink-400">{person.where}</span>
-                )}
-              </span>
-              <span
-                className={cn(
-                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
-                  STANDING[person.standing].chip,
-                )}
+            <li key={person.id}>
+              <button
+                type="button"
+                onClick={() => onPick(person)}
+                className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-ink-50"
               >
-                {STANDING[person.standing].label}
-              </span>
+                <Avatar
+                  initials={initials(person.name)}
+                  tone={person.standing === "requester" ? "head" : "team"}
+                  className="size-6 text-[9px]"
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="text-[13px] font-medium text-ink-800">{person.name}</span>
+                  {person.id === meId && <span className="ml-1 text-[13px] text-ink-400">(you)</span>}
+                  {/* Where they sit. A thread can span units now, so "who is
+                      this" is half the question and "from where" is the other. */}
+                  {person.where && (
+                    <span className="ml-1.5 text-[11px] text-ink-400">{person.where}</span>
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase",
+                    STANDING[person.standing].chip,
+                  )}
+                >
+                  {STANDING[person.standing].label}
+                </span>
+              </button>
             </li>
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+/** One person in the thread, opened from the list. */
+function PersonCard({
+  person,
+  meId,
+  onClose,
+}: {
+  person: Participant | null;
+  meId?: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal open={person !== null} onClose={onClose} title="Contact details" className="max-w-sm">
+      {person && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Avatar
+              initials={initials(person.name)}
+              tone={person.standing === "requester" ? "head" : "team"}
+              className="size-11 text-sm"
+            />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-ink-900">
+                {person.name}
+                {person.id === meId && <span className="ml-1 font-normal text-ink-400">(you)</span>}
+              </p>
+              <p className="text-[12px] text-ink-500">{STANDING[person.standing].detail}</p>
+            </div>
+          </div>
+
+          {(person.where || person.email) && (
+            <ul className="space-y-1.5 text-[13px] text-ink-600">
+              {person.where && (
+                <li className="flex items-center gap-2">
+                  <Building2 className="size-4 shrink-0 text-ink-400" />
+                  <span className="truncate">{person.where}</span>
+                </li>
+              )}
+              {person.email && (
+                <li className="flex items-center gap-2">
+                  <Mail className="size-4 shrink-0 text-ink-400" />
+                  <span className="truncate">{person.email}</span>
+                </li>
+              )}
+            </ul>
+          )}
+
+          {person.email && person.id !== meId && (
+            <a
+              href={`mailto:${person.email}`}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-line py-2 text-[13px] font-semibold text-ink-700 transition-colors hover:bg-ink-50"
+            >
+              <Mail className="size-4" />
+              Email
+            </a>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -278,16 +380,21 @@ function SystemLine({ message }: { message: MessageRecord }) {
  * way a thread in a chat app starts with the post it replies to - rather than
  * making the reader flip to Details to remember what was wanted.
  */
+/** How many photo thumbnails the request card shows before "+N". */
+const THUMBS = 4;
+
 function RequestCard({ ticket }: { ticket: TicketRecord }) {
   /** Photos that would not load; they fall back to a file chip. */
   const [broken, setBroken] = useState<number[]>([]);
+  /** Which photo is open, by its place among the photos. */
+  const [viewing, setViewing] = useState<number | null>(null);
   const isImage = (file: TicketRecord["attachments"][number]) =>
     file.mimeType.startsWith("image/") && !broken.includes(file.index);
   const images = ticket.attachments.filter(isImage);
   const others = ticket.attachments.filter((file) => !isImage(file));
 
   return (
-    <div className="rounded-xl border border-line bg-surface px-3 py-2.5 shadow-sm">
+    <div className="rounded-xl border border-line bg-ink-100/70 px-3 py-2.5">
       <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
         Request · #{ticket.number}
       </p>
@@ -299,29 +406,39 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
       )}
 
       {images.length > 0 && (
-        <div className={cn("mt-2 grid gap-1.5", images.length > 1 && "grid-cols-2")}>
-          {images.map((file) => (
-            <a
-              key={file.index}
-              href={attachmentHref(ticket.id, file.index)}
-              target="_blank"
-              rel="noreferrer"
-              className="block overflow-hidden rounded-lg border border-line bg-ink-50"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- the API
-                  redirects to a short-lived signed URL the optimiser cannot reach. */}
-              <img
-                src={attachmentHref(ticket.id, file.index)}
-                alt={file.filename}
-                loading="lazy"
-                onError={() => setBroken((current) => [...current, file.index])}
-                className={cn(
-                  "w-full object-cover",
-                  images.length > 1 ? "aspect-square" : "max-h-56",
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {/* Small thumbnails: what belongs at the top of a thread is the fact
+              that photos came with the request, not the photos. Past the first
+              few, the last tile says how many more; any click opens the viewer,
+              which steps through all of them. */}
+          {images.slice(0, THUMBS).map((file, index) => {
+            const hidden = images.length - THUMBS;
+            const last = index === THUMBS - 1 && hidden > 0;
+            return (
+              <button
+                key={file.index}
+                type="button"
+                onClick={() => setViewing(index)}
+                aria-label={last ? `Open photos, ${hidden} more` : `Open ${file.filename}`}
+                className="relative block size-14 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-line bg-surface"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- the API
+                    redirects to a short-lived signed URL the optimiser cannot reach. */}
+                <img
+                  src={attachmentHref(ticket.id, file.index)}
+                  alt={file.filename}
+                  loading="lazy"
+                  onError={() => setBroken((current) => [...current, file.index])}
+                  className="size-full object-cover"
+                />
+                {last && (
+                  <span className="absolute inset-0 grid place-items-center bg-ink-900/55 text-[13px] font-bold text-white">
+                    +{hidden}
+                  </span>
                 )}
-              />
-            </a>
-          ))}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -342,6 +459,17 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {viewing !== null && images[viewing] && (
+        <PhotoLightbox
+          src={attachmentHref(ticket.id, images[viewing].index)}
+          alt={images[viewing].filename}
+          onClose={() => setViewing(null)}
+          onPrev={viewing > 0 ? () => setViewing(viewing - 1) : undefined}
+          onNext={viewing < images.length - 1 ? () => setViewing(viewing + 1) : undefined}
+          position={images.length > 1 ? `${viewing + 1} / ${images.length}` : undefined}
+        />
       )}
     </div>
   );
@@ -364,6 +492,7 @@ export function TicketChat({
   /** Everyone in the department being asked; the raiser comes off the ticket. */
   const [team, setTeam] = useState<MemberOption[] | null>(null);
   const [peopleOpen, setPeopleOpen] = useState(false);
+  const [picked, setPicked] = useState<Participant | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -487,13 +616,19 @@ export function TicketChat({
       .filter(Boolean)
       .join(", ");
 
-    const add = (id: string, name: string, standing: Standing, where: string) => {
+    const add = (id: string, name: string, standing: Standing, where: string, email?: string) => {
       if (!id || seen.has(id)) return;
       seen.add(id);
-      out.push({ id, name, standing, where });
+      out.push({ id, name, standing, where, email });
     };
 
-    add(ticket.raisedBy.id, ticket.raisedBy.name ?? "Requester", "requester", asking);
+    add(
+      ticket.raisedBy.id,
+      ticket.raisedBy.name ?? "Requester",
+      "requester",
+      asking,
+      ticket.raisedBy.email,
+    );
 
     for (const member of team ?? []) {
       if (holders.has(member.id)) add(member.id, member.name, "holding", receiving);
@@ -504,8 +639,10 @@ export function TicketChat({
     for (const person of ticket.assignees) {
       add(person.id, person.name ?? "Someone", "holding", "");
     }
+    // Of the rest of the department, only whoever runs it: the head oversees
+    // every ticket there. Colleagues not on this one are not part of it.
     for (const member of team ?? []) {
-      add(member.id, member.name, member.departmentRole, receiving);
+      if (member.departmentRole === "head") add(member.id, member.name, "head", receiving);
     }
 
     return out;
@@ -771,12 +908,12 @@ export function TicketChat({
     <div className="flex min-h-0 flex-1 flex-col">
       <People
         people={people}
-        raiser={ticket.raisedBy.name ?? "Someone"}
-        holders={ticket.assignees.map((person) => person.name ?? "Someone")}
         meId={meId}
         open={peopleOpen}
         onToggle={() => setPeopleOpen((current) => !current)}
+        onPick={setPicked}
       />
+      <PersonCard person={picked} meId={meId} onClose={() => setPicked(null)} />
 
       <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
         <RequestCard ticket={ticket} />

@@ -51,7 +51,7 @@ const NAV: NavItem[] = [
   { href: "/assigned-to-me", label: "Assigned to Me", icon: UserRound },
   { href: "/my-requests", label: "My Requests", icon: FileText },
   { href: "/team", label: "Users", icon: UserCog, headsOnly: true },
-  { href: "/all-tickets", label: "All Tickets", icon: Layers },
+  { href: "/all-tickets", label: "All Tickets", icon: Layers, overseersOnly: true },
   { href: "/activity", label: "Activity", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
