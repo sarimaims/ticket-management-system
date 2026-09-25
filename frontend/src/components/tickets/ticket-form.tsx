@@ -10,7 +10,7 @@ import { Field, Input, Label, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/components/ui/toast";
-import { DateField } from "@/components/tickets/date-field";
+import { DateField, todayISO } from "@/components/tickets/date-field";
 import { PriorityPicker } from "@/components/tickets/priority-picker";
 import {
   listDepartmentOptions,
@@ -148,6 +148,18 @@ function FormRow({
         {action && <div className="hidden shrink-0 sm:block">{action}</div>}
       </div>
     </div>
+  );
+}
+
+/** Names what a picker in the From / To rows holds, so each box says what it is. */
+function PickerLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+  return (
+    <label
+      htmlFor={htmlFor}
+      className="mb-1 block text-[11px] font-semibold tracking-wide text-ink-400 uppercase"
+    >
+      {children}
+    </label>
   );
 }
 
@@ -619,32 +631,38 @@ export function TicketForm() {
         <FormRow label="From">
           {hasOwnDepartments ? (
             <div className="grid gap-2 sm:grid-cols-2">
-              <MultiSelect
-                id="from-unit"
-                ariaLabel="Unit you are asking from"
-                chipTone="neutral"
-                icon={<Building className="text-ink-500" />}
-                options={myUnits.map((unit) => ({
-                  value: unit.id,
-                  label: unit.name,
-                }))}
-                value={fromUnits}
-                onChange={chooseFromUnits}
-                placeholder="All my units"
-                emptyMessage="You are not in a unit yet"
-                disabled={myUnits.length < 2}
-              />
+              <div className="min-w-0">
+                <PickerLabel htmlFor="from-unit">Unit</PickerLabel>
+                <MultiSelect
+                  id="from-unit"
+                  ariaLabel="Unit you are asking from"
+                  chipTone="neutral"
+                  icon={<Building className="text-ink-500" />}
+                  options={myUnits.map((unit) => ({
+                    value: unit.id,
+                    label: unit.name,
+                  }))}
+                  value={fromUnits}
+                  onChange={chooseFromUnits}
+                  placeholder="All my units"
+                  emptyMessage="You are not in a unit yet"
+                  disabled={myUnits.length < 2}
+                />
+              </div>
 
-              <MultiSelect
-                id="from-departments"
-                ariaLabel="Departments you are asking from"
-                chipTone="neutral"
-                options={myDepartments}
-                value={fromDepts}
-                onChange={setFromDepts}
-                placeholder="Your departments"
-                emptyMessage="Nothing in this unit"
-              />
+              <div className="min-w-0">
+                <PickerLabel htmlFor="from-departments">Department</PickerLabel>
+                <MultiSelect
+                  id="from-departments"
+                  ariaLabel="Departments you are asking from"
+                  chipTone="neutral"
+                  options={myDepartments}
+                  value={fromDepts}
+                  onChange={setFromDepts}
+                  placeholder="Your departments"
+                  emptyMessage="Nothing in this unit"
+                />
+              </div>
             </div>
           ) : (
             /* A manager belongs to no department, so there is nothing to ask
@@ -667,33 +685,39 @@ export function TicketForm() {
 
         <FormRow label="To" required>
           <div className="grid gap-2 sm:grid-cols-2">
-            <MultiSelect
-              id="target-unit"
-              ariaLabel="Unit to ask"
-              chipTone="neutral"
-              icon={<Building className="text-ink-500" />}
-              options={units.map((unit) => ({
-                value: unit.id,
-                label: unit.name,
-              }))}
-              value={targetUnits}
-              onChange={chooseTargetUnits}
-              placeholder="All units"
-              emptyMessage="No units yet"
-            />
+            <div className="min-w-0">
+              <PickerLabel htmlFor="target-unit">Unit</PickerLabel>
+              <MultiSelect
+                id="target-unit"
+                ariaLabel="Unit to ask"
+                chipTone="neutral"
+                icon={<Building className="text-ink-500" />}
+                options={units.map((unit) => ({
+                  value: unit.id,
+                  label: unit.name,
+                }))}
+                value={targetUnits}
+                onChange={chooseTargetUnits}
+                placeholder="All units"
+                emptyMessage="No units yet"
+              />
+            </div>
 
-            <MultiSelect
-              id="target-departments"
-              ariaLabel="Departments to ask"
-              options={allDepartments}
-              value={targetDepts}
-              onChange={chooseTargets}
-              placeholder="Choose departments"
-              emptyMessage={
-                targetUnits.length > 0 ? "Nothing in those units yet" : "No departments yet"
-              }
-              invalid={missing.includes("target")}
-            />
+            <div className="min-w-0">
+              <PickerLabel htmlFor="target-departments">Department</PickerLabel>
+              <MultiSelect
+                id="target-departments"
+                ariaLabel="Departments to ask"
+                options={allDepartments}
+                value={targetDepts}
+                onChange={chooseTargets}
+                placeholder="Choose departments"
+                emptyMessage={
+                  targetUnits.length > 0 ? "Nothing in those units yet" : "No departments yet"
+                }
+                invalid={missing.includes("target")}
+              />
+            </div>
           </div>
 
           {/* Until the lists arrive, an empty picker means "not here yet",
@@ -799,6 +823,7 @@ export function TicketForm() {
             <Field label="Deadline" required htmlFor="completion-date">
               <DateField
                 id="completion-date"
+                min={todayISO()}
                 value={completionDate}
                 onChange={(value) => {
                   setCompletionDate(value);

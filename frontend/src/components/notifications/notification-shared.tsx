@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { HandHelping, MessageSquare, PencilLine, RefreshCw, TicketPlus } from "lucide-react";
+import {
+  HandHelping,
+  MessageSquare,
+  PencilLine,
+  RefreshCw,
+  TicketPlus,
+  Trash2,
+} from "lucide-react";
 
 import type { NotificationRecord, NotificationType } from "@/lib/notifications";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -75,6 +82,9 @@ export const destination = (item: NotificationRecord, overseer = true) => {
   // A plain user has no All Tickets, so their side of it is Assigned to Me.
   const page = forRaiser ? "/my-requests" : overseer ? "/all-tickets" : "/assigned-to-me";
 
+  // A deleted ticket has no row left to find, so it just opens the list.
+  if (item.type === "ticket.deleted") return page;
+
   // The id is exact; the number still finds the row if the id is missing.
   const key = item.ticket ?? item.ticketNumber;
   return key ? `${page}?ticket=${encodeURIComponent(key)}` : page;
@@ -137,6 +147,12 @@ export const TYPE_META: Record<NotificationType, Meta> = {
     badge: "bg-status-completed-fg text-white",
     rail: "bg-status-completed-fg",
     label: "Answered",
+  },
+  "ticket.deleted": {
+    icon: Trash2,
+    badge: "bg-status-overdue-fg text-white",
+    rail: "bg-status-overdue-fg",
+    label: "Deleted",
   },
 };
 

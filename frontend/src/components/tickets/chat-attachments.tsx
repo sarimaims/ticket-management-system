@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, ExternalLink, Mic, Pause, Play, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Mic,
+  Pause,
+  Play,
+  X,
+} from "lucide-react";
 
 import { formatDuration, formatBytes, type AttachmentKind } from "@/lib/uploads";
 import type { MessageAttachment } from "@/lib/messages";
@@ -22,18 +31,36 @@ export function PhotoLightbox({
   src,
   alt,
   onClose,
+  onPrev,
+  onNext,
+  position,
 }: {
   src: string;
   alt: string;
   onClose: () => void;
+  /** Given when there is a set to step through; the arrows and keys appear with them. */
+  onPrev?: () => void;
+  onNext?: () => void;
+  /** "2 / 5", shown at the top when stepping through a set. */
+  position?: string;
 }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      else if (event.key === "ArrowLeft") onPrev?.();
+      else if (event.key === "ArrowRight") onNext?.();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [onClose, onPrev, onNext]);
+
+  /** The arrows sit on the dark around the photo; a click on them is not a click to close. */
+  const step = (go?: () => void) => (event: React.MouseEvent) => {
+    event.stopPropagation();
+    go?.();
+  };
+  const arrow =
+    "absolute top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full bg-ink-900/60 text-white transition-colors hover:bg-ink-900 disabled:pointer-events-none disabled:opacity-30";
 
   return createPortal(
     <div
@@ -52,13 +79,42 @@ export function PhotoLightbox({
         <X className="size-5" />
       </button>
 
+      {position && (
+        <span className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full bg-ink-900/60 px-3 py-1 text-[12px] font-semibold text-white tabular-nums">
+          {position}
+        </span>
+      )}
+
+      {(onPrev || onNext) && (
+        <>
+          <button
+            type="button"
+            onClick={step(onPrev)}
+            disabled={!onPrev}
+            aria-label="Previous photo"
+            className={cn(arrow, "left-3 sm:left-5")}
+          >
+            <ChevronLeft className="size-5" />
+          </button>
+          <button
+            type="button"
+            onClick={step(onNext)}
+            disabled={!onNext}
+            aria-label="Next photo"
+            className={cn(arrow, "right-3 sm:right-5")}
+          >
+            <ChevronRight className="size-5" />
+          </button>
+        </>
+      )}
+
       {/* eslint-disable-next-line @next/next/no-img-element -- the src is a
           short-lived signed URL on a bucket the image optimiser cannot reach. */}
       <img
         src={src}
         alt={alt}
         onClick={(event) => event.stopPropagation()}
-        className="max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl"
+        className="max-h-[85vh] max-w-[calc(100%-7rem)] rounded-lg object-contain shadow-2xl"
       />
 
       <a

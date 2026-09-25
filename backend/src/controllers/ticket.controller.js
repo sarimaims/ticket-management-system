@@ -16,7 +16,12 @@ import {
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
-import Ticket, { OVERDUE, TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import Ticket, {
+  CLOSED_STATUSES,
+  OVERDUE,
+  TICKET_PRIORITIES,
+  TICKET_STATUSES,
+} from '../models/Ticket.js';
 import { pastDue, statusOf } from '../services/overdue.js';
 import HandoverRequest from '../models/HandoverRequest.js';
 import TicketAssignment from '../models/TicketAssignment.js';
@@ -28,7 +33,12 @@ import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
-import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
+import {
+  notifyNewTicket,
+  notifyTicketDeleted,
+  notifyTicketEdited,
+  notifyTicketUpdated,
+} from '../services/notify.js';
 
 /**
  * The department a ticket sits with, and the unit above it.
@@ -145,6 +155,10 @@ function present(ticket, { awaiting } = {}) {
     committedAt: ticket.committedAt ?? null,
     /** Why the current promise is the date it is. Empty when none was made. */
     committedReason: ticket.committedReason ?? '',
+    /** Why it was called off. Empty unless it is Cancelled. */
+    cancelReason: ticket.cancelReason ?? '',
+    cancelledByName: ticket.cancelledByName ?? '',
+    cancelledAt: ticket.cancelledAt ?? null,
     department: populated(department)
       ? {
           id: String(department._id),
@@ -343,6 +357,7 @@ export async function createTicket(req, res) {
   if (!deadline) throw ApiError.badRequest('Deadline is required.');
   const dueDate = new Date(deadline);
   if (Number.isNaN(dueDate.getTime())) throw ApiError.badRequest('Invalid deadline.');
+  if (beforeToday(deadline)) throw ApiError.badRequest('The deadline cannot be in the past.');
   if (priority && !TICKET_PRIORITIES.includes(priority)) {
     throw ApiError.badRequest(`Priority must be one of: ${TICKET_PRIORITIES.join(', ')}.`);
   }
@@ -604,8 +619,8 @@ export async function listTickets(req, res) {
      * the date has taken away from it.
      */
     if (status === OVERDUE) {
-      filter.$and = [...(filter.$and ?? []), { status: { $ne: 'Completed' } }, pastDue()];
-    } else if (status === 'Completed') {
+      filter.$and = [...(filter.$and ?? []), { status: { $nin: CLOSED_STATUSES } }, pastDue()];
+    } else if (CLOSED_STATUSES.includes(status)) {
       filter.status = status;
     } else {
       filter.$and = [...(filter.$and ?? []), { status }, pastDue(false)];
@@ -779,6 +794,17 @@ export async function listAssignments(req, res) {
   });
 }
 
+/**
+ * Whether a date the client sent falls before today.
+ *
+ * Compared as calendar days, YYYY-MM-DD, because that is what the date pickers
+ * send: a deadline of today is fine all day, whatever the hour.
+ */
+function beforeToday(value) {
+  const day = typeof value === 'string' ? value.slice(0, 10) : new Date(value).toISOString().slice(0, 10);
+  return day < new Date().toLocaleDateString('en-CA');
+}
+
 /** As many as one request may remove at once. A mistake should stay small. */
 const MAX_DELETE = 200;
 
@@ -825,16 +851,24 @@ export function deletableBy(user, ticket) {
  * Two people may do it: a manager, at any time, and whoever raised the ticket,
  * for a short while after raising it.
  */
-async function removeTickets(ids, actor) {
+async function removeTickets(ids, actor, rawReason) {
   const valid = [...new Set(ids.filter((id) => mongoose.isValidObjectId(id)))];
   if (valid.length === 0) throw ApiError.badRequest('No ticket was named.');
+
+  // Why it went is the one thing the department that was asked cannot work
+  // out for themselves, so it is required and travels with the bell and the log.
+  const reason = typeof rawReason === 'string' ? rawReason.trim() : '';
+  if (reason.length < 3) throw ApiError.badRequest('Say why the ticket is being deleted.');
+  if (reason.length > MAX_DELETE_REASON) {
+    throw ApiError.badRequest(`Keep the reason under ${MAX_DELETE_REASON} characters.`);
+  }
   if (valid.length > MAX_DELETE) {
     throw ApiError.badRequest(`Delete at most ${MAX_DELETE} tickets at a time.`);
   }
 
   const tickets = await Ticket.find({ _id: { $in: valid } })
     .populate('department', 'name')
-    .select('number subject department raisedBy createdAt');
+    .select('number subject department raisedBy assignees createdAt');
 
   if (tickets.length === 0) throw ApiError.notFound('Ticket not found.');
 
@@ -858,13 +892,21 @@ async function removeTickets(ids, actor) {
       actor,
       department: ticket.department,
       action: 'ticket.deleted',
-      summary: `deleted ${ticket.number} "${ticket.subject}"`,
+      summary: `deleted ${ticket.number} "${ticket.subject}" · reason: ${reason}`,
       ticketNumber: ticket.number,
     });
   }
 
+  // The people who would otherwise go looking for it: whoever holds it, the
+  // head of the department it was sent to, and the raiser when somebody else
+  // removed it. Sent after the reply, like every other bell.
+  for (const ticket of tickets) void notifyTicketDeleted({ ticket, actor, reason });
+
   return tickets;
 }
+
+/** Long enough for a sentence, short enough to read in a bell. */
+const MAX_DELETE_REASON = 300;
 
 /**
  * Hands a batch of tickets to the same people at once.
@@ -1047,16 +1089,16 @@ export async function reassignTickets(req, res) {
 
 /** One ticket, by id. */
 export async function deleteTicket(req, res) {
-  const [ticket] = await removeTickets([req.params.id], req.user);
+  const [ticket] = await removeTickets([req.params.id], req.user, req.body?.reason);
   res.json({ success: true, deleted: 1, numbers: [ticket.number] });
 }
 
 /** Several at once: `{ ids: [...] }`. */
 export async function deleteTickets(req, res) {
-  const { ids } = req.body ?? {};
+  const { ids, reason } = req.body ?? {};
   if (!Array.isArray(ids)) throw ApiError.badRequest('Send the tickets to delete as a list.');
 
-  const removed = await removeTickets(ids, req.user);
+  const removed = await removeTickets(ids, req.user, reason);
   res.json({
     success: true,
     deleted: removed.length,
@@ -1094,6 +1136,7 @@ export async function updateTicket(req, res) {
     deadline,
     committedDeadline,
     committedReason,
+    cancelReason,
     assignees,
     priority,
     subject,
@@ -1158,6 +1201,22 @@ export async function updateTicket(req, res) {
     if (!TICKET_STATUSES.includes(status)) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
     }
+
+    // Calling a ticket off always says why: the person who asked is told, and
+    // "cancelled" on its own answers nothing.
+    if (status === 'Cancelled' && ticket.status !== 'Cancelled') {
+      const why = typeof cancelReason === 'string' ? cancelReason.trim() : '';
+      if (why.length < 3) throw ApiError.badRequest('Say why the ticket is being cancelled.');
+      if (why.length > 400) throw ApiError.badRequest('Keep the reason under 400 characters.');
+      ticket.cancelReason = why;
+      ticket.cancelledByName = req.user.name;
+      ticket.cancelledAt = new Date();
+    } else if (status !== 'Cancelled' && ticket.status === 'Cancelled') {
+      // Reopened: the old reason no longer describes it.
+      ticket.cancelReason = '';
+      ticket.cancelledByName = '';
+      ticket.cancelledAt = null;
+    }
     ticket.status = status;
   }
 
@@ -1196,6 +1255,11 @@ export async function updateTicket(req, res) {
     if (!deadline) throw ApiError.badRequest('Deadline is required.');
     const parsed = new Date(deadline);
     if (Number.isNaN(parsed.getTime())) throw ApiError.badRequest('Invalid deadline.');
+    // Only a new date is judged: resending the one an old ticket already has
+    // must not be refused just because that day has gone.
+    if (asDay(parsed) !== asDay(ticket.deadline) && beforeToday(deadline)) {
+      throw ApiError.badRequest('The deadline cannot be in the past.');
+    }
     ticket.deadline = parsed;
   }
 
@@ -1212,6 +1276,9 @@ export async function updateTicket(req, res) {
     // Only a real move counts. The sheet sends this field on every save, so
     // resending the date already promised must not demand a fresh reason.
     const moved = asDay(parsed) !== asDay(ticket.committedDeadline);
+    if (moved && parsed && beforeToday(committedDeadline)) {
+      throw ApiError.badRequest('The promised date cannot be in the past.');
+    }
 
     if (moved) {
       const why = typeof committedReason === 'string' ? committedReason.trim() : '';
@@ -1328,7 +1395,11 @@ export async function updateTicket(req, res) {
 
   const changes = [];
   if (before.status !== populated.status) {
-    changes.push(`status ${before.status} -> ${populated.status}`);
+    changes.push(
+      populated.status === 'Cancelled'
+        ? `cancelled the ticket - ${populated.cancelReason}`
+        : `status ${before.status} -> ${populated.status}`,
+    );
   }
   if (before.priority !== populated.priority) {
     changes.push(`priority ${before.priority} -> ${populated.priority}`);

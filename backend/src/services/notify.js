@@ -203,6 +203,37 @@ export async function notifyHandoverAsked({ ticket, actor, recipients }) {
   }
 }
 
+/**
+ * A ticket was deleted: tell whoever it was on, the head of the department it
+ * was sent to, and the person who raised it if somebody else removed it.
+ *
+ * The ticket is already gone, so the bell points at nothing - it carries the
+ * number, the subject and the reason, which is everything left to know.
+ */
+export async function notifyTicketDeleted({ ticket, actor, reason }) {
+  try {
+    const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+
+    return await deliver({
+      recipients: [...(await audienceFor(ticket)), raiser],
+      exclude: actor._id,
+      type: 'ticket.deleted',
+      ticket: {
+        _id: null,
+        number: ticket.number,
+        department: ticket.department,
+        raisedBy: ticket.raisedBy,
+      },
+      title: `${ticket.number} · deleted by ${actor.name}`,
+      body: `"${ticket.subject}" · ${reason}`,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.deleted):', error.message);
+    return 0;
+  }
+}
+
 /** And the answer, back to whoever asked. */
 export async function notifyHandoverAnswered({ ticket, actor, recipient, accepted }) {
   try {

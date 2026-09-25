@@ -22,10 +22,10 @@ import { StatusBadge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { isDueToday, isDueTodayOnly, isOverdue, type TicketRecord } from "@/lib/tickets";
-import type { TicketStatus } from "@/lib/types";
+import { isClosed, type TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STATUS_ORDER: TicketStatus[] = ["New", "In Progress", "Overdue", "Completed"];
+const STATUS_ORDER: TicketStatus[] = ["New", "In Progress", "Overdue", "Completed", "Cancelled"];
 
 const DAY = 86_400_000;
 
@@ -34,7 +34,7 @@ const startOfToday = () => new Date(new Date().toDateString()).getTime();
 
 const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
 
-const isOpen = (ticket: TicketRecord) => ticket.status !== "Completed";
+const isOpen = (ticket: TicketRecord) => !isClosed(ticket.status);
 
 /** "3 days ago", "in 2 days" - the thing being asked of a date on a queue. */
 function when(value: string | null) {

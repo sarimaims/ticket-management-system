@@ -14,6 +14,8 @@ export const NOTIFICATION_TYPES = [
   'ticket.handover',
   /** They answered the one you sent. */
   'ticket.handover.answered',
+  /** A ticket you were part of was taken back, with the reason why. */
+  'ticket.deleted',
 ];
 
 const notificationSchema = new mongoose.Schema(

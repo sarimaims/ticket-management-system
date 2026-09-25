@@ -12,6 +12,7 @@ const STATUSES: TicketStatus[] = [
   "New",
   "In Progress",
   "Completed",
+  "Cancelled",
   "Overdue",
 ];
 

@@ -8,7 +8,8 @@ export type NotificationType =
   /** Somebody is asking you to take a ticket on. */
   | "ticket.handover"
   /** They answered the one you sent. */
-  | "ticket.handover.answered";
+  | "ticket.handover.answered"
+  | "ticket.deleted";
 
 export type NotificationRecord = {
   id: string;

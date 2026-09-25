@@ -150,9 +150,9 @@ const FACES = 2;
  * matter - who raised it and who has it - then "+N" for the rest, opening
  * into the list with each person's part in it.
  *
- * It is not a guest list anybody chose - it is everybody the ticket is already
- * visible to, which is the raiser plus the department being asked. Two people
- * in the same thread should not have to guess who else is reading it.
+ * It is not a guest list anybody chose - it is the people the ticket is about:
+ * whoever raised it, whoever it is assigned to, and the head of the department
+ * being asked. Colleagues who are not on it are left out.
  */
 function People({
   people,
@@ -380,11 +380,14 @@ function SystemLine({ message }: { message: MessageRecord }) {
  * way a thread in a chat app starts with the post it replies to - rather than
  * making the reader flip to Details to remember what was wanted.
  */
+/** How many photo thumbnails the request card shows before "+N". */
+const THUMBS = 4;
+
 function RequestCard({ ticket }: { ticket: TicketRecord }) {
   /** Photos that would not load; they fall back to a file chip. */
   const [broken, setBroken] = useState<number[]>([]);
-  /** The photo being looked at, if one is. */
-  const [viewing, setViewing] = useState<TicketRecord["attachments"][number] | null>(null);
+  /** Which photo is open, by its place among the photos. */
+  const [viewing, setViewing] = useState<number | null>(null);
   const isImage = (file: TicketRecord["attachments"][number]) =>
     file.mimeType.startsWith("image/") && !broken.includes(file.index);
   const images = ticket.attachments.filter(isImage);
@@ -403,28 +406,39 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
       )}
 
       {images.length > 0 && (
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
-          {/* Three to a row: what belongs at the top of a thread is the fact
-              that a photo came with the request, not the photo. A click opens
-              it over the page at the size it was meant to be read at. */}
-          {images.map((file) => (
-            <button
-              key={file.index}
-              type="button"
-              onClick={() => setViewing(file)}
-              className="block cursor-zoom-in overflow-hidden rounded-lg border border-line bg-surface"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- the API
-                  redirects to a short-lived signed URL the optimiser cannot reach. */}
-              <img
-                src={attachmentHref(ticket.id, file.index)}
-                alt={file.filename}
-                loading="lazy"
-                onError={() => setBroken((current) => [...current, file.index])}
-                className="aspect-square w-full object-cover"
-              />
-            </button>
-          ))}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {/* Small thumbnails: what belongs at the top of a thread is the fact
+              that photos came with the request, not the photos. Past the first
+              few, the last tile says how many more; any click opens the viewer,
+              which steps through all of them. */}
+          {images.slice(0, THUMBS).map((file, index) => {
+            const hidden = images.length - THUMBS;
+            const last = index === THUMBS - 1 && hidden > 0;
+            return (
+              <button
+                key={file.index}
+                type="button"
+                onClick={() => setViewing(index)}
+                aria-label={last ? `Open photos, ${hidden} more` : `Open ${file.filename}`}
+                className="relative block size-14 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-line bg-surface"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- the API
+                    redirects to a short-lived signed URL the optimiser cannot reach. */}
+                <img
+                  src={attachmentHref(ticket.id, file.index)}
+                  alt={file.filename}
+                  loading="lazy"
+                  onError={() => setBroken((current) => [...current, file.index])}
+                  className="size-full object-cover"
+                />
+                {last && (
+                  <span className="absolute inset-0 grid place-items-center bg-ink-900/55 text-[13px] font-bold text-white">
+                    +{hidden}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -447,11 +461,14 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
         </ul>
       )}
 
-      {viewing && (
+      {viewing !== null && images[viewing] && (
         <PhotoLightbox
-          src={attachmentHref(ticket.id, viewing.index)}
-          alt={viewing.filename}
+          src={attachmentHref(ticket.id, images[viewing].index)}
+          alt={images[viewing].filename}
           onClose={() => setViewing(null)}
+          onPrev={viewing > 0 ? () => setViewing(viewing - 1) : undefined}
+          onNext={viewing < images.length - 1 ? () => setViewing(viewing + 1) : undefined}
+          position={images.length > 1 ? `${viewing + 1} / ${images.length}` : undefined}
         />
       )}
     </div>
@@ -622,8 +639,10 @@ export function TicketChat({
     for (const person of ticket.assignees) {
       add(person.id, person.name ?? "Someone", "holding", "");
     }
+    // Of the rest of the department, only whoever runs it: the head oversees
+    // every ticket there. Colleagues not on this one are not part of it.
     for (const member of team ?? []) {
-      add(member.id, member.name, member.departmentRole, receiving);
+      if (member.departmentRole === "head") add(member.id, member.name, "head", receiving);
     }
 
     return out;

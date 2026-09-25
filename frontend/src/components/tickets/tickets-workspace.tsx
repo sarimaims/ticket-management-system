@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/field";
+import { Input, Textarea } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { SearchSelect } from "@/components/ui/search-select";
 import {
@@ -39,7 +39,9 @@ import {
   type SheetTab,
 } from "@/components/tickets/ticket-detail-sheet";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { PriorityPicker } from "@/components/tickets/priority-picker";
 import { DateField } from "@/components/tickets/date-field";
+import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { ScopeFilter, type ScopeOption } from "@/components/ui/scope-filter";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import {
@@ -69,14 +71,14 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
 import { activeUnit, activeUnitOnServer, subscribeActiveUnit } from "@/lib/active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
-import type { Stat, TicketStatus } from "@/lib/types";
+import { isClosed, type Stat, type TicketPriority, type TicketStatus } from "@/lib/types";
 
 /**
  * Every status a ticket can read as, in lifecycle order - which is what the
  * filter offers and what the Status column sorts by. Overdue is in the list
  * because it is worth filtering for, even though nobody can set it.
  */
-const STATUSES: TicketStatus[] = ["New", "In Progress", "Completed", "Overdue"];
+const STATUSES: TicketStatus[] = ["New", "In Progress", "Completed", "Cancelled", "Overdue"];
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
@@ -124,6 +126,13 @@ const REFRESH_MS = 7000;
  * same number; this one only decides whether to offer the button.
  */
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
+
+/** "Delete · 12 min left" for the raiser; a manager's delete has no clock. */
+function deleteHint(ticket: TicketRecord) {
+  const left = DELETE_WINDOW_MS - (Date.now() - Date.parse(ticket.createdAt));
+  if (left <= 0 || left > DELETE_WINDOW_MS) return "Delete";
+  return `Delete · ${Math.max(1, Math.ceil(left / 60000))} min left`;
+}
 
 /** How long a row arrived at from a notification keeps its outline. */
 const FLASH_MS = 4000;
@@ -299,10 +308,12 @@ const TicketRow = memo(function TicketRow({
   showPick,
   canPick,
   canDelete,
+  canPrioritise,
   picked,
   onPick,
   onOpen,
   onStatus,
+  onPriority,
   onDelete,
 }: {
   ticket: TicketRecord;
@@ -327,6 +338,9 @@ const TicketRow = memo(function TicketRow({
   onPick: (id: string, picked: boolean) => void;
   onOpen: (ticket: TicketRecord, tab?: SheetTab) => void;
   onStatus: (ticket: TicketRecord, next: TicketStatus) => void;
+  /** Whether this reader may say how urgent it is: whoever raised it, or a manager. */
+  canPrioritise: boolean;
+  onPriority: (ticket: TicketRecord, next: TicketPriority) => void;
   onDelete: (ticket: TicketRecord) => void;
 }) {
   const messages = unreadMessages > 0 ? unreadMessages : ticket.messageCount;
@@ -465,7 +479,19 @@ const TicketRow = memo(function TicketRow({
       </TableCell>
 
       <TableCell className={cn(CELL, TO_EDGE)}>
-        <PriorityBadge priority={ticket.priority} className="px-1.5 py-0.5 text-[11px]" />
+        {canPrioritise ? (
+          // The list is drawn on the body but still bubbles through React, so
+          // a pick must not also open the row.
+          <div className="w-[104px]" onClick={(event) => event.stopPropagation()}>
+            <PriorityPicker
+              value={ticket.priority}
+              onChange={(next) => onPriority(ticket, next)}
+              className="h-7 gap-1.5 px-2 text-[12px]"
+            />
+          </div>
+        ) : (
+          <PriorityBadge priority={ticket.priority} className="px-1.5 py-0.5 text-[11px]" />
+        )}
       </TableCell>
 
       <TableCell className={CELL}>
@@ -548,6 +574,7 @@ const TicketRow = memo(function TicketRow({
               }}
               className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
               aria-label={`Delete ${ticket.number}`}
+              title={deleteHint(ticket)}
             >
               <Trash2 className="size-4" />
             </button>
@@ -877,6 +904,7 @@ export function TicketsWorkspace({
   /** How many of the second row are in use, for the dot on its button. */
   const moreCount =
     (fromWhere.units.length + fromWhere.departments.length > 0 ? 1 : 0) +
+    (where.units.length + where.departments.length > 0 ? 1 : 0) +
     (raisers.length > 0 ? 1 : 0) +
     (holders.length > 0 ? 1 : 0) +
     (created.from || created.to ? 1 : 0) +
@@ -1127,16 +1155,22 @@ export function TicketsWorkspace({
    * in the air cannot put the old status back.
    */
   const applyStatus = useCallback(
-    async (ticket: TicketRecord, next: TicketStatus) => {
+    async (ticket: TicketRecord, next: TicketStatus, cancelReason?: string) => {
       const release = hold();
       setTickets((current) =>
         current.map((item) => (item.id === ticket.id ? { ...item, status: next } : item)),
       );
 
       try {
-        const saved = await updateTicket(ticket.id, { status: next });
+        const saved = await updateTicket(ticket.id, {
+          status: next,
+          ...(cancelReason ? { cancelReason } : {}),
+        });
         setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
-        toast.success(`#${ticket.number} updated`, `Status: ${next}`);
+        toast.success(
+          next === "Cancelled" ? `#${ticket.number} cancelled` : `#${ticket.number} updated`,
+          next === "Cancelled" ? cancelReason : `Status: ${next}`,
+        );
       } catch (caught) {
         // The row we were handed is the value before the edit.
         setTickets((current) => current.map((item) => (item.id === ticket.id ? ticket : item)));
@@ -1146,6 +1180,45 @@ export function TicketsWorkspace({
       }
     },
     [hold, setTickets, toast],
+  );
+
+  /**
+   * How urgent it is belongs to whoever asked: the raiser moves it straight
+   * from the row, and the department is told like any other edit. Optimistic,
+   * held against the poll the same way a status change is.
+   */
+  const applyPriority = useCallback(
+    async (ticket: TicketRecord, next: TicketPriority) => {
+      if (next === ticket.priority) return;
+      const release = hold();
+      setTickets((current) =>
+        current.map((item) => (item.id === ticket.id ? { ...item, priority: next } : item)),
+      );
+
+      try {
+        const saved = await updateTicket(ticket.id, { priority: next });
+        setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+        toast.success(`#${ticket.number} updated`, `Priority: ${next}`);
+      } catch (caught) {
+        setTickets((current) => current.map((item) => (item.id === ticket.id ? ticket : item)));
+        toast.error(`Could not update #${ticket.number}`, errorMessage(caught));
+      } finally {
+        release();
+      }
+    },
+    [hold, setTickets, toast],
+  );
+
+  /** The row whose Cancelled is waiting on its remark. */
+  const [cancelling, setCancelling] = useState<TicketRecord | null>(null);
+
+  /** Cancelled is the one status that asks something first: why. */
+  const chooseStatus = useCallback(
+    (ticket: TicketRecord, next: TicketStatus) => {
+      if (next === "Cancelled" && ticket.status !== "Cancelled") setCancelling(ticket);
+      else void applyStatus(ticket, next);
+    },
+    [applyStatus],
   );
 
   const pickOne = useCallback((id: string, on: boolean) => {
@@ -1189,19 +1262,6 @@ export function TicketsWorkspace({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               aria-label="Search tickets"
-            />
-          </div>
-
-          {/* Unit and department are the same axis at two depths, so they are
-              one control: tick a unit for all of it, or reach in for two of
-              its departments. */}
-          <div className="w-52 shrink-0">
-            <ScopeFilter
-              id="filter-where"
-              options={departmentOptions}
-              value={where}
-              onChange={setWhere}
-              placeholder="To: all departments"
             />
           </div>
 
@@ -1371,6 +1431,18 @@ export function TicketsWorkspace({
 
             <span className="flex items-center gap-1.5">
               <FilterLabel>To</FilterLabel>
+              {/* Unit and department are the same axis at two depths, so they
+                  are one control: tick a unit for all of it, or reach in for
+                  two of its departments. */}
+              <div className="w-44">
+                <ScopeFilter
+                  id="filter-where"
+                  options={departmentOptions}
+                  value={where}
+                  onChange={setWhere}
+                  placeholder="Any unit / department"
+                />
+              </div>
               <div className="w-36">
                 <MultiSelect
                   display="summary"
@@ -1537,7 +1609,11 @@ export function TicketsWorkspace({
                     picked={picked.has(ticket.id)}
                     onPick={pickOne}
                     onOpen={openTicket}
-                    onStatus={applyStatus}
+                    onStatus={chooseStatus}
+                    canPrioritise={
+                      (manager || ticket.raisedBy.id === meId) && !isClosed(ticket.status)
+                    }
+                    onPriority={applyPriority}
                     onDelete={(one) => setRemoving([one])}
                   />
                 ))}
@@ -1581,17 +1657,26 @@ export function TicketsWorkspace({
         onError={(message) => toast.error("Could not reassign", message)}
       />
 
+      <CancelTicketModal
+        ticket={cancelling}
+        onClose={() => setCancelling(null)}
+        onConfirm={(reason) => {
+          if (cancelling) void applyStatus(cancelling, "Cancelled", reason);
+          setCancelling(null);
+        }}
+      />
+
       <DeleteTicketsModal
         tickets={removing}
         pending={deleting}
         onClose={() => setRemoving(null)}
-        onConfirm={async () => {
+        onConfirm={async (reason) => {
           if (!removing) return;
           const ids = removing.map((ticket) => ticket.id);
 
           setDeleting(true);
           try {
-            const result = await deleteTickets(ids);
+            const result = await deleteTickets(ids, reason);
             setTickets((current) => current.filter((item) => !ids.includes(item.id)));
             setPicked((current) => {
               const next = new Set(current);
@@ -1647,14 +1732,32 @@ function DeleteTicketsModal({
   tickets: TicketRecord[] | null;
   pending: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (reason: string) => void;
 }) {
   const many = (tickets?.length ?? 0) > 1;
+  // Kept per opening: a reason typed for one batch is not the reason for the next.
+  const [reason, setReason] = useState("");
+  const [missing, setMissing] = useState(false);
+
+  const close = () => {
+    setReason("");
+    setMissing(false);
+    onClose();
+  };
+
+  const confirm = () => {
+    if (reason.trim().length < 3) {
+      setMissing(true);
+      return;
+    }
+    onConfirm(reason.trim());
+    setReason("");
+  };
 
   return (
     <Modal
       open={tickets !== null && tickets.length > 0}
-      onClose={onClose}
+      onClose={close}
       title={many ? `Delete ${tickets?.length} tickets?` : "Delete this ticket?"}
       description="The conversation and the assignment history go with it. This cannot be undone."
       className="max-w-md"
@@ -1671,16 +1774,41 @@ function DeleteTicketsModal({
             ))}
           </ul>
 
-          <p className="mt-3 text-xs text-ink-500">
-            The activity log keeps its record that {many ? "these were" : "this was"} raised and
-            deleted.
+          <label
+            htmlFor="delete-reason"
+            className="mt-3 block text-[11px] font-semibold tracking-wide text-ink-500 uppercase"
+          >
+            Reason <span className="text-brand-600">*</span>
+          </label>
+          <Textarea
+            id="delete-reason"
+            value={reason}
+            invalid={missing}
+            maxLength={300}
+            autoFocus
+            placeholder="e.g. Raised to the wrong department"
+            onChange={(event) => {
+              setReason(event.target.value);
+              if (event.target.value.trim().length >= 3) setMissing(false);
+            }}
+            className="mt-1 min-h-16 text-[13px]"
+          />
+          <p
+            className={cn(
+              "mt-1 text-xs",
+              missing ? "font-semibold text-brand-600" : "text-ink-500",
+            )}
+          >
+            {missing
+              ? "Say why, so the people it was sent to know."
+              : `The department is notified with this reason, and the activity log keeps it.`}
           </p>
 
           <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
-            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
+            <Button type="button" variant="outline" size="sm" onClick={close} disabled={pending}>
               Cancel
             </Button>
-            <Button type="button" size="sm" onClick={onConfirm} disabled={pending}>
+            <Button type="button" size="sm" onClick={confirm} disabled={pending}>
               {pending ? "Deleting…" : many ? `Delete ${tickets.length}` : "Delete"}
             </Button>
           </div>
