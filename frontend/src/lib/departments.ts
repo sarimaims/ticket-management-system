@@ -63,12 +63,13 @@ export type PersonOption = MemberOption & {
  * under it.
  */
 export function listPeopleOptions(
-  filter: { unit?: string; department?: string } = {},
+  filter: { unit?: string; departments?: string[] } = {},
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
   if (filter.unit) query.set("unit", filter.unit);
-  if (filter.department) query.set("department", filter.department);
+  // Several ids ride as one comma-separated value; none means every department.
+  if (filter.departments?.length) query.set("department", filter.departments.join(","));
   const suffix = query.toString() ? `?${query}` : "";
 
   return api<{ members: PersonOption[] }>(

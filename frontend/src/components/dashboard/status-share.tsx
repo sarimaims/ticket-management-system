@@ -8,9 +8,7 @@ export type StatusPoint = { status: TicketStatus; count: number };
    is printed in the list below, so nothing is gated behind colour or hover. */
 const SEGMENT_COLOR: Record<TicketStatus, string> = {
   New: "var(--color-status-new-fg)",
-  Accepted: "var(--color-status-accepted-fg)",
   "In Progress": "var(--color-status-progress-fg)",
-  Waiting: "var(--color-status-waiting-fg)",
   Completed: "var(--color-status-completed-fg)",
   Overdue: "var(--color-status-overdue-fg)",
 };

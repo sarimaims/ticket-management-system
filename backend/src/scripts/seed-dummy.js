@@ -100,7 +100,7 @@ const TICKETS = [
     description:
       'Media plan for the last quarter is attached in the shared drive. Needs sign-off before we can commit the spend with the agency.',
     priority: 'Critical',
-    status: 'Waiting',
+    status: 'In Progress',
     agedDays: 6,
     dueDays: -1,
     project: 'Q4 Campaign',
@@ -113,7 +113,7 @@ const TICKETS = [
     description:
       'Six square and six story templates in the new brand palette, editable, for the Sharjah clinic opening.',
     priority: 'Medium',
-    status: 'Accepted',
+    status: 'In Progress',
     agedDays: 4,
     dueDays: 5,
     committedDays: 6,
@@ -179,7 +179,7 @@ const TICKETS = [
     description:
       'Invoices, media plans and approvals for the last two quarters. Needed for the internal audit file.',
     priority: 'High',
-    status: 'Accepted',
+    status: 'In Progress',
     agedDays: 5,
     dueDays: 1,
     committedDays: 2,
@@ -228,7 +228,7 @@ const TICKETS = [
     description:
       'Two retainer invoices were paid against the wrong cost centre and need moving before the month closes.',
     priority: 'Medium',
-    status: 'Waiting',
+    status: 'In Progress',
     agedDays: 14,
     dueDays: -3,
     assignDummy: true,
@@ -240,7 +240,7 @@ const TICKETS = [
     description:
       'The headrest no longer locks and the vinyl has split. It is being worked around rather than used.',
     priority: 'Medium',
-    status: 'Accepted',
+    status: 'In Progress',
     agedDays: 7,
     dueDays: 8,
     committedDays: 10,
@@ -253,7 +253,7 @@ const TICKETS = [
     description:
       'The summer offer ended a fortnight ago and is still live on two pages. It has to come down today.',
     priority: 'Critical',
-    status: 'Overdue',
+    status: 'In Progress',
     agedDays: 16,
     dueDays: -4,
     assignDummy: true,

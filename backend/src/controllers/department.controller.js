@@ -194,8 +194,15 @@ export async function listAllMemberOptions(req, res) {
 
   const scope = { isActive: true };
   if (department) {
-    assertObjectId(department, 'department id');
-    scope._id = department;
+    // One id or a comma-separated list: a ticket can be addressed at several
+    // departments, and the people on offer are everybody in any of them.
+    const asked = String(department)
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+
+    for (const id of asked) assertObjectId(id, 'department id');
+    scope._id = { $in: asked };
   }
   if (unit) {
     assertObjectId(unit, 'unit id');

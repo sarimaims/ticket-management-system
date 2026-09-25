@@ -16,7 +16,8 @@ import {
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
-import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import Ticket, { OVERDUE, TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import { pastDue, statusOf } from '../services/overdue.js';
 import HandoverRequest from '../models/HandoverRequest.js';
 import TicketAssignment from '../models/TicketAssignment.js';
 import Unit from '../models/Unit.js';
@@ -132,7 +133,9 @@ function present(ticket, { awaiting } = {}) {
     description: ticket.description,
     requestType: ticket.requestType,
     priority: ticket.priority,
-    status: ticket.status,
+    // What is stored is what a person last set; what is sent is that, unless
+    // the deadline has since made it late.
+    status: statusOf(ticket),
     project: ticket.project,
     deadline: ticket.deadline,
     committedDeadline: ticket.committedDeadline ?? null,
@@ -393,9 +396,40 @@ export async function createTicket(req, res) {
     }
   }
 
-  // Naming somebody is optional. A ticket with no name on it still reaches the
-  // department's head and team, who can pick it up or hand it on; requiring a
-  // name would mean knowing who works there before you are allowed to ask.
+  /**
+   * A department nobody was named for goes to whoever runs it.
+   *
+   * Naming somebody stays optional - requiring a name would mean knowing who
+   * works there before you are allowed to ask - but "nobody named" should not
+   * become "nobody's job". The head holds it until they hand it on or pass it
+   * down, which is the decision they are there to make.
+   *
+   * A department with no head yet keeps the older behaviour and lands in its
+   * queue unheld: better an unaddressed ticket than a rejected one.
+   */
+  const unstaffed = targets.filter((target) => !assignedTo.has(String(target._id)));
+  if (unstaffed.length > 0) {
+    // Every head of every unnamed department in one read, then sorted out in
+    // memory - the same one-wait-per-set rule as the named people above.
+    const heads = await User.find({
+      status: { $ne: 'suspended' },
+      memberships: {
+        $elemMatch: {
+          department: { $in: unstaffed.map((target) => target._id) },
+          role: 'head',
+        },
+      },
+    }).select('memberships');
+
+    for (const target of unstaffed) {
+      const key = String(target._id);
+      const owners = heads
+        .filter((person) => person.roleInDepartment(key) === 'head')
+        .map((person) => person._id);
+
+      if (owners.length > 0) assignedTo.set(key, owners);
+    }
+  }
 
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
@@ -581,7 +615,20 @@ export async function listTickets(req, res) {
     ];
   }
 
-  if (status) filter.status = status;
+  if (status) {
+    /*
+     * Overdue is not in the collection, so asking for it is asking about the
+     * date instead - and asking for anything else has to exclude the tickets
+     * the date has taken away from it.
+     */
+    if (status === OVERDUE) {
+      filter.$and = [...(filter.$and ?? []), { status: { $ne: 'Completed' } }, pastDue()];
+    } else if (status === 'Completed') {
+      filter.status = status;
+    } else {
+      filter.$and = [...(filter.$and ?? []), { status }, pastDue(false)];
+    }
+  }
   if (priority) filter.priority = priority;
   if (department && mongoose.isValidObjectId(department)) filter.department = department;
 
@@ -1102,6 +1149,14 @@ export async function updateTicket(req, res) {
   let movedCommitment = null;
 
   if (status !== undefined) {
+    // The one status nobody owns. Refused by name rather than by the list
+    // below, because "must be one of" reads as though it were missing.
+    if (status === OVERDUE) {
+      throw ApiError.badRequest(
+        'Overdue is set by the deadline, not by hand. Move the date or finish the ticket.',
+      );
+    }
+
     if (!TICKET_STATUSES.includes(status)) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
     }

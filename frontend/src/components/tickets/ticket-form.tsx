@@ -10,7 +10,6 @@ import { Field, Input, Label, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { Pagination } from "@/components/ui/table";
 import { MultiSelect } from "@/components/ui/multi-select";
-import { SearchSelect } from "@/components/ui/search-select";
 import { useToast } from "@/components/ui/toast";
 import { DateField } from "@/components/tickets/date-field";
 import { PriorityPicker } from "@/components/tickets/priority-picker";
@@ -33,9 +32,9 @@ import type { TicketPriority } from "@/lib/types";
 /**
  * The boxes that must be filled, in the order they appear on the page.
  *
- * Naming a person is not among them: a request reaches the department either
- * way, and being made to pick a stranger out of a list before you can ask a
- * question is a worse failure than an unaddressed ticket.
+ * Naming a person is not among them: leaving it empty hands the request to
+ * the department's head, and being made to pick a stranger out of a list
+ * before you can ask a question is the worse failure of the two.
  */
 const REQUIRED = [
   { key: "target", label: "To — Department", id: "target-departments" },
@@ -191,20 +190,19 @@ function ownUnitOptions(session: ReturnType<typeof useAuth>["session"]) {
 function AddPeopleModal({
   onClose,
   departments,
-  units,
+  departmentIds,
   picked,
   onAdd,
   onRemove,
 }: {
   onClose: () => void;
   departments: DepartmentOption[];
-  units: UnitOption[];
+  /** The departments the ticket is being sent to; nobody else is on offer. */
+  departmentIds: string[];
   picked: Picked[];
   onAdd: (person: PersonOption) => void;
   onRemove: (key: string) => void;
 }) {
-  const [unitId, setUnitId] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
   const [term, setTerm] = useState("");
   /** Page one of the results. Narrowing the list always returns here. */
   const [page, setPage] = useState(1);
@@ -218,37 +216,26 @@ function AddPeopleModal({
     list: PersonOption[];
   } | null>(null);
 
-  const scope = `${unitId}:${departmentId}`;
+  const scope = departmentIds.join(",");
 
   useEffect(() => {
+    if (!scope) return;
+
     const controller = new AbortController();
 
-    listPeopleOptions(
-      { unit: unitId || undefined, department: departmentId || undefined },
-      controller.signal,
-    )
+    // Split back out of the joined key rather than closing over the array,
+    // which is rebuilt on every render and would restart the fetch each time.
+    listPeopleOptions({ departments: scope.split(",") }, controller.signal)
       .then((list) => setFetched({ scope, list }))
       .catch(() => {
         if (!controller.signal.aborted) setFetched({ scope, list: [] });
       });
 
     return () => controller.abort();
-  }, [scope, unitId, departmentId]);
+  }, [scope]);
 
-  const people = fetched?.scope === scope ? fetched.list : null;
-
-  const inUnit = departments.filter((department) =>
-    inAny(unitId ? [unitId] : [], department.unit?.id),
-  );
-
-  /** Changing unit drops a department the new unit does not hold. */
-  const chooseUnit = (next: string) => {
-    setUnitId(next);
-    setPage(1);
-    if (next && departments.find((item) => item.id === departmentId)?.unit?.id !== next) {
-      setDepartmentId("");
-    }
-  };
+  /** Null while a list is on its way; empty when there is nothing to ask for. */
+  const people = !scope ? [] : fetched?.scope === scope ? fetched.list : null;
 
   // Name, department and unit all match: the thing you remember about somebody
   // is not always their name.
@@ -271,14 +258,14 @@ function AddPeopleModal({
   const from = (current - 1) * PEOPLE_PER_PAGE;
   const rows = shown.slice(from, from + PEOPLE_PER_PAGE);
 
-  const unitName = units.find((unit) => unit.id === unitId)?.name;
-  const departmentName = departments.find((item) => item.id === departmentId)?.name;
+  // The list is exactly the departments being asked, so the caption names
+  // them rather than describing a filter that no longer exists.
+  const names = departmentIds
+    .map((id) => departments.find((item) => item.id === id)?.name)
+    .filter(Boolean);
 
-  const caption = departmentName
-    ? departmentName
-    : unitName
-      ? `Everyone in ${unitName}`
-      : "Everyone, across every unit";
+  const caption =
+    names.length === 0 ? "Choose a department first" : `Everyone in ${names.join(", ")}`;
 
   const pickedKeys = new Set(picked.map((person) => pickKey(person.id, person.departmentId)));
 
@@ -290,44 +277,11 @@ function AddPeopleModal({
 
   return (
     <Modal open onClose={onClose} title="Add people" className="max-w-xl">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Unit" htmlFor="modal-unit">
-          <SearchSelect
-            id="modal-unit"
-            icon={<Building className="text-ink-500" />}
-            options={units.map((unit) => ({
-              value: unit.id,
-              label: unit.name,
-            }))}
-            value={unitId}
-            onChange={chooseUnit}
-            placeholder="All units"
-            clearLabel="All units"
-            emptyMessage="No units yet"
-          />
-        </Field>
-
-        <Field label="Department" htmlFor="modal-department">
-          <SearchSelect
-            id="modal-department"
-            options={inUnit.map((department) => ({
-              value: department.id,
-              label: department.name,
-              hint: department.unit?.name,
-            }))}
-            value={departmentId}
-            onChange={(value) => {
-              setDepartmentId(value);
-              setPage(1);
-            }}
-            placeholder="All departments"
-            clearLabel="All departments"
-            emptyMessage={unitId ? "Nothing in that unit" : "No departments yet"}
-          />
-        </Field>
-      </div>
-
-      <div className="mt-3">
+      {/* One box rather than three. The search already reads names, units and
+          departments, so a pair of dropdowns above it only offered a slower
+          way to do the same thing - and every row carries its unit and
+          department anyway. */}
+      <div>
         <Input
           icon={<Search className="text-ink-400" />}
           placeholder="Search by name, department or unit..."
@@ -917,7 +871,9 @@ export function TicketForm() {
           }
         >
           {picked.length === 0 ? (
-            <p className="text-[13px] text-ink-400">Anyone in the department can pick it up.</p>
+            <p className="text-[13px] text-ink-400">
+              Leave it empty and the department head takes it.
+            </p>
           ) : (
             <ul className="flex flex-wrap gap-1.5">
               {picked.map((person) => {
@@ -967,7 +923,7 @@ export function TicketForm() {
                 <span key={department.id}>
                   {index > 0 && " · "}
                   <span className="font-semibold text-ink-600">{department.name}</span>
-                  {who && <> — starting with {who}</>}
+                  {who ? <> — starting with {who}</> : <> — starting with its head</>}
                 </span>
               );
             })}
@@ -1134,7 +1090,7 @@ export function TicketForm() {
         <AddPeopleModal
           onClose={() => setPeopleOpen(false)}
           departments={departments}
-          units={units}
+          departmentIds={targetDepts}
           picked={picked}
           onAdd={addPerson}
           onRemove={removePerson}
@@ -1247,7 +1203,7 @@ function ReviewModal({
 
         <ReviewRow label="Addressed to">
           {people.length === 0 ? (
-            <span className="font-normal text-ink-400">Anyone in the department</span>
+            <span className="font-normal text-ink-400">The department head</span>
           ) : (
             people.map((person) => person.name).join(", ")
           )}

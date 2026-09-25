@@ -2,36 +2,82 @@ import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react"
 
 import { cn } from "@/lib/utils";
 
+/** Which way a column is sorted right now, or null when it is not the one. */
+export type SortDirection = "asc" | "desc";
+
 export function TableHead({
   children,
   sortable,
+  sorted,
+  onSort,
   className,
   title,
+  colSpan,
+  rowSpan,
 }: {
   children: React.ReactNode;
   sortable?: boolean;
+  /** The direction this column is sorted in, or null when another one is. */
+  sorted?: SortDirection | null;
+  /** Given a handler, the heading becomes the control that reorders the table. */
+  onSort?: () => void;
   className?: string;
   /** Spelt-out version of a heading that had to be short to fit its column. */
   title?: string;
+  /** For a heading that names a band of columns rather than one of them. */
+  colSpan?: number;
+  /** For a heading that stands beside such a band and has no sub-heading. */
+  rowSpan?: number;
 }) {
+  // The arrows say which way the table is ordered: the active one is filled in
+  // and the other greys out, so a glance at the header answers "by what?".
+  const arrows = sortable && (
+    <span className="flex flex-col">
+      <ChevronUp
+        className={cn("size-3 -mb-1", sorted === "asc" ? "text-brand-600" : "text-ink-300")}
+        strokeWidth={2.5}
+      />
+      <ChevronDown
+        className={cn("size-3", sorted === "desc" ? "text-brand-600" : "text-ink-300")}
+        strokeWidth={2.5}
+      />
+    </span>
+  );
+
+  const label = (
+    <span className="inline-flex items-center gap-1">
+      {children}
+      {arrows}
+    </span>
+  );
+
   return (
     <th
-      scope="col"
+      scope={colSpan ? "colgroup" : "col"}
       title={title}
+      colSpan={colSpan}
+      rowSpan={rowSpan}
+      aria-sort={sorted ? (sorted === "asc" ? "ascending" : "descending") : undefined}
       className={cn(
         "px-2.5 py-1.5 text-left text-[11px] font-semibold whitespace-nowrap text-ink-500",
         className,
       )}
     >
-      <span className="inline-flex items-center gap-1">
-        {children}
-        {sortable && (
-          <span className="flex flex-col text-ink-300">
-            <ChevronUp className="size-3 -mb-1" strokeWidth={2.5} />
-            <ChevronDown className="size-3" strokeWidth={2.5} />
-          </span>
-        )}
-      </span>
+      {onSort ? (
+        <button
+          type="button"
+          onClick={onSort}
+          className={cn(
+            "inline-flex items-center gap-1 rounded transition-colors hover:text-ink-800",
+            sorted && "text-ink-900",
+          )}
+        >
+          {children}
+          {arrows}
+        </button>
+      ) : (
+        label
+      )}
     </th>
   );
 }

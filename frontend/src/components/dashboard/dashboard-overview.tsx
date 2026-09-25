@@ -24,14 +24,7 @@ import type { TicketRecord } from "@/lib/tickets";
 import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STATUS_ORDER: TicketStatus[] = [
-  "New",
-  "Accepted",
-  "In Progress",
-  "Waiting",
-  "Overdue",
-  "Completed",
-];
+const STATUS_ORDER: TicketStatus[] = ["New", "In Progress", "Overdue", "Completed"];
 
 const DAY = 86_400_000;
 

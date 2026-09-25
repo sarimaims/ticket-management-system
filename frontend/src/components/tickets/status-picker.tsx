@@ -5,27 +5,17 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
 import { statusToneClasses } from "@/components/ui/badge";
+import { SETTABLE_STATUSES } from "@/lib/types";
 import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Roughly how tall the open list is, used to decide which way it opens. */
 const LIST_HEIGHT = 196;
 
-const STATUSES: TicketStatus[] = [
-  "New",
-  "Accepted",
-  "In Progress",
-  "Waiting",
-  "Completed",
-  "Overdue",
-];
-
 /** A filled dot per status, so the list reads by colour before it is read. */
 const DOTS: Record<TicketStatus, string> = {
   New: "bg-status-new-fg",
-  Accepted: "bg-status-accepted-fg",
   "In Progress": "bg-status-progress-fg",
-  Waiting: "bg-status-waiting-fg",
   Completed: "bg-status-completed-fg",
   Overdue: "bg-status-overdue-fg",
 };
@@ -144,7 +134,7 @@ export function StatusPicker({
           style={{ right: at.right, top: at.top, bottom: at.bottom }}
           className="fixed z-50 w-36 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
         >
-          {STATUSES.map((status) => {
+          {SETTABLE_STATUSES.map((status) => {
             const current = status === value;
             return (
               <li key={status}>
@@ -168,6 +158,14 @@ export function StatusPicker({
               </li>
             );
           })}
+
+          {/* Nothing in the list is current, which would otherwise look like a
+              ticket with no status at all. It has one - the deadline gave it. */}
+          {value === "Overdue" && (
+            <li className="mt-1 border-t border-line px-1.5 pt-1 text-[10px] leading-tight text-ink-400">
+              Overdue comes from the deadline. Finish it, or move the date.
+            </li>
+          )}
         </ul>,
         document.body,
       )}
