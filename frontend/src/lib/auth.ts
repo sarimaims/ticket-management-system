@@ -10,6 +10,19 @@ export type Role = "superadmin" | "admin" | "user";
 
 export type DepartmentRole = "head" | "team";
 
+/**
+ * What a department role is called on screen.
+ *
+ * Somebody inside a department is either its Head or one of its Users; "team"
+ * is only the value it has been stored under since the beginning, and nothing
+ * shows that word to anybody. Renaming the stored value would mean migrating
+ * every membership in the database for a word nobody reads.
+ */
+export const DEPARTMENT_ROLE_LABEL: Record<DepartmentRole, string> = {
+  head: "Head",
+  team: "User",
+};
+
 export type Membership = {
   id: string;
   name?: string;

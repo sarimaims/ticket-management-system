@@ -59,7 +59,7 @@ export function LoginForm() {
           type="email"
           autoComplete="email"
           icon={<Mail className="text-ink-500" />}
-          placeholder="you@flowdesk.com"
+          placeholder="you@flowdesk.ae"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />

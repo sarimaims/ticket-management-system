@@ -18,6 +18,7 @@ import {
   answerHandover,
   createHandover,
   listHandovers,
+  releaseTicket,
 } from '../controllers/handover.controller.js';
 import {
   createMessage,
@@ -73,6 +74,8 @@ router.delete('/:id/messages/:messageId', asyncHandler(deleteMessage));
 router.get('/:id/handovers', asyncHandler(listHandovers));
 router.post('/:id/handovers', asyncHandler(createHandover));
 router.patch('/:id/handovers/:handoverId', asyncHandler(answerHandover));
+// Giving it back: off the holder, and to the head if nobody else is left.
+router.post('/:id/release', asyncHandler(releaseTicket));
 
 // Who has held it, and who handed it on. Written by raising and updating a
 // ticket, never posted to directly - a history anyone can write is not one.

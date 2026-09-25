@@ -2,13 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, CheckCircle2, Paperclip, Search, UserPlus, X } from "lucide-react";
+import { Building, CheckCircle2, Paperclip, UserPlus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Label, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
-import { Pagination } from "@/components/ui/table";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/components/ui/toast";
 import { DateField } from "@/components/tickets/date-field";
@@ -22,10 +21,10 @@ import {
 import { listUnitOptions, type UnitOption } from "@/lib/units";
 import { createTicket, type TicketRecord } from "@/lib/tickets";
 import { useAuth } from "@/components/auth/auth-provider";
-import { initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
+import { isAdmin, ROLE_LABEL } from "@/lib/auth";
 import { errorMessage } from "@/lib/api";
 import { formatBytes, TICKET_FILE_LIMITS, uploadTicketFile } from "@/lib/uploads";
-import { PriorityBadge } from "@/components/ui/badge";
+import { PriorityBadge, RoleTag } from "@/components/ui/badge";
 import { cn, formatDate } from "@/lib/utils";
 import type { TicketPriority } from "@/lib/types";
 
@@ -58,15 +57,6 @@ type Picked = {
  * departments can be asked in either, and those are two different requests.
  */
 const pickKey = (personId: string, departmentId: string) => `${personId}:${departmentId}`;
-
-/**
- * People shown at once in the Add people modal, before it pages.
- *
- * Enough that most workspaces are one page and the pager never appears; the
- * list scrolls inside its own box, so the number does not decide how tall the
- * dialog is.
- */
-const PEOPLE_PER_PAGE = 30;
 
 /**
  * One numbered stop on the way down the page.
@@ -179,223 +169,31 @@ function ownUnitOptions(session: ReturnType<typeof useAuth>["session"]) {
 }
 
 /**
- * Browse the organisation and hand the request to somebody by name.
+ * What a picked file looks like, before it has gone anywhere.
  *
- * It opens on everybody, because most of the time you know the person and not
- * their department. Unit narrows it to everyone underneath, department narrows
- * it further, and each row carries where they sit so two people with the same
- * first name are still told apart. It stays open while you pick, because
- * naming two people from two departments is one errand, not two.
+ * A photo is shown from the browser's own copy, so the preview is there the
+ * moment it is chosen; anything else gets a paperclip.
  */
-function AddPeopleModal({
-  onClose,
-  departments,
-  departmentIds,
-  picked,
-  onAdd,
-  onRemove,
-}: {
-  onClose: () => void;
-  departments: DepartmentOption[];
-  /** The departments the ticket is being sent to; nobody else is on offer. */
-  departmentIds: string[];
-  picked: Picked[];
-  onAdd: (person: PersonOption) => void;
-  onRemove: (key: string) => void;
-}) {
-  const [term, setTerm] = useState("");
-  /** Page one of the results. Narrowing the list always returns here. */
-  const [page, setPage] = useState(1);
-  /**
-   * The people, stamped with the filter they answer. Holding the two together
-   * is what makes "still loading" a comparison rather than a flag that has to
-   * be cleared before every fetch.
-   */
-  const [fetched, setFetched] = useState<{
-    scope: string;
-    list: PersonOption[];
-  } | null>(null);
+function FileThumb({ file }: { file: File }) {
+  const photo = file.type.startsWith("image/");
+  const img = useRef<HTMLImageElement>(null);
 
-  const scope = departmentIds.join(",");
-
+  // The blob URL is made and let go of here, so it lives exactly as long as
+  // the thumbnail does.
   useEffect(() => {
-    if (!scope) return;
+    if (!photo || !img.current) return;
+    const url = URL.createObjectURL(file);
+    img.current.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file, photo]);
 
-    const controller = new AbortController();
-
-    // Split back out of the joined key rather than closing over the array,
-    // which is rebuilt on every render and would restart the fetch each time.
-    listPeopleOptions({ departments: scope.split(",") }, controller.signal)
-      .then((list) => setFetched({ scope, list }))
-      .catch(() => {
-        if (!controller.signal.aborted) setFetched({ scope, list: [] });
-      });
-
-    return () => controller.abort();
-  }, [scope]);
-
-  /** Null while a list is on its way; empty when there is nothing to ask for. */
-  const people = !scope ? [] : fetched?.scope === scope ? fetched.list : null;
-
-  // Name, department and unit all match: the thing you remember about somebody
-  // is not always their name.
-  const needle = term.trim().toLowerCase();
-  const shown = (people ?? []).filter((person) =>
-    needle
-      ? `${person.name} ${person.department.name} ${person.unit?.name ?? ""}`
-          .toLowerCase()
-          .includes(needle)
-      : true,
-  );
-
-  /**
-   * A department of thirty is one scroll; a workspace of three hundred is not.
-   * The list is cut into pages so the modal keeps its height whatever it holds.
-   */
-  const pages = Math.max(1, Math.ceil(shown.length / PEOPLE_PER_PAGE));
-  // Removing people can shorten the list under the page you were on.
-  const current = Math.min(page, pages);
-  const from = (current - 1) * PEOPLE_PER_PAGE;
-  const rows = shown.slice(from, from + PEOPLE_PER_PAGE);
-
-  // The list is exactly the departments being asked, so the caption names
-  // them rather than describing a filter that no longer exists.
-  const names = departmentIds
-    .map((id) => departments.find((item) => item.id === id)?.name)
-    .filter(Boolean);
-
-  const caption =
-    names.length === 0 ? "Choose a department first" : `Everyone in ${names.join(", ")}`;
-
-  const pickedKeys = new Set(picked.map((person) => pickKey(person.id, person.departmentId)));
-
-  /** Turning the page, or narrowing the list, starts it at the top again. */
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: 0 });
-  }, [current, scope, term]);
-
-  return (
-    <Modal open onClose={onClose} title="Add people" className="max-w-xl">
-      {/* One box rather than three. The search already reads names, units and
-          departments, so a pair of dropdowns above it only offered a slower
-          way to do the same thing - and every row carries its unit and
-          department anyway. */}
-      <div>
-        <Input
-          icon={<Search className="text-ink-400" />}
-          placeholder="Search by name, department or unit..."
-          aria-label="Search people"
-          value={term}
-          onChange={(event) => {
-            setTerm(event.target.value);
-            setPage(1);
-          }}
-        />
-
-        <p className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-ink-400">
-          <span className="truncate font-semibold text-ink-500">{caption}</span>
-          {people && <span className="shrink-0">{shown.length} shown</span>}
-        </p>
-
-        <div className="mt-1 rounded-field border border-line">
-          {/* The rows scroll inside the box rather than stretching it, so a
-              page of thirty and a page of three are the same dialog, and the
-              pager below stays where the eye last left it. */}
-          <div ref={listRef} className="max-h-[min(26rem,50vh)] overflow-y-auto overscroll-contain">
-            {people === null ? (
-              <p className="flex items-center justify-center gap-2 px-3 py-8 text-[13px] text-ink-400">
-                <span className="size-3 animate-spin rounded-full border-2 border-ink-200 border-t-ink-400" />
-                Loading people…
-              </p>
-            ) : shown.length === 0 ? (
-              <p className="px-3 py-8 text-center text-[13px] text-ink-400">
-                {people.length === 0 ? "Nobody here yet." : `Nobody matches “${term}”.`}
-              </p>
-            ) : (
-              <ul className="divide-y divide-line">
-                {rows.map((person) => {
-                  const key = pickKey(person.id, person.department.id);
-                  const already = pickedKeys.has(key);
-
-                  return (
-                    <li key={key}>
-                      <button
-                        type="button"
-                        onClick={() => (already ? onRemove(key) : onAdd(person))}
-                        aria-pressed={already}
-                        className={cn(
-                          "flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
-                          already ? "bg-brand-50/70" : "hover:bg-ink-50",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold",
-                            already ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-600",
-                          )}
-                        >
-                          {initials(person.name)}
-                        </span>
-
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-[13px] font-semibold text-ink-900">
-                              {person.name}
-                            </span>
-                            <span className="shrink-0 text-[11px] text-ink-400 capitalize">
-                              {person.departmentRole}
-                            </span>
-                          </span>
-
-                          {/* Where they sit, small enough to skim past and
-                            precise enough to tell two Intizars apart. */}
-                          <span className="mt-0.5 flex flex-wrap items-center gap-1">
-                            {person.unit && (
-                              <span className="rounded bg-ink-100 px-1.5 py-px text-[10px] font-semibold text-ink-500">
-                                {person.unit.name}
-                              </span>
-                            )}
-                            <span className="rounded bg-brand-50 px-1.5 py-px text-[10px] font-semibold text-brand-700">
-                              {person.department.name}
-                            </span>
-                          </span>
-                        </span>
-
-                        {already ? (
-                          <CheckCircle2 className="size-4 shrink-0 text-brand-600" />
-                        ) : (
-                          <UserPlus className="size-4 shrink-0 text-ink-300" />
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-
-          {pages > 1 && (
-            <Pagination
-              summary={`${from + 1}-${from + rows.length} of ${shown.length}`}
-              pages={pages}
-              current={current}
-              onPage={setPage}
-            />
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3.5">
-        <p className="text-xs text-ink-500">
-          {picked.length > 0 &&
-            `${picked.length} ${picked.length === 1 ? "person" : "people"} added`}
-        </p>
-        <Button type="button" size="sm" onClick={onClose}>
-          Done
-        </Button>
-      </div>
-    </Modal>
+  return photo ? (
+    // eslint-disable-next-line @next/next/no-img-element -- a local blob URL
+    <img ref={img} alt="" className="size-10 shrink-0 rounded-md bg-ink-100 object-cover" />
+  ) : (
+    <span className="grid size-10 shrink-0 place-items-center rounded-md bg-ink-100 text-ink-400">
+      <Paperclip className="size-4" />
+    </span>
   );
 }
 
@@ -438,7 +236,15 @@ export function TicketForm() {
    * submit.
    */
   const [picked, setPicked] = useState<Picked[]>([]);
-  const [peopleOpen, setPeopleOpen] = useState(false);
+  /**
+   * The people on offer, stamped with the departments they were fetched for.
+   * Holding the two together is what makes "still loading" a comparison
+   * rather than a flag that has to be cleared before every fetch.
+   */
+  const [fetchedPeople, setFetchedPeople] = useState<{
+    scope: string;
+    list: PersonOption[];
+  } | null>(null);
 
   const [priority, setPriority] = useState<TicketPriority>("Medium");
   const [subject, setSubject] = useState("");
@@ -579,35 +385,66 @@ export function TicketForm() {
     if (value.length > 0) clear("target");
   };
 
-  /** Naming somebody is also a way of choosing their department. */
-  const addPerson = (person: PersonOption) => {
-    const departmentId = person.department.id;
+  // Only the departments being asked are on offer, so the list follows them.
+  const peopleScope = targetDepts.join(",");
 
-    setTargetDepts((current) =>
-      current.includes(departmentId) ? current : [...current, departmentId],
+  useEffect(() => {
+    if (!peopleScope) return;
+
+    const controller = new AbortController();
+
+    // Split back out of the joined key rather than closing over the array,
+    // which is rebuilt on every render and would restart the fetch each time.
+    listPeopleOptions({ departments: peopleScope.split(",") }, controller.signal)
+      .then((list) => setFetchedPeople({ scope: peopleScope, list }))
+      .catch(() => {
+        if (!controller.signal.aborted) setFetchedPeople({ scope: peopleScope, list: [] });
+      });
+
+    return () => controller.abort();
+  }, [peopleScope]);
+
+  /** Null while a list is on its way; empty when there is nothing to ask for. */
+  const people = !peopleScope
+    ? []
+    : fetchedPeople?.scope === peopleScope
+      ? fetchedPeople.list
+      : null;
+
+  // Asking yourself is not a request, so the person raising it is left out.
+  const peopleOptions = (people ?? [])
+    .filter((person) => person.id !== session?.id)
+    .map((person) => ({
+      value: pickKey(person.id, person.department.id),
+      // Somebody in two of the departments being asked shows up twice, so the
+      // department rides along to tell the two apart.
+      label: targetDepts.length > 1 ? `${person.name} · ${person.department.name}` : person.name,
+      badge: <RoleTag role={person.departmentRole} className="px-1.5 py-px text-[10px]" />,
+    }));
+
+  const choosePeople = (keys: string[]) => {
+    const byKey = new Map(
+      (people ?? []).map((person) => [pickKey(person.id, person.department.id), person]),
     );
-    setPicked((current) =>
-      current.some(
-        (item) => pickKey(item.id, item.departmentId) === pickKey(person.id, departmentId),
-      )
-        ? current
-        : [
-            ...current,
-            {
-              id: person.id,
-              name: person.name,
-              departmentId,
-              departmentName: person.department.name,
-            },
-          ],
+    const kept = new Map(picked.map((person) => [pickKey(person.id, person.departmentId), person]));
+
+    setPicked(
+      keys.flatMap((key): Picked[] => {
+        const already = kept.get(key);
+        if (already) return [already];
+        const person = byKey.get(key);
+        if (!person) return [];
+        return [
+          {
+            id: person.id,
+            name: person.name,
+            departmentId: person.department.id,
+            departmentName: person.department.name,
+          },
+        ];
+      }),
     );
-    clear("target");
   };
-
-  const removePerson = (key: string) =>
-    setPicked((current) =>
-      current.filter((person) => pickKey(person.id, person.departmentId) !== key),
-    );
 
   const manager = isAdmin(session);
   const hasOwnDepartments = (session?.departments ?? []).length > 0;
@@ -856,53 +693,26 @@ export function TicketForm() {
 
         {/* Naming somebody is a shortcut, not a gate: the department sees it
             either way, and this only decides whose desk it starts on. */}
-        <FormRow
-          label="People"
-          hint="optional"
-          action={
-            <button
-              type="button"
-              onClick={() => setPeopleOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
-            >
-              <UserPlus className="size-3.5" />
-              Add
-            </button>
-          }
-        >
-          {picked.length === 0 ? (
-            <p className="text-[13px] text-ink-400">
-              Leave it empty and the department head takes it.
-            </p>
-          ) : (
-            <ul className="flex flex-wrap gap-1.5">
-              {picked.map((person) => {
-                const key = pickKey(person.id, person.departmentId);
-                return (
-                  <li
-                    key={key}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-ink-100 py-1 pr-1.5 pl-1 text-[12px] font-medium text-ink-800"
-                  >
-                    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-ink-300 text-[10px] font-bold text-ink-700">
-                      {initials(person.name)}
-                    </span>
-                    {person.name}
-                    {targetDepts.length > 1 && (
-                      <span className="text-ink-400">· {person.departmentName}</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removePerson(key)}
-                      aria-label={`Remove ${person.name}`}
-                      className="grid size-4 place-items-center rounded-full text-ink-400 transition-colors hover:bg-ink-200 hover:text-ink-700"
-                    >
-                      <X className="size-3" strokeWidth={3} />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+        <FormRow label="People" hint="optional">
+          <MultiSelect
+            id="target-people"
+            ariaLabel="People to ask"
+            chipTone="neutral"
+            icon={<UserPlus className="text-ink-500" />}
+            options={peopleOptions}
+            value={picked.map((person) => pickKey(person.id, person.departmentId))}
+            onChange={choosePeople}
+            searchable
+            placeholder="Leave it empty and the department head takes it"
+            emptyMessage={
+              targetDepts.length === 0
+                ? "Choose a department first"
+                : people === null
+                  ? "Loading people…"
+                  : "Nobody in those departments yet"
+            }
+            disabled={targetDepts.length === 0}
+          />
         </FormRow>
 
         {/* Who can see it is a property of the department, so say so up front -
@@ -1051,8 +861,9 @@ export function TicketForm() {
                 {files.map((file, index) => (
                   <li
                     key={file.name + index}
-                    className="flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-1.5 text-sm"
+                    className="flex items-center justify-between gap-3 rounded-lg bg-surface px-2 py-1.5 text-sm"
                   >
+                    <FileThumb file={file} />
                     <span className="min-w-0 flex-1 truncate font-medium text-ink-700">
                       {file.name}
                       <span className="ml-1.5 font-normal text-ink-400">
@@ -1083,19 +894,6 @@ export function TicketForm() {
           Create Ticket
         </Button>
       </div>
-
-      {/* Mounted only while it is open, so each visit starts on a clean
-          search rather than on yesterday's. */}
-      {peopleOpen && (
-        <AddPeopleModal
-          onClose={() => setPeopleOpen(false)}
-          departments={departments}
-          departmentIds={targetDepts}
-          picked={picked}
-          onAdd={addPerson}
-          onRemove={removePerson}
-        />
-      )}
 
       {reviewing && (
         <ReviewModal

@@ -26,7 +26,7 @@ import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
 import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
-import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
+import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
 import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
 
@@ -302,6 +302,10 @@ export async function downloadAttachment(req, res) {
   if (!storageReady()) throw ApiError.unavailable('File storage is not configured yet.');
 
   try {
+    // helmet marks every response same-origin, which stops the app - served
+    // from another origin - from showing this as an <img>. The redirect only
+    // hands out a link this person could already open, so it may be embedded.
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
     res.redirect(await createDownloadUrl(file.key));
   } catch (error) {
     if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
@@ -374,6 +378,13 @@ export async function createTicket(req, res) {
       const held = [];
       for (const userId of wanted) {
         if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+
+        // Work is something somebody hands you. Putting your own name on a
+        // request is not asking for it to be done - it is doing it yourself,
+        // which needs no ticket.
+        if (String(userId) === String(req.user._id)) {
+          throw ApiError.badRequest('You cannot assign a ticket to yourself.');
+        }
       }
 
       // Everyone named for this department is fetched at once: one wait for
@@ -912,6 +923,12 @@ export async function reassignTickets(req, res) {
     throw ApiError.badRequest('Choose at least one person to hand them to.');
   }
 
+  // The same rule as a single ticket: handing work out means handing it to
+  // somebody else.
+  if (assignees.some((id) => String(id) === String(req.user._id))) {
+    throw ApiError.badRequest('You cannot assign a ticket to yourself.');
+  }
+
   const valid = [...new Set(ids.filter((id) => mongoose.isValidObjectId(id)))];
   if (valid.length === 0) throw ApiError.badRequest('No ticket was named.');
   if (valid.length > MAX_DELETE) {
@@ -933,7 +950,9 @@ export async function reassignTickets(req, res) {
   const [fromDepartmentId] = [...departments];
 
   for (const ticket of tickets) {
-    if (!canWorkOn(req.user, ticket)) {
+    // The same two sides as a single ticket: the department that will do the
+    // work, and the person who asked for it.
+    if (!canWorkOn(req.user, ticket) && !isRaiser(req.user, ticket)) {
       throw ApiError.forbidden(`Only the receiving department can work ${ticket.number}.`);
     }
     if (!assignsDirectly(req.user, ticket)) {
@@ -1093,9 +1112,9 @@ export async function updateTicket(req, res) {
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
   const worksIt = canWorkOn(req.user, ticket);
-  const isRaiser = String(ticket.raisedBy?._id ?? ticket.raisedBy) === String(req.user._id);
+  const raisedByMe = isRaiser(req.user, ticket);
 
-  if (!worksIt && !isRaiser) {
+  if (!worksIt && !raisedByMe) {
     throw ApiError.forbidden('Only the receiving department can update this ticket.');
   }
 
@@ -1112,14 +1131,22 @@ export async function updateTicket(req, res) {
     project,
   } = req.body ?? {};
 
-  // Status and who holds it are how a department works a ticket: theirs alone.
-  if (!worksIt && (status !== undefined || assignees !== undefined)) {
-    throw ApiError.forbidden('Only the receiving department can work this ticket.');
+  // Status is how a department works a ticket: theirs alone. A raiser asks for
+  // things and is told when they are done; they do not declare it themselves.
+  if (!worksIt && status !== undefined) {
+    throw ApiError.forbidden('Only the receiving department can change the status.');
+  }
+
+  // Who holds it is theirs and the raiser's, for the reason in assignsDirectly:
+  // naming somebody is part of asking. Which of them may do it without the
+  // other's agreement is decided there, further down.
+  if (!worksIt && !raisedByMe && assignees !== undefined) {
+    throw ApiError.forbidden('Only the receiving department can hand this ticket on.');
   }
 
   // The request itself is the raiser's: what they asked for, how urgent it is
   // and by when. A department answers a request, it does not rewrite it.
-  const owns = isRaiser || MANAGER_ROLES.includes(req.user.role);
+  const owns = raisedByMe || MANAGER_ROLES.includes(req.user.role);
   const editsRequest =
     subject !== undefined ||
     description !== undefined ||
@@ -1188,7 +1215,7 @@ export async function updateTicket(req, res) {
   if (deadline !== undefined) {
     // The ask is the raiser's to move. A department that cannot meet it
     // commits to its own date instead, below.
-    if (!isRaiser && !MANAGER_ROLES.includes(req.user.role)) {
+    if (!raisedByMe && !MANAGER_ROLES.includes(req.user.role)) {
       throw ApiError.forbidden(
         'Only the person who raised this can change the requested deadline. Commit to a date of your own instead.',
       );
@@ -1269,6 +1296,14 @@ export async function updateTicket(req, res) {
 
     const held = (ticket.assignees ?? []).map(String);
     const wanted = [...new Set(assignees.filter(Boolean).map(String))];
+
+    // Nobody puts a ticket on their own desk: it is handed to you, or you
+    // accept being asked. Somebody already holding one stays on it, so a list
+    // that has you in it can still be saved - it just cannot gain you.
+    const me = String(req.user._id);
+    if (wanted.includes(me) && !held.includes(me)) {
+      throw ApiError.badRequest('You cannot assign a ticket to yourself.');
+    }
 
     // Once a ticket sits with somebody it stays with somebody: it is handed
     // on, never dropped. Tickets raised before that rule can stay empty.
@@ -1381,7 +1416,7 @@ export async function updateTicket(req, res) {
         ticket: populated,
         actor: req.user,
         event: 'edited',
-        side: isRaiser && !worksIt ? 'raiser' : 'department',
+        side: raisedByMe && !worksIt ? 'raiser' : 'department',
         body: said.join(', '),
       });
     }
@@ -1395,7 +1430,7 @@ export async function updateTicket(req, res) {
 
     // Who hears about it depends on which side moved: the raiser editing their
     // own request is news for the department, not for themselves.
-    if (isRaiser && !worksIt) {
+    if (raisedByMe && !worksIt) {
       await notifyTicketEdited({ ticket: populated, actor: req.user, summary });
     } else {
       await notifyTicketUpdated({ ticket: populated, actor: req.user, summary });

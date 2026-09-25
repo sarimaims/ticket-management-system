@@ -28,11 +28,12 @@ import { getDepartment, type Member } from "@/lib/departments";
 import { attachmentHref, updateTicket, type TicketRecord } from "@/lib/tickets";
 import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
-import { isAdmin } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
 import {
   answerHandover,
   askHandover,
   listHandovers,
+  releaseTicket,
   type HandoverRecord,
 } from "@/lib/handovers";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
@@ -506,12 +507,16 @@ export function TicketDetailSheet({
  * Who hands a ticket over, and who has to ask.
  *
  * A head runs the department and a manager oversees all of them, so both move
- * work directly. Everyone else asks a colleague and waits to be taken up on
- * it: putting a deadline on somebody's desk without their knowing is how work
- * goes missing. The API applies the same rule.
+ * work directly. So does whoever raised it: they could name who should pick it
+ * up while raising it, and that right does not expire at submit.
+ *
+ * Everyone else asks a colleague and waits to be taken up on it: putting a
+ * deadline on somebody's desk without their knowing is how work goes missing.
+ * The API applies the same rule.
  */
 function assignsDirectly(session: ReturnType<typeof useAuth>["session"], ticket: TicketRecord) {
   if (isAdmin(session)) return true;
+  if (session?.id && ticket.raisedBy.id === session.id) return true;
   return (session?.departments ?? []).some(
     (membership) => membership.id === ticket.department.id && membership.role === "head",
   );
@@ -663,6 +668,24 @@ function SheetBody({
     }
   };
 
+  /** Steps off the ticket; with nobody else on it, the head gets it back. */
+  const release = async () => {
+    setPending(true);
+    try {
+      const now = await releaseTicket(ticket.id);
+      setAsking([]);
+      loadHandovers();
+      // The ticket itself moved, so the pane behind this has to be told.
+      const fresh = await updateTicket(ticket.id, {});
+      onSaved(fresh);
+      toast.success(`#${ticket.number} released`, `Now with ${holders(now)}`);
+    } catch (caught) {
+      toast.error("Could not release the ticket", errorMessage(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
   /** Accepting is what actually moves the ticket; declining just passes. */
   const answer = async (request: HandoverRecord, choice: "accept" | "decline" | "cancel") => {
     setPending(true);
@@ -733,13 +756,15 @@ function SheetBody({
   };
 
   useEffect(() => {
-    if (!canWork) return;
+    // Whoever can name somebody needs the list of people to name, which is
+    // the receiving department's - the raiser's own department is not it.
+    if (!canWork && !direct) return;
     const controller = new AbortController();
     getDepartment(ticket.department.id, controller.signal)
       .then((data) => setMembers(data.members))
       .catch(() => setMembers([]));
     return () => controller.abort();
-  }, [ticket.department.id, canWork]);
+  }, [ticket.department.id, canWork, direct]);
 
   /** Saving closes the sheet; the toast carries what changed. */
   const save = async (nextStatus: TicketStatus = status) => {
@@ -761,9 +786,16 @@ function SheetBody({
     setPending(true);
     try {
       const saved = await updateTicket(ticket.id, {
-        status: nextStatus,
-        committedDeadline: committed || null,
-        ...(promiseMoved ? { committedReason: why.trim() } : {}),
+        // How it is going and what date was promised belong to the department
+        // doing the work. A raiser opening the same sheet sends neither - the
+        // API refuses both, and nothing here should ask it to.
+        ...(canWork
+          ? {
+              status: nextStatus,
+              committedDeadline: committed || null,
+              ...(promiseMoved ? { committedReason: why.trim() } : {}),
+            }
+          : {}),
         ...(direct ? { assignees } : {}),
       });
       onSaved(saved);
@@ -953,22 +985,31 @@ function SheetBody({
           )}
         </div>
 
-        {canWork && !editing && (
+        {(canWork || direct) && !editing && (
           <div className="mt-2 rounded-lg bg-status-waiting-bg/45 px-2.5 py-2">
             <p className="text-[10px] font-bold tracking-wider text-status-waiting-fg uppercase">
-              Work this ticket
+              {canWork ? "Work this ticket" : "Address this request"}
             </p>
 
-            <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-2">
-              <div className="min-w-0">
-                <MiniLabel>Status</MiniLabel>
-                <StatusPicker
-                  value={status}
-                  onChange={setStatus}
-                  label={`Status for #${ticket.number}`}
-                  className="h-8 justify-between px-2.5 text-[13px]"
-                />
-              </div>
+            <div
+              className={cn(
+                "mt-1.5 grid gap-x-2 gap-y-2",
+                canWork ? "grid-cols-2" : "grid-cols-1",
+              )}
+            >
+              {/* A raiser is not working the ticket, so the half of this pane
+                  that says how the work is going is not theirs to fill in. */}
+              {canWork && (
+                <div className="min-w-0">
+                  <MiniLabel>Status</MiniLabel>
+                  <StatusPicker
+                    value={status}
+                    onChange={setStatus}
+                    label={`Status for #${ticket.number}`}
+                    className="h-8 justify-between px-2.5 text-[13px]"
+                  />
+                </div>
+              )}
 
               <div className="min-w-0">
                 {direct ? (
@@ -976,10 +1017,17 @@ function SheetBody({
                     <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
                     <MultiSelect
                       id="sheet-assignee"
-                      options={members.map((member) => ({
-                        value: member.id,
-                        label: `${member.name} (${member.departmentRole})`,
-                      }))}
+                      // Everyone but you. A ticket is handed to somebody; if
+                      // you are already on it you stay, so the list can still
+                      // be saved - it just cannot gain you.
+                      options={members
+                        .filter(
+                          (member) => member.id !== meId || assignees.includes(member.id),
+                        )
+                        .map((member) => ({
+                          value: member.id,
+                          label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                        }))}
                       value={assignees}
                       onChange={setAssignees}
                       display="summary"
@@ -993,15 +1041,18 @@ function SheetBody({
                     <MultiSelect
                       id="sheet-ask"
                       // Only people who are not already on it: the rest have
-                      // nothing to accept.
+                      // nothing to accept. The head is left out too - handing
+                      // it back to them is what Release is for.
                       options={members
                         .filter(
                           (member) =>
+                            member.id !== meId &&
+                            member.departmentRole !== "head" &&
                             !ticket.assignees.some((person) => person.id === member.id),
                         )
                         .map((member) => ({
                           value: member.id,
-                          label: `${member.name} (${member.departmentRole})`,
+                          label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
                         }))}
                       value={asking}
                       onChange={setAsking}
@@ -1016,6 +1067,8 @@ function SheetBody({
 
               {!direct && (
                 <div className="col-span-2 min-w-0 space-y-2">
+                  {/* Only ever reached by somebody in the department: a raiser
+                      names people outright and never has to ask. */}
                   {/* Somebody is waiting on this person. It is the only thing
                       in the pane that is a question, so it says so loudly. */}
                   {waitingOnMe && (
@@ -1092,6 +1145,18 @@ function SheetBody({
                     >
                       {asking.length > 1 ? `Ask ${asking.length} people` : "Send request"}
                     </Button>
+                  )}
+
+                  {/* Giving it back rather than passing it sideways. */}
+                  {holdsIt && (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => void release()}
+                      className="w-full text-center text-[11px] font-semibold text-ink-500 transition-colors hover:text-brand-600 disabled:opacity-50"
+                    >
+                      Release back to the head
+                    </button>
                   )}
 
                   {!holdsIt && !waitingOnMe && (

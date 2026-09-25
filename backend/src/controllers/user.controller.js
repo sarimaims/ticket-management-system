@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { workEmail } from '../utils/workEmail.js';
 import { forgetUser } from '../middleware/auth.js';
 import Department from '../models/Department.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES, USER_STATUSES } from '../models/User.js';
@@ -10,7 +11,7 @@ function assertObjectId(id, label = 'id') {
   if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest(`Invalid ${label}.`);
 }
 
-/** Directory for the admin pages. Super admin only - see the route. */
+/** Directory for the admin pages, open to the super admin and to admins. */
 export async function listUsers(req, res) {
   const { role, status, department } = req.query;
 
@@ -22,11 +23,36 @@ export async function listUsers(req, res) {
   if (role === 'admin') filter.role = { $in: MANAGER_ROLES };
   if (role === 'head' || role === 'team') filter['memberships.role'] = role;
 
+  /*
+   * The account above an admin is not in their directory.
+   *
+   * An admin manages the workspace; the super admin manages the admins, and
+   * is not theirs to read, count or edit. Held here rather than in the page,
+   * so it holds for anything that asks - and as $and, so it also empties a
+   * request that asked for the super admin by name.
+   */
+  if (!seesEveryone(req.user)) {
+    filter.$and = [...(filter.$and ?? []), { role: { $ne: 'superadmin' } }];
+  }
+
   const users = await User.find(filter)
     .sort({ createdAt: -1 })
     .populate(WITH_DEPARTMENTS);
 
   res.json({ success: true, users: users.map(presentUser) });
+}
+
+/** Only the super admin sees the super admin. */
+const seesEveryone = (user) => user.role === 'superadmin';
+
+/**
+ * The account an admin is not allowed to know about, answered as though it
+ * were not there. A 403 would confirm what a 404 keeps quiet.
+ */
+function assertVisible(target, viewer) {
+  if (target.role === 'superadmin' && !seesEveryone(viewer)) {
+    throw ApiError.notFound('User not found.');
+  }
 }
 
 /** The departments this person runs, as ids. Empty for anyone who runs none. */
@@ -147,7 +173,7 @@ export async function createUser(req, res) {
     throw ApiError.badRequest('Role must be admin or user.');
   }
 
-  const normalisedEmail = email.trim().toLowerCase();
+  const normalisedEmail = workEmail(email);
   if (await User.exists({ email: normalisedEmail })) {
     throw ApiError.conflict('An account with this email already exists.');
   }
@@ -185,6 +211,7 @@ export async function updateUser(req, res) {
 
   const user = await User.findById(req.params.id);
   if (!user) throw ApiError.notFound('User not found.');
+  assertVisible(user, req.user);
 
   const { name, email, password, status, role, memberships } = req.body ?? {};
   const isSelf = String(user._id) === String(req.user._id);
@@ -195,7 +222,7 @@ export async function updateUser(req, res) {
   }
 
   if (typeof email === 'string' && email.trim().toLowerCase() !== user.email) {
-    const normalised = email.trim().toLowerCase();
+    const normalised = workEmail(email);
     if (await User.exists({ email: normalised, _id: { $ne: user._id } })) {
       throw ApiError.conflict('Another account already uses this email.');
     }
@@ -266,8 +293,9 @@ export async function deleteUser(req, res) {
 
   const user = await User.findById(req.params.id);
   if (!user) throw ApiError.notFound('User not found.');
+  assertVisible(user, req.user);
 
-  // An admin has every other right, but the super admin profile is permanent.
+  // Not even by the one person who can see it: the profile is permanent.
   if (user.role === 'superadmin') {
     throw ApiError.forbidden('The super admin profile cannot be deleted.');
   }

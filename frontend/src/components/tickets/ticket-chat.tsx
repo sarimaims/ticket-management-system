@@ -32,7 +32,7 @@ import {
 import { ChatMessage } from "@/components/tickets/chat-message";
 import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
 import { DraftPreview, useVoiceRecorder, type Draft } from "@/components/tickets/chat-attachments";
-import type { TicketRecord } from "@/lib/tickets";
+import { attachmentHref, type TicketRecord } from "@/lib/tickets";
 import { cn, formatTime } from "@/lib/utils";
 
 /** How often an open thread asks whether anything has been said. */
@@ -113,7 +113,7 @@ const STANDING: Record<Standing, { label: string; chip: string }> = {
   requester: { label: "Requester", chip: "bg-brand-50 text-brand-700" },
   holding: { label: "Holding it", chip: "bg-status-completed-bg text-status-completed-fg" },
   head: { label: "Head", chip: "bg-role-head-bg text-role-head-fg" },
-  team: { label: "Team", chip: "bg-ink-100 text-ink-600" },
+  team: { label: "User", chip: "bg-ink-100 text-ink-600" },
 };
 
 type Participant = {
@@ -268,6 +268,82 @@ function SystemLine({ message }: { message: MessageRecord }) {
         <span className="ml-1.5 opacity-70">{formatTime(message.createdAt)}</span>
       </span>
     </p>
+  );
+}
+
+/**
+ * The request itself, pinned to the top of the thread.
+ *
+ * Every conversation here is about this one ask, so it opens with it - the
+ * way a thread in a chat app starts with the post it replies to - rather than
+ * making the reader flip to Details to remember what was wanted.
+ */
+function RequestCard({ ticket }: { ticket: TicketRecord }) {
+  /** Photos that would not load; they fall back to a file chip. */
+  const [broken, setBroken] = useState<number[]>([]);
+  const isImage = (file: TicketRecord["attachments"][number]) =>
+    file.mimeType.startsWith("image/") && !broken.includes(file.index);
+  const images = ticket.attachments.filter(isImage);
+  const others = ticket.attachments.filter((file) => !isImage(file));
+
+  return (
+    <div className="rounded-xl border border-line bg-surface px-3 py-2.5 shadow-sm">
+      <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
+        Request · #{ticket.number}
+      </p>
+      <p className="mt-1 text-[13px] leading-snug font-bold text-ink-900">{ticket.subject}</p>
+      {ticket.description && (
+        <p className="mt-1 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-600">
+          {ticket.description}
+        </p>
+      )}
+
+      {images.length > 0 && (
+        <div className={cn("mt-2 grid gap-1.5", images.length > 1 && "grid-cols-2")}>
+          {images.map((file) => (
+            <a
+              key={file.index}
+              href={attachmentHref(ticket.id, file.index)}
+              target="_blank"
+              rel="noreferrer"
+              className="block overflow-hidden rounded-lg border border-line bg-ink-50"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- the API
+                  redirects to a short-lived signed URL the optimiser cannot reach. */}
+              <img
+                src={attachmentHref(ticket.id, file.index)}
+                alt={file.filename}
+                loading="lazy"
+                onError={() => setBroken((current) => [...current, file.index])}
+                className={cn(
+                  "w-full object-cover",
+                  images.length > 1 ? "aspect-square" : "max-h-56",
+                )}
+              />
+            </a>
+          ))}
+        </div>
+      )}
+
+      {others.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {others.map((file) => (
+            <li key={file.index}>
+              <a
+                href={attachmentHref(ticket.id, file.index)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-ink-50 px-2 py-1 text-[11px] font-medium text-ink-700 transition-colors hover:bg-ink-100"
+              >
+                <Paperclip className="size-3 shrink-0 text-ink-400" />
+                <span className="truncate">{file.filename}</span>
+                <span className="shrink-0 text-ink-400">{formatBytes(file.size)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -703,6 +779,8 @@ export function TicketChat({
       />
 
       <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
+        <RequestCard ticket={ticket} />
+
         {loading && thread.length === 0 && <ChatSkeleton />}
 
         {!loading && thread.length === 0 && (

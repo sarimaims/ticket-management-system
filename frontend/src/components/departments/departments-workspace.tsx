@@ -100,7 +100,7 @@ export function DepartmentsWorkspace() {
     { label: "Departments", value: departments.length, caption: "", tone: "new" },
     { label: "Members", value: totals.members, caption: "", tone: "progress" },
     { label: "Heads", value: totals.heads, caption: "", tone: "admin" },
-    { label: "Team", value: totals.team, caption: "", tone: "completed" },
+    { label: "Users", value: totals.team, caption: "", tone: "completed" },
   ];
 
   return (
@@ -155,7 +155,7 @@ export function DepartmentsWorkspace() {
                 <TableHead>Description</TableHead>
                 <TableHead sortable>Members</TableHead>
                 <TableHead sortable>Heads</TableHead>
-                <TableHead sortable>Team</TableHead>
+                <TableHead sortable>Users</TableHead>
                 <TableHead>Actions</TableHead>
               </tr>
             </thead>

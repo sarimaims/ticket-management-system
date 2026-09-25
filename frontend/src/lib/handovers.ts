@@ -49,3 +49,13 @@ export function answerHandover(
     body: { answer },
   }).then((data) => data.handover);
 }
+
+/**
+ * Gives the ticket back. The caller steps off it, and if that leaves nobody
+ * holding it, it goes back to the department head.
+ */
+export function releaseTicket(ticketId: string) {
+  return api<{ assignees: { id: string; name: string }[] }>(`/tickets/${ticketId}/release`, {
+    method: "POST",
+  }).then((data) => data.assignees);
+}

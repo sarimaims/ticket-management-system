@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { Modal } from "@/components/ui/modal";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
@@ -27,7 +28,7 @@ import { TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
-import { initials, isAdmin, type DepartmentRole } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, initials, isAdmin, type DepartmentRole } from "@/lib/auth";
 import type { Stat } from "@/lib/types";
 import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
 import {
@@ -191,7 +192,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
           [
             { label: "Members", value: department.memberCount, caption: "", tone: "progress" },
             { label: "Heads", value: department.headCount, caption: "", tone: "admin" },
-            { label: "Team", value: department.teamCount, caption: "", tone: "completed" },
+            { label: "Users", value: department.teamCount, caption: "", tone: "completed" },
           ] satisfies Stat[]
         }
         className="mb-2"
@@ -276,7 +277,7 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                             aria-label={`Role for ${member.name}`}
                           >
                             <option value="head">Head</option>
-                            <option value="team">Team</option>
+                            <option value="team">User</option>
                           </Select>
                         ) : (
                           <RoleTag role={member.departmentRole} />
@@ -397,7 +398,7 @@ function AddMemberModal({
 
       toast.success(
         `${member.name} added to ${departmentName}`,
-        `Role: ${role === "head" ? "Head" : "Team"}${
+        `Role: ${DEPARTMENT_ROLE_LABEL[role]}${
           extras.length > 0 ? ` · also in ${extras.length} other department(s)` : ""
         }`,
       );
@@ -421,14 +422,13 @@ function AddMemberModal({
         {error && <Banner message={error} />}
 
         <Field label="Email" required htmlFor="member-email">
-          <Input
+          <WorkEmailInput
             id="member-email"
-            type="email"
             className="h-8"
             icon={<Mail className="text-ink-500" />}
-            placeholder="name@flowdesk.com"
+            placeholder="name"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={setEmail}
             autoFocus
             name="member-email"
             autoComplete="off"
@@ -461,7 +461,7 @@ function AddMemberModal({
               onChange={(event) => setRole(event.target.value as DepartmentRole)}
             >
               <option value="head">Head</option>
-              <option value="team">Team</option>
+              <option value="team">User</option>
             </Select>
           </Field>
         </div>

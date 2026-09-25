@@ -105,7 +105,7 @@ export function DepartmentRolePicker({
               )}
             >
               <option value="head">Head</option>
-              <option value="team">Team</option>
+              <option value="team">User</option>
             </select>
           </li>
         );
