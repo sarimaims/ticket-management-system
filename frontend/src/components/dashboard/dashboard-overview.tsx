@@ -20,7 +20,7 @@ import { StatusShare, type StatusPoint } from "@/components/dashboard/status-sha
 import { StatusBadge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
-import type { TicketRecord } from "@/lib/tickets";
+import { isDueToday, isDueTodayOnly, isOverdue, type TicketRecord } from "@/lib/tickets";
 import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -34,20 +34,6 @@ const startOfToday = () => new Date(new Date().toDateString()).getTime();
 const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
 
 const isOpen = (ticket: TicketRecord) => ticket.status !== "Completed";
-
-/** Past its date and not finished - whatever the status column happens to say. */
-function isOverdue(ticket: TicketRecord) {
-  if (!isOpen(ticket)) return false;
-  if (ticket.status === "Overdue") return true;
-
-  const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
-  return due !== null && due < startOfToday();
-}
-
-function isDueToday(ticket: TicketRecord) {
-  if (!isOpen(ticket)) return false;
-  return dayOf(ticket.committedDeadline ?? ticket.deadline) === startOfToday();
-}
 
 /** "3 days ago", "in 2 days" - the thing being asked of a date on a queue. */
 function when(value: string | null) {
@@ -264,7 +250,7 @@ export function DashboardOverview() {
   const view = useMemo(() => {
     const open = tickets.filter(isOpen);
     const overdue = open.filter(isOverdue);
-    const today = open.filter((ticket) => isDueToday(ticket) && !isOverdue(ticket));
+    const today = open.filter(isDueTodayOnly);
     const unassigned = open.filter((ticket) => ticket.assignees.length === 0);
     const mine = open.filter((ticket) => ticket.assignees.some((person) => person.id === meId));
 
@@ -275,7 +261,7 @@ export function DashboardOverview() {
         label: "Past due",
         value: overdue.length,
         caption: overdue.length ? "date gone, still open" : "nothing is late",
-        href: "/all-tickets",
+        href: "/all-tickets?view=past",
         icon: AlarmClock,
         tone: "rose",
       },
@@ -283,7 +269,7 @@ export function DashboardOverview() {
         label: "Due today",
         value: today.length,
         caption: today.length ? "finish or re-commit" : "nothing due today",
-        href: "/all-tickets",
+        href: "/all-tickets?view=today",
         icon: CalendarClock,
         tone: "amber",
       },
@@ -291,7 +277,7 @@ export function DashboardOverview() {
         label: "Unassigned",
         value: unassigned.length,
         caption: unassigned.length ? "waiting to be picked up" : "everything has an owner",
-        href: "/all-tickets",
+        href: "/all-tickets?view=unassigned",
         icon: UserX,
         tone: "slate",
       },

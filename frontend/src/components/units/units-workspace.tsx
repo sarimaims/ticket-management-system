@@ -91,6 +91,13 @@ export function UnitsWorkspace() {
     { label: "Members", value: totals.members, caption: "", tone: "completed" },
   ];
 
+  /** Units is this list; the other two counts are listed on their own pages. */
+  const openTile = (key: string) => {
+    if (key === "Units") setQuery("");
+    else if (key === "Departments") router.push("/departments");
+    else router.push("/admin/users");
+  };
+
   if (session && !canManage) return null;
 
   return (
@@ -102,7 +109,7 @@ export function UnitsWorkspace() {
 
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} className="mb-2" />
+      <StatTiles stats={stats} loading={loading} className="mb-2" onSelect={openTile} />
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">

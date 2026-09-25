@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -14,7 +15,9 @@ export default function AdminStaffPage() {
         title="Admin Access"
         crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Admin Access" }]}
       />
-      <PeopleWorkspace scope="admins" />
+      <Suspense>
+        <PeopleWorkspace scope="admins" />
+      </Suspense>
     </>
   );
 }

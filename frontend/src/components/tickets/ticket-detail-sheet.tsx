@@ -28,7 +28,7 @@ import { getDepartment, type Member } from "@/lib/departments";
 import { attachmentHref, updateTicket, type TicketRecord } from "@/lib/tickets";
 import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
-import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, isAdmin, isHead } from "@/lib/auth";
 import {
   answerHandover,
   askHandover,
@@ -109,7 +109,10 @@ export function DeadlineVerdict({
   if (inline) {
     return (
       <span
-        className={cn("font-semibold", late ? "text-status-waiting-fg" : "text-status-completed-fg")}
+        className={cn(
+          "font-semibold",
+          late ? "text-status-waiting-fg" : "text-status-completed-fg",
+        )}
       >
         {late
           ? `That is after the ${formatDate(asked!)} they asked for.`
@@ -405,31 +408,45 @@ function MiniLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?:
   );
 }
 
-/** The units a set of departments sit in, named once each. */
-function Unit({ of }: { of: { unit?: { id: string; name?: string } | null }[] }) {
-  const names = [
-    ...new Set(of.map((item) => item.unit?.name).filter((name): name is string => Boolean(name))),
-  ];
-  if (names.length === 0) return null;
-
-  return <span className="w-full text-[10px] font-normal text-ink-400">{names.join(", ")}</span>;
-}
-
-function Chips({ items }: { items: { id: string; name?: string }[] }) {
-  if (items.length === 0) return <Blank />;
+/**
+ * One end of the ticket's journey, read left to right the way the org chart
+ * nests: unit, then department, then the person at that end.
+ */
+function Route({
+  label,
+  units,
+  departments,
+  people,
+  extra,
+}: {
+  label: string;
+  units: string;
+  departments: string;
+  people: React.ReactNode;
+  extra?: React.ReactNode;
+}) {
   return (
-    <>
-      {items.map((item) => (
-        <span
-          key={item.id}
-          className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-600"
-        >
-          {item.name}
-        </span>
-      ))}
-    </>
+    <div className="flex items-baseline justify-between gap-3 py-1">
+      <dt className="shrink-0 text-[11px] text-ink-500">{label}</dt>
+      <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-0.5 text-right text-[12px] break-words">
+        {units && (
+          <>
+            <span className="text-ink-500">{units}</span>
+            <span className="text-ink-300">·</span>
+          </>
+        )}
+        <span className="font-medium text-ink-700">{departments || "—"}</span>
+        <span className="text-ink-300">·</span>
+        <span className="font-bold text-ink-900">{people}</span>
+        {extra}
+      </dd>
+    </div>
   );
 }
+
+/** Unit names under a set of departments, each named once. */
+const unitNames = (of: { unit?: { name?: string } | null }[]) =>
+  [...new Set(of.map((item) => item.unit?.name).filter(Boolean))].join(", ");
 
 /**
  * Everything known about one ticket, in a sheet beside the list. Two different
@@ -648,6 +665,9 @@ function SheetBody({
   /** Only somebody holding a ticket has anything to hand on. */
   const holdsIt = ticket.assignees.some((person) => person.id === meId);
 
+  /** Transferring is how a user passes work on; a head assigns or releases instead. */
+  const transfers = !direct && !isHead(session);
+
   /** Puts the ask in front of the people chosen above. */
   const sendAsk = async () => {
     if (asking.length === 0) return;
@@ -741,7 +761,10 @@ function SheetBody({
 
       const moved = changes(ticket, saved);
       if (moved.length === 0) {
-        toast.show({ title: `#${ticket.number} has no changes to save`, tone: "info" });
+        toast.show({
+          title: `#${ticket.number} has no changes to save`,
+          tone: "info",
+        });
       } else {
         toast.success(
           `#${ticket.number} updated`,
@@ -802,7 +825,10 @@ function SheetBody({
 
       const moved = changes(ticket, saved);
       if (moved.length === 0) {
-        toast.show({ title: `#${ticket.number} has no changes to save`, tone: "info" });
+        toast.show({
+          title: `#${ticket.number} has no changes to save`,
+          tone: "info",
+        });
       } else {
         toast.success(
           nextStatus === "Completed" && ticket.status !== "Completed"
@@ -873,73 +899,33 @@ function SheetBody({
             three questions actually being asked of this pane, and a label beside
             its value reads faster than a label above it. */}
         <div className={cn(editing && "hidden")}>
-          <Group title="Where it goes" tone="route">
-            <Fact label="From">
-              {ticket.fromDepartments.length > 0 ? (
-                <>
-                  <Chips items={ticket.fromDepartments} />
-                  {/* The unit under the department, quietly: the queue answers
-                      this in one line, and there is room here to name each
-                      side of the move. */}
-                  <Unit of={ticket.fromDepartments} />
-                </>
-              ) : (
-                <Blank>Raised directly</Blank>
-              )}
-            </Fact>
-            <Fact label="To">
-              <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
-                {ticket.department.name}
-              </span>
-              <Unit of={[ticket.department]} />
-            </Fact>
-          </Group>
-
-          <Group title="Who" tone="who">
-            <Fact label="Raised by">
-              {ticket.raisedBy.name}
-              <OriginTag role={ticket.raisedByRole} />
-            </Fact>
-            {/* A ticket can be held by more than one person now, so the row
-                names all of them rather than the first. */}
-            <Fact label={ticket.assignees.length > 1 ? "Assignees" : "Assignee"}>
-              {ticket.assignees.length > 0 ? (
-                holders(ticket.assignees)
-              ) : (
-                <Blank>Nobody yet</Blank>
-              )}
-            </Fact>
+          {/* Both ends of the move on one line each: unit, department, and the
+              person at that end - who raised it, and who has it now. */}
+          <Group title="Route" tone="route">
+            <Route
+              label="From"
+              units={unitNames(ticket.fromDepartments)}
+              departments={ticket.fromDepartments.map((item) => item.name).join(", ")}
+              people={ticket.raisedBy.name}
+              extra={<OriginTag role={ticket.raisedByRole} />}
+            />
+            <Route
+              label="To"
+              units={unitNames([ticket.department])}
+              departments={ticket.department.name ?? ""}
+              people={
+                ticket.assignees.length > 0 ? holders(ticket.assignees) : <Blank>Nobody yet</Blank>
+              }
+            />
           </Group>
 
           <Group title="Dates" tone="dates">
-            <Fact label="Raised on">
+            <Fact label="Created">
               {formatDateOf(ticket.createdAt)}
               <span className="font-normal text-ink-400">{formatTime(ticket.createdAt)}</span>
             </Fact>
-            <Fact label="They asked for">
+            <Fact label="Deadline">
               {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : <Blank>Not set</Blank>}
-            </Fact>
-            <Fact label="Promised for">
-              {ticket.committedDeadline ? (
-                <>
-                  <DeadlineVerdict
-                    requested={ticket.deadline}
-                    committed={ticket.committedDeadline}
-                  />
-                  {ticket.committedBy?.name && (
-                    <span className="w-full text-[10px] font-normal text-ink-400">
-                      by {ticket.committedBy.name}
-                      {ticket.committedAt ? ` · ${formatDateOf(ticket.committedAt)}` : ""}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <Blank>Nothing promised yet</Blank>
-              )}
-            </Fact>
-            <Fact label="Last updated">
-              {formatDateOf(ticket.updatedAt)}
-              <span className="font-normal text-ink-400">{formatTime(ticket.updatedAt)}</span>
             </Fact>
           </Group>
 
@@ -987,16 +973,9 @@ function SheetBody({
 
         {(canWork || direct) && !editing && (
           <div className="mt-2 rounded-lg bg-status-waiting-bg/45 px-2.5 py-2">
-            <p className="text-[10px] font-bold tracking-wider text-status-waiting-fg uppercase">
-              {canWork ? "Work this ticket" : "Address this request"}
-            </p>
-
-            <div
-              className={cn(
-                "mt-1.5 grid gap-x-2 gap-y-2",
-                canWork ? "grid-cols-2" : "grid-cols-1",
-              )}
-            >
+            {/* One column, in the order it is done: how it is going, letting
+                go of it, passing it on, the date, and why. */}
+            <div className="space-y-2.5">
               {/* A raiser is not working the ticket, so the half of this pane
                   that says how the work is going is not theirs to fill in. */}
               {canWork && (
@@ -1006,67 +985,84 @@ function SheetBody({
                     value={status}
                     onChange={setStatus}
                     label={`Status for #${ticket.number}`}
-                    className="h-8 justify-between px-2.5 text-[13px]"
+                    className="h-8 w-full justify-between px-2.5 text-[13px]"
                   />
                 </div>
               )}
 
-              <div className="min-w-0">
-                {direct ? (
-                  <>
-                    <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
-                    <MultiSelect
-                      id="sheet-assignee"
-                      // Everyone but you. A ticket is handed to somebody; if
-                      // you are already on it you stay, so the list can still
-                      // be saved - it just cannot gain you.
-                      options={members
-                        .filter(
-                          (member) => member.id !== meId || assignees.includes(member.id),
-                        )
-                        .map((member) => ({
-                          value: member.id,
-                          label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
-                        }))}
-                      value={assignees}
-                      onChange={setAssignees}
-                      display="summary"
-                      placeholder="Nobody yet"
-                      emptyMessage="Nobody is in this department"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <MiniLabel htmlFor="sheet-ask">Ask someone to take it</MiniLabel>
-                    <MultiSelect
-                      id="sheet-ask"
-                      // Only people who are not already on it: the rest have
-                      // nothing to accept. The head is left out too - handing
-                      // it back to them is what Release is for.
-                      options={members
-                        .filter(
-                          (member) =>
-                            member.id !== meId &&
-                            member.departmentRole !== "head" &&
-                            !ticket.assignees.some((person) => person.id === member.id),
-                        )
-                        .map((member) => ({
-                          value: member.id,
-                          label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
-                        }))}
-                      value={asking}
-                      onChange={setAsking}
-                      display="summary"
-                      placeholder={sentByMe ? "Waiting on an answer" : "Choose who to ask"}
-                      emptyMessage="Nobody else is in this department"
-                      disabled={Boolean(sentByMe) || !holdsIt}
-                    />
-                  </>
-                )}
-              </div>
+              {/* Giving it back rather than passing it sideways. */}
+              {!direct && holdsIt && (
+                <div className="min-w-0">
+                  <MiniLabel>Release</MiniLabel>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-full px-2.5 text-[12px]"
+                    disabled={pending}
+                    onClick={() => void release()}
+                  >
+                    Release back to the head
+                  </Button>
+                </div>
+              )}
+
+              {(direct || transfers) && (
+                <div className="min-w-0">
+                  {direct ? (
+                    <>
+                      <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
+                      <MultiSelect
+                        id="sheet-assignee"
+                        // Everyone but you. A ticket is handed to somebody; if
+                        // you are already on it you stay, so the list can still
+                        // be saved - it just cannot gain you.
+                        options={members
+                          .filter((member) => member.id !== meId || assignees.includes(member.id))
+                          .map((member) => ({
+                            value: member.id,
+                            label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                          }))}
+                        value={assignees}
+                        onChange={setAssignees}
+                        display="summary"
+                        placeholder="Nobody yet"
+                        emptyMessage="Nobody is in this department"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <MiniLabel htmlFor="sheet-ask">Transfer to</MiniLabel>
+                      <MultiSelect
+                        id="sheet-ask"
+                        // Only people who are not already on it: the rest have
+                        // nothing to accept. The head is left out too - handing
+                        // it back to them is what Release is for.
+                        options={members
+                          .filter(
+                            (member) =>
+                              member.id !== meId &&
+                              member.departmentRole !== "head" &&
+                              !ticket.assignees.some((person) => person.id === member.id),
+                          )
+                          .map((member) => ({
+                            value: member.id,
+                            label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                          }))}
+                        value={asking}
+                        onChange={setAsking}
+                        display="summary"
+                        placeholder={sentByMe ? "Waiting on an answer" : "Choose who to ask"}
+                        emptyMessage="Nobody else is in this department"
+                        disabled={Boolean(sentByMe) || !holdsIt}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
 
               {!direct && (
-                <div className="col-span-2 min-w-0 space-y-2">
+                <div className="min-w-0 space-y-2">
                   {/* Only ever reached by somebody in the department: a raiser
                       names people outright and never has to ask. */}
                   {/* Somebody is waiting on this person. It is the only thing
@@ -1134,7 +1130,7 @@ function SheetBody({
                     </div>
                   )}
 
-                  {!sentByMe && holdsIt && (
+                  {transfers && !sentByMe && holdsIt && (
                     <Button
                       type="button"
                       size="sm"
@@ -1147,21 +1143,9 @@ function SheetBody({
                     </Button>
                   )}
 
-                  {/* Giving it back rather than passing it sideways. */}
-                  {holdsIt && (
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() => void release()}
-                      className="w-full text-center text-[11px] font-semibold text-ink-500 transition-colors hover:text-brand-600 disabled:opacity-50"
-                    >
-                      Release back to the head
-                    </button>
-                  )}
-
-                  {!holdsIt && !waitingOnMe && (
+                  {transfers && !holdsIt && !waitingOnMe && (
                     <p className="text-[11px] text-ink-400">
-                      Only somebody holding this ticket can ask a colleague to take it on.
+                      Only somebody holding this ticket can transfer it.
                     </p>
                   )}
                 </div>
@@ -1171,15 +1155,8 @@ function SheetBody({
                   It is already two rows up under Dates; what this pane needs is
                   the date you are promising, and what it is being judged
                   against. */}
-              <div className="col-span-2 min-w-0">
-                <MiniLabel htmlFor="sheet-committed">
-                  I can resolve by
-                  {ticket.deadline && (
-                    <span className="font-medium normal-case">
-                      · they asked for {formatDate(ticket.deadline.slice(0, 10))}
-                    </span>
-                  )}
-                </MiniLabel>
+              <div className="min-w-0">
+                <MiniLabel htmlFor="sheet-committed">Pick a date</MiniLabel>
 
                 {/* A promise already given is shown as one, with the reason it
                     was given for. Moving it is a deliberate second click, and
@@ -1220,6 +1197,7 @@ function SheetBody({
                         anything has changed is a box in the way. */}
                     {committed !== (ticket.committedDeadline?.slice(0, 10) ?? "") && (
                       <div>
+                        <MiniLabel htmlFor="sheet-committed-why">Remark</MiniLabel>
                         <Textarea
                           id="sheet-committed-why"
                           value={why}
@@ -1242,7 +1220,7 @@ function SheetBody({
                             whyMissing ? "font-semibold text-brand-600" : "text-ink-400",
                           )}
                         >
-                          Required · {ticket.raisedBy.name} is told the date and the reason.
+                          Required when the date changes.
                         </p>
                       </div>
                     )}
@@ -1265,21 +1243,6 @@ function SheetBody({
                 )}
               </div>
             </div>
-
-            {committed ? (
-              <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-ink-50 px-2 py-1.5 text-[11px] leading-snug text-ink-500">
-                <CalendarCheck className="mt-px size-3.5 shrink-0 text-ink-400" />
-                <span>
-                  {ticket.raisedBy.name} sees this as your commitment.{" "}
-                  <DeadlineVerdict requested={ticket.deadline} committed={committed} inline />
-                </span>
-              </p>
-            ) : (
-              <p className="mt-1.5 text-[11px] leading-snug text-ink-400">
-                Anyone in {departmentName} can take this on; every handover and every promised
-                date is listed under History.
-              </p>
-            )}
           </div>
         )}
       </div>

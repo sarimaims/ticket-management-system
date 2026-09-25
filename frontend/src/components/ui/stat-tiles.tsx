@@ -25,30 +25,69 @@ const COLUMNS: Record<number, string> = {
   6: "lg:grid-cols-6",
 };
 
+/** What a tile answers to when clicked: its own key, or its label. */
+export const statKey = (stat: Stat) => stat.key ?? stat.label;
+
 export function StatTiles({
   stats,
   loading,
   className,
+  active,
+  onSelect,
 }: {
   stats: Stat[];
   /** Counts of nothing are indistinguishable from real zeros, so say so. */
   loading?: boolean;
   className?: string;
+  /** The tile whose filter is on, outlined so the list below reads as its answer. */
+  active?: string | null;
+  /**
+   * Makes the tiles a filter: a click narrows the list to what the number
+   * counts. The page decides what that means, and clicking the lit tile again
+   * is its cue to clear it.
+   */
+  onSelect?: (key: string) => void;
 }) {
   return (
     <div
       className={cn("grid grid-cols-2 gap-2", COLUMNS[stats.length] ?? "lg:grid-cols-4", className)}
     >
-      {stats.map((stat) => (
-        <div key={stat.label} className={cn("rounded-lg px-2.5 py-1.5", TILE_TONES[stat.tone])}>
-          <p className="text-[10px] font-semibold opacity-80">{stat.label}</p>
-          {loading ? (
-            <span className="mt-1 block h-4 w-8 animate-pulse rounded bg-current opacity-20" />
-          ) : (
-            <p className="mt-0.5 text-base leading-none font-bold tabular-nums">{stat.value}</p>
-          )}
-        </div>
-      ))}
+      {stats.map((stat) => {
+        const key = statKey(stat);
+        const lit = active === key;
+        const body = (
+          <>
+            <p className="text-[10px] font-semibold opacity-80">{stat.label}</p>
+            {loading ? (
+              <span className="mt-1 block h-4 w-8 animate-pulse rounded bg-current opacity-20" />
+            ) : (
+              <p className="mt-0.5 text-base leading-none font-bold tabular-nums">{stat.value}</p>
+            )}
+          </>
+        );
+        const tile = cn("rounded-lg px-2.5 py-1.5", TILE_TONES[stat.tone]);
+
+        return onSelect ? (
+          <button
+            key={stat.label}
+            type="button"
+            aria-pressed={lit}
+            title={lit ? "Show all" : `Show ${stat.label.toLowerCase()}`}
+            onClick={() => onSelect(key)}
+            className={cn(
+              tile,
+              "text-left ring-current/40 transition-shadow hover:ring-2 focus-visible:ring-2 focus-visible:outline-none",
+              lit && "ring-2 ring-current/70",
+            )}
+          >
+            {body}
+          </button>
+        ) : (
+          <div key={stat.label} className={tile}>
+            {body}
+          </div>
+        );
+      })}
     </div>
   );
 }

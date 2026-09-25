@@ -44,6 +44,9 @@ const REQUIRED = [
 
 type RequiredKey = (typeof REQUIRED)[number]["key"];
 
+/** One file on its way to storage, and where it has got to. */
+type Upload = { percent: number; done: Promise<{ key: string; filename?: string }> };
+
 /** One named person, carrying the department they were picked out of. */
 type Picked = {
   id: string;
@@ -296,19 +299,49 @@ export function TicketForm() {
       }
     }
 
-    setFiles((current) => {
-      const room = TICKET_FILE_LIMITS.maxCount - current.length;
-      if (accepted.length > room) {
-        rejected.push(`only ${TICKET_FILE_LIMITS.maxCount} files can be attached`);
-      }
-      return [...current, ...accepted.slice(0, Math.max(0, room))];
-    });
+    const room = Math.max(0, TICKET_FILE_LIMITS.maxCount - files.length);
+    if (accepted.length > room) {
+      rejected.push(`only ${TICKET_FILE_LIMITS.maxCount} files can be attached`);
+    }
+    const kept = accepted.slice(0, room);
+    setFiles((current) => [...current, ...kept]);
+
+    // Straight up to storage while the rest of the form is filled in, so
+    // raising the ticket is not also waiting on the bytes.
+    if (features.attachments) kept.forEach(beginUpload);
 
     if (rejected.length > 0) toast.error("Some files were not attached", rejected.join(" · "));
   };
 
   /** 0-100 while the files are going up, null when nothing is in flight. */
   const [uploading, setUploading] = useState<number | null>(null);
+
+  /**
+   * Every file's upload, started the moment it was added. Keyed by the File
+   * itself, so the same file is only ever sent once however often it is asked
+   * for. A failed one drops out and is tried again when the ticket is raised.
+   */
+  const uploads = useRef(new Map<File, Upload>());
+  /** Repaints the bar while the review is waiting on an upload still in flight. */
+  const onUploadProgress = useRef<(() => void) | null>(null);
+
+  const beginUpload = (file: File) => {
+    const existing = uploads.current.get(file);
+    if (existing) return existing;
+
+    const entry: Upload = { percent: 0, done: Promise.resolve({ key: "" }) };
+    entry.done = uploadTicketFile(file, {
+      onProgress: (percent) => {
+        entry.percent = percent;
+        onUploadProgress.current?.();
+      },
+    });
+    entry.done.catch(() => {
+      if (uploads.current.get(file) === entry) uploads.current.delete(file);
+    });
+    uploads.current.set(file, entry);
+    return entry;
+  };
 
   const selected = departments.filter((department) => targetDepts.includes(department.id));
 
@@ -461,6 +494,7 @@ export function TicketForm() {
     setCompletionDate("");
     setProject("");
     setFiles([]);
+    uploads.current.clear();
     setMissing([]);
   };
 
@@ -522,28 +556,24 @@ export function TicketForm() {
           throw new Error("File storage is not configured yet, so files cannot be attached.");
         }
 
-        setUploading(0);
-
         /**
-         * All at once, with one bar for the set.
-         *
-         * The bucket is far enough away that a file costs most of a second on
-         * its own; three of them in turn was most of the wait before a ticket
-         * appeared. The percentage is the sum of their progress, so it still
-         * reads as one honest number.
+         * Usually already there: each file started up the moment it was
+         * added. Anything still in flight - or that failed and is being tried
+         * again - shows one bar for the set, the average of their progress.
          */
-        const progress = new Array(files.length).fill(0);
-        attachments = await Promise.all(
-          files.map((file, index) =>
-            uploadTicketFile(file, {
-              onProgress: (percent) => {
-                progress[index] = percent;
-                const done = progress.reduce((sum, value) => sum + value, 0) / files.length;
-                setUploading(Math.round(done));
-              },
-            }),
-          ),
-        );
+        const entries = files.map(beginUpload);
+        const tick = () =>
+          setUploading(
+            Math.round(entries.reduce((sum, entry) => sum + entry.percent, 0) / entries.length),
+          );
+        onUploadProgress.current = tick;
+        tick();
+        try {
+          attachments = await Promise.all(entries.map((entry) => entry.done));
+        } finally {
+          onUploadProgress.current = null;
+          setUploading(null);
+        }
       }
 
       // `{ departmentId: [userId, ...] }`, and only for the departments that
@@ -1041,7 +1071,9 @@ function ReviewModal({
           Back to the form
         </Button>
         <Button type="button" size="sm" onClick={onRaise} disabled={pending}>
-          {uploading !== null
+          {/* At 100% the bytes are sent and only the answer is left, which
+              is the ticket being raised - so it says that instead. */}
+          {uploading !== null && uploading < 100
             ? `Uploading ${uploading}%`
             : pending
               ? "Raising..."

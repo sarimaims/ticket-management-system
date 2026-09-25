@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertCircle, Building2, Eye, EyeOff, Search, UserPlus } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
@@ -63,7 +64,12 @@ export function TeamWorkspace() {
   const [query, setQuery] = useState("");
   /** Unit and department are the same axis at two depths, so they are one. */
   const [where, setWhere] = useState<ScopeValue>({ units: [], departments: [] });
-  const [roles, setRoles] = useState<string[]>([]);
+  // A tile elsewhere can link straight to a role: `?role=head` or `?role=team`.
+  const params = useSearchParams();
+  const [roles, setRoles] = useState<string[]>(() => {
+    const named = params.get("role");
+    return named === "head" || named === "team" ? [named] : [];
+  });
   const [statuses, setStatuses] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
 
@@ -154,24 +160,28 @@ export function TeamWorkspace() {
         value: users.length,
         caption: mine.length === 1 ? (mine[0].name ?? "Your department") : `${mine.length} departments`,
         tone: "new",
+        key: "all",
       },
       {
         label: "Heads",
         value: users.filter((user) => roleHere(user) === "head").length,
         caption: "Running a department",
         tone: "admin",
+        key: "head",
       },
       {
         label: "Active",
         value: users.filter((user) => user.status === "active").length,
         caption: "Signed in and working",
         tone: "completed",
+        key: "active",
       },
       {
         label: "Suspended",
         value: users.filter((user) => user.status === "suspended").length,
         caption: "Access revoked",
         tone: "overdue",
+        key: "suspended",
       },
     ],
     [users, mine, roleHere],
@@ -181,7 +191,28 @@ export function TeamWorkspace() {
     <>
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} />
+      {/* Team Members clears both filters; Heads narrows by role, the other
+          two by status. Clicking the lit tile lets go of it. */}
+      <StatTiles
+        stats={stats}
+        loading={loading}
+        active={
+          roles.length === 1 && statuses.length === 0
+            ? roles[0]
+            : statuses.length === 1 && roles.length === 0
+              ? statuses[0]
+              : roles.length === 0 && statuses.length === 0
+                ? "all"
+                : null
+        }
+        onSelect={(key) => {
+          const lit =
+            (roles.length === 1 && roles[0] === key) ||
+            (statuses.length === 1 && statuses[0] === key);
+          setRoles(key === "head" && !lit ? ["head"] : []);
+          setStatuses((key === "active" || key === "suspended") && !lit ? [key] : []);
+        }}
+      />
 
       <Card className="mt-3 overflow-hidden">
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">

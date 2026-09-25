@@ -53,6 +53,9 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import {
   deleteTickets,
+  isDueTodayOnly,
+  isOverdue,
+  isUnassigned,
   reassignTickets,
   updateTicket,
   type TicketRecord,
@@ -137,10 +140,24 @@ function inUnit(ticket: TicketRecord, unitId: string) {
   return ticket.fromDepartments.some((item) => item.unit?.id === unitId);
 }
 
-function isToday(value: string | null) {
-  if (!value) return false;
-  return new Date(value).toDateString() === new Date().toDateString();
-}
+/**
+ * Filters that are not a status, reachable from a tile or a dashboard card
+ * (`?view=`). Each is the same test the number beside it was counted with,
+ * so a click always shows exactly as many rows as the card said.
+ */
+const VIEWS = {
+  today: isDueTodayOnly,
+  past: isOverdue,
+  unassigned: isUnassigned,
+} satisfies Record<string, (ticket: TicketRecord) => boolean>;
+
+type View = keyof typeof VIEWS;
+
+const isView = (value: string | null): value is View => value !== null && value in VIEWS;
+
+/** The status a `?status=` link names, if it is one. */
+const isStatus = (value: string | null): value is TicketStatus =>
+  (STATUSES as readonly string[]).includes(value ?? "");
 
 function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
   const count = (predicate: (ticket: TicketRecord) => boolean) => tickets.filter(predicate).length;
@@ -150,6 +167,7 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
       label: scope === "mine" ? "Open Requests" : "New",
       value: count((ticket) => ticket.status === "New"),
       caption: "",
+      key: "New",
       tone: "new",
     },
     {
@@ -166,8 +184,9 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
     },
     {
       label: "Due Today",
-      value: count((ticket) => ticket.status !== "Completed" && isToday(ticket.deadline)),
+      value: count(VIEWS.today),
       caption: "",
+      key: "today",
       tone: "due",
     },
     {
@@ -592,7 +611,12 @@ export function TicketsWorkspace({
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState(DEFAULT_SORT);
-  const [statuses, setStatuses] = useState<string[]>([]);
+  // A link can arrive already filtered: a dashboard card, or `?status=`.
+  const params = useSearchParams();
+  const [statuses, setStatuses] = useState<string[]>(() => {
+    const named = params.get("status");
+    return isStatus(named) ? [named] : [];
+  });
   const [priorities, setPriorities] = useState<string[]>([]);
   const [where, setWhere] = useState<{ units: string[]; departments: string[] }>({
     units: [],
@@ -610,6 +634,11 @@ export function TicketsWorkspace({
   // the chat icon on a row can go straight to the conversation.
   const [tab, setTab] = useState<SheetTab>("details");
   const [mineOnly, setMineOnly] = useState(false);
+  /** Set by a tile or card that is not a status - due today, late, unowned. */
+  const [view, setView] = useState<View | null>(() => {
+    const named = params.get("view");
+    return isView(named) ? named : null;
+  });
   /** Ticked for deletion. Ids rather than rows, so a refresh cannot stale them. */
   const [picked, setPicked] = useState<Set<string>>(new Set());
   /** What the confirm box is about: the ticked set, or one row's trash button. */
@@ -756,6 +785,7 @@ export function TicketsWorkspace({
         if (!byUnit && !byDepartment) return false;
       }
       if (mineOnly && !isMine(ticket)) return false;
+      if (view && !VIEWS[view](ticket)) return false;
       return true;
     });
 
@@ -780,7 +810,27 @@ export function TicketsWorkspace({
       // the chosen column still hold a settled order between refreshes.
       return order === 0 ? left.number.localeCompare(right.number) : order * factor;
     });
-  }, [inScope, deferredQuery, statuses, priorities, where, mineOnly, isMine, sort]);
+  }, [inScope, deferredQuery, statuses, priorities, where, mineOnly, isMine, view, sort]);
+
+  /** The tile lit is whichever one the current filter is exactly the answer to. */
+  const activeTile = view ?? (statuses.length === 1 ? statuses[0] : null);
+
+  /** A tile is a shortcut to the status filter; clicking the lit one clears it. */
+  const selectTile = useCallback(
+    (key: string) => {
+      if (key === activeTile) {
+        setStatuses([]);
+        setView(null);
+      } else if (isView(key)) {
+        setStatuses([]);
+        setView(key);
+      } else {
+        setStatuses([key]);
+        setView(null);
+      }
+    },
+    [activeTile],
+  );
 
   /**
    * Clicking the column you are already sorted by turns it around; clicking
@@ -859,6 +909,7 @@ export function TicketsWorkspace({
     setPriorities([]);
     setWhere({ units: [], departments: [] });
     setMineOnly(false);
+    setView(null);
     setFlashed(target.id);
     /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -940,7 +991,7 @@ export function TicketsWorkspace({
       {/* The sheet floats over this, so the table keeps its full width and its
           columns do not reflow the moment a row is opened. */}
       <div>
-      <StatTiles stats={stats} loading={loading} />
+      <StatTiles stats={stats} loading={loading} active={activeTile} onSelect={selectTile} />
 
       <Card className="mt-3 overflow-hidden">
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">
@@ -973,7 +1024,10 @@ export function TicketsWorkspace({
               id="filter-status"
               options={STATUSES.map((item) => ({ value: item, label: item }))}
               value={statuses}
-              onChange={setStatuses}
+              onChange={(next) => {
+                setStatuses(next);
+                setView(null);
+              }}
               placeholder="All Status"
             />
           </div>

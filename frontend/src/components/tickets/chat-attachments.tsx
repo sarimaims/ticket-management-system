@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Mic, Pause, Play, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Download, ExternalLink, Mic, Pause, Play, X } from "lucide-react";
 
 import { formatDuration, formatBytes, type AttachmentKind } from "@/lib/uploads";
 import type { MessageAttachment } from "@/lib/messages";
@@ -9,9 +10,76 @@ import { cn } from "@/lib/utils";
 
 /* -------------------------------------------------------------- reading */
 
-/** A photo in the thread. Full size opens in a new tab; the bubble stays small. */
+/**
+ * A photo opened at full size, over everything else.
+ *
+ * Portalled to the body rather than rendered where it was clicked: the thread
+ * scrolls and clips, and a picture that has to fit inside its own message is
+ * not what "full size" means. The original is still one click further on, for
+ * saving it or reading something too small to make out here.
+ */
+export function PhotoLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
+      onClick={onClose}
+      className="fixed inset-0 z-[60] grid place-items-center bg-ink-900/80 p-4 sm:p-8"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute top-3 right-3 grid size-9 place-items-center rounded-full bg-ink-900/60 text-white transition-colors hover:bg-ink-900"
+      >
+        <X className="size-5" />
+      </button>
+
+      {/* eslint-disable-next-line @next/next/no-img-element -- the src is a
+          short-lived signed URL on a bucket the image optimiser cannot reach. */}
+      <img
+        src={src}
+        alt={alt}
+        onClick={(event) => event.stopPropagation()}
+        className="max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl"
+      />
+
+      <a
+        href={src}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(event) => event.stopPropagation()}
+        className="absolute inset-x-0 bottom-4 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-ink-900/60 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-ink-900"
+      >
+        <ExternalLink className="size-3.5" />
+        Open original
+      </a>
+    </div>,
+    document.body,
+  );
+}
+
+/** A photo in the thread. The bubble stays small; a click opens it over the page. */
 function ImageAttachment({ attachment }: { attachment: MessageAttachment }) {
   const [broken, setBroken] = useState(false);
+  const [open, setOpen] = useState(false);
 
   if (broken) {
     return (
@@ -28,16 +96,26 @@ function ImageAttachment({ attachment }: { attachment: MessageAttachment }) {
   }
 
   return (
-    <a href={attachment.url} target="_blank" rel="noreferrer" className="block">
-      {/* eslint-disable-next-line @next/next/no-img-element -- the src is a
-          short-lived signed URL on a bucket the image optimiser cannot reach. */}
-      <img
-        src={attachment.url}
-        alt={attachment.filename || "Photo"}
-        onError={() => setBroken(true)}
-        className="max-h-64 w-auto max-w-full rounded-xl object-cover"
-      />
-    </a>
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="block cursor-zoom-in">
+        {/* eslint-disable-next-line @next/next/no-img-element -- the src is a
+            short-lived signed URL on a bucket the image optimiser cannot reach. */}
+        <img
+          src={attachment.url}
+          alt={attachment.filename || "Photo"}
+          onError={() => setBroken(true)}
+          className="max-h-52 w-auto max-w-full rounded-xl object-cover"
+        />
+      </button>
+
+      {open && (
+        <PhotoLightbox
+          src={attachment.url}
+          alt={attachment.filename || "Photo"}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

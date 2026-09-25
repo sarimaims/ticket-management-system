@@ -500,13 +500,18 @@ export async function createTicket(req, res) {
 
   const tickets = populated.map(present);
 
+  // The ticket exists now, and that is all the person raising it is waiting
+  // to hear - so they are told before the bookkeeping below, not after it.
+  clock.send();
+  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
+
   /**
    * The log, the assignment trail, the opening line of the thread and the
    * bells. None of them depends on another, and none of them changes the
-   * answer - so they run together rather than one after the next. Each one
-   * already swallows its own failures, which is what makes that safe.
+   * answer - so they run together, after the reply has gone. Each one already
+   * swallows its own failures; the catch is for anything that slips past.
    */
-  await Promise.all(
+  Promise.all(
     populated.flatMap((ticket) => [
       record({
         actor: req.user,
@@ -538,12 +543,7 @@ export async function createTicket(req, res) {
       }),
       notifyNewTicket({ ticket, actor: req.user }),
     ]),
-  );
-
-  clock.step('log-and-notify');
-  clock.send();
-
-  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
+  ).catch((error) => console.error('After-create bookkeeping failed:', error.message));
 }
 
 /**

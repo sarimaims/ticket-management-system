@@ -17,6 +17,32 @@ export type TicketAttachment = {
   uploadedAt: string | null;
 };
 
+const startOfToday = () => new Date(new Date().toDateString()).getTime();
+
+const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
+
+/** Past its date and not finished - whatever the status column happens to say. */
+export function isOverdue(ticket: TicketRecord) {
+  if (ticket.status === "Completed") return false;
+  if (ticket.status === "Overdue") return true;
+
+  const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
+  return due !== null && due < startOfToday();
+}
+
+/** Open and due today, by the promised date where there is one. */
+export function isDueToday(ticket: TicketRecord) {
+  if (ticket.status === "Completed") return false;
+  return dayOf(ticket.committedDeadline ?? ticket.deadline) === startOfToday();
+}
+
+/** Due today and not already counted as late: what "Due today" means on a card. */
+export const isDueTodayOnly = (ticket: TicketRecord) => isDueToday(ticket) && !isOverdue(ticket);
+
+/** Open with nobody on it. */
+export const isUnassigned = (ticket: TicketRecord) =>
+  ticket.status !== "Completed" && ticket.assignees.length === 0;
+
 export type TicketRecord = {
   id: string;
   number: string;

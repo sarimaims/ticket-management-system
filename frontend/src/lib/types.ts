@@ -29,4 +29,6 @@ export type Stat = {
   value: number;
   caption: string;
   tone: "new" | "progress" | "waiting" | "completed" | "overdue" | "due" | "admin";
+  /** What a click on this tile filters by, where the label is not enough. */
+  key?: string;
 };

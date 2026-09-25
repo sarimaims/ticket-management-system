@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   Eye,
@@ -84,18 +86,21 @@ function statsFor(users: DirectoryUser[], scope: Scope): Stat[] {
       value: users.length,
       caption: "In this directory",
       tone: "new",
+      key: "all",
     },
     {
       label: "Active",
       value: count((user) => user.status === "active"),
       caption: "Signed in and working",
       tone: "completed",
+      key: "active",
     },
     {
       label: "Suspended",
       value: count((user) => user.status === "suspended"),
       caption: "Access revoked",
       tone: "overdue",
+      key: "suspended",
     },
   ];
 }
@@ -122,21 +127,15 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   /** Unit and department are the same axis at two depths, so they are one. */
   const [where, setWhere] = useState<ScopeValue>({ units: [], departments: [] });
 
-  // The units represented by the departments in this workspace. One person
-  // can hold departments in several of them, so both are worth filtering by
-  // and worth naming on the chips - but only once there is more than one.
-  const units = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string }>();
-    for (const item of departments) {
-      if (item.unit?.id && !seen.has(item.unit.id)) {
-        seen.set(item.unit.id, { id: item.unit.id, name: item.unit.name ?? "Unit" });
-      }
-    }
-    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [departments]);
-  const manyUnits = units.length > 1;
+  // The units used to be counted here, to decide whether naming one on a chip
+  // was worth the room. The chips name it either way now, so the count went.
   const [statuses, setStatuses] = useState<string[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
+  // A tile elsewhere can link straight to a role: `?role=head` or `?role=team`.
+  const params = useSearchParams();
+  const [roles, setRoles] = useState<string[]>(() => {
+    const named = params.get("role");
+    return named === "head" || named === "team" ? [named] : [];
+  });
 
   const [editing, setEditing] = useState<DirectoryUser | null>(null);
   const [removing, setRemoving] = useState<DirectoryUser | null>(null);
@@ -147,7 +146,13 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        setUsers(await listUsers({ role: scopeRole || undefined }, signal));
+        const found = await listUsers({ role: scopeRole || undefined }, signal);
+        // Admins have their own page; the user directory is the org chart only.
+        setUsers(
+          scope === "admins"
+            ? found
+            : found.filter((user) => user.role !== "admin" && user.role !== "superadmin"),
+        );
         setError("");
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -159,7 +164,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [scopeRole],
+    [scope, scopeRole],
   );
 
   useEffect(() => {
@@ -224,7 +229,16 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     <>
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} />
+      {/* The tiles are the status filter at a glance: Total clears it, the
+          other two narrow the list to what they count. */}
+      <StatTiles
+        stats={stats}
+        loading={loading}
+        active={statuses.length === 1 ? statuses[0] : statuses.length === 0 ? "all" : null}
+        onSelect={(key) =>
+          setStatuses(key === "all" || (statuses.length === 1 && statuses[0] === key) ? [] : [key])
+        }
+      />
 
       <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-3 py-2.5">
@@ -250,12 +264,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
               <MultiSelect
                 options={[
-                  // The API does not send the super admin to an admin, so the
-                  // filter does not offer a choice that can only return none.
-                  ...(session?.role === "superadmin"
-                    ? [{ value: "superadmin", label: "Super Admin" }]
-                    : []),
-                  { value: "admin", label: "Admin" },
+                  // Admins are listed under Admin Access, not here.
                   { value: "head", label: "Head" },
                   { value: "team", label: "User" },
                 ]}
@@ -339,13 +348,17 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                           {user.departments.map((item) => (
                             <span
                               key={item.id}
-                              className="inline-flex items-center gap-1 rounded-md bg-ink-100 py-0.5 pr-1 pl-2 text-[11px] font-medium text-ink-600"
+                              className="inline-flex items-center gap-1 rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600"
                             >
-                              {manyUnits && item.unit?.name && (
+                              {/* Where the department sits, always - one unit
+                                  today is two tomorrow, and a department name
+                                  on its own does not say which one it is.
+                                  What they are inside it is the Role column's
+                                  question, asked once, on the right. */}
+                              {item.unit?.name && (
                                 <span className="text-ink-400">{item.unit.name} ·</span>
                               )}
                               {item.name ?? "Department"}
-                              <RoleTag role={item.role} className="px-1 py-0 text-[10px]" />
                             </span>
                           ))}
                         </span>
@@ -682,6 +695,9 @@ function CreatePersonModal({
 
 /* ------------------------------------------------------------------ menu */
 
+/** Roughly how tall the open menu is, used to decide which way it opens. */
+const MENU_HEIGHT = 148;
+
 function RowMenu({
   user,
   isSelf,
@@ -696,21 +712,55 @@ function RowMenu({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  /** Where the menu is pinned, in viewport coordinates. */
+  const [at, setAt] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  /**
+   * Pinned to the window rather than to the row.
+   *
+   * Inside the row it was clipped by the table's own scroll box and drawn over
+   * the footer beneath it, so the last row's menu was the one you could not
+   * read. Here it opens upwards when the bottom of the window is close.
+   */
+  const place = () => {
+    const rect = trigger.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const room = window.innerHeight - rect.bottom;
+    setAt({
+      right: Math.max(8, window.innerWidth - rect.right),
+      ...(room > MENU_HEIGHT
+        ? { top: rect.bottom + 6 }
+        : { bottom: Math.max(8, window.innerHeight - rect.top + 6) }),
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const inRoot = root.current?.contains(event.target as Node);
+      // The menu itself lives at the end of the body now, so "inside the row"
+      // is no longer the same question as "inside the menu".
+      const inMenu = (event.target as HTMLElement).closest?.("[data-row-menu]");
+      if (!inRoot && !inMenu) setOpen(false);
     };
+    // A menu pinned to a row cannot follow it, so it closes when the page moves.
+    const onScroll = () => setOpen(false);
+    const onResize = () => place();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
 
@@ -720,8 +770,12 @@ function RowMenu({
   return (
     <div ref={root} className="relative">
       <button
+        ref={trigger}
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          place();
+          setOpen((current) => !current);
+        }}
         aria-haspopup="menu"
         aria-expanded={open}
         className={ACTION_BTN}
@@ -730,10 +784,14 @@ function RowMenu({
         <MoreHorizontal className="size-4" />
       </button>
 
-      {open && (
+      {open &&
+        at &&
+        createPortal(
         <div
           role="menu"
-          className="absolute right-0 z-30 mt-1.5 w-52 rounded-field border border-line bg-surface p-1.5 shadow-xl shadow-ink-900/10"
+          data-row-menu
+          style={{ right: at.right, top: at.top, bottom: at.bottom }}
+          className="fixed z-50 w-52 rounded-field border border-line bg-surface p-1.5 shadow-xl shadow-ink-900/10"
         >
           <button
             type="button"
@@ -792,7 +850,8 @@ function RowMenu({
             <Trash2 className="size-4" />
             Delete user
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

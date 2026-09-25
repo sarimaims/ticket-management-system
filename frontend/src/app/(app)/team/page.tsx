@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -15,7 +16,9 @@ export default function TeamPage() {
         title="Users"
         crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Users" }]}
       />
-      <TeamWorkspace />
+      <Suspense>
+        <TeamWorkspace />
+      </Suspense>
     </RequireHead>
   );
 }
