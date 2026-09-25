@@ -118,6 +118,17 @@ export function attachmentHref(ticketId: string, index: number) {
   return `${BASE}/tickets/${ticketId}/attachments/${index}`;
 }
 
+/**
+ * Every file on the request, zipped by the API.
+ *
+ * The response carries `Content-Disposition: attachment`, which is what makes
+ * it save rather than open - the `download` attribute on an anchor is ignored
+ * when the API sits on another origin, as it does behind a tunnel.
+ */
+export function attachmentsArchiveHref(ticketId: string) {
+  return `${BASE}/tickets/${ticketId}/attachments.zip`;
+}
+
 /** `mine` = raised by me, `assigned` = my departments' queue, omitted = both. */
 export function listTickets(
   filters: { scope?: TicketScope; status?: string; priority?: string } = {},

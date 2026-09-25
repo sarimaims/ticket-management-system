@@ -8,11 +8,13 @@ import {
   createUploadUrl,
   describeObject,
   isConfigured as storageReady,
+  readObject,
   StorageUnavailable,
   TICKET_FILE,
   ticketKeyPrefixFor,
   validateTicketUpload,
 } from '../services/storage.js';
+import { zipStore } from '../services/zip.js';
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
@@ -325,6 +327,54 @@ export async function downloadAttachment(req, res) {
     if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
     throw error;
   }
+}
+
+/**
+ * Every file on the request, as one zip.
+ *
+ * Downloading five photos one at a time means five clicks and five trips
+ * through the lightbox. This reads the objects here and packs them, so the
+ * browser is handed a single file with the ticket's number on it.
+ *
+ * Unlike a single attachment there is no redirect to hide behind: the bytes
+ * pass through this worker. That is bounded by what a request may carry -
+ * five files of 10 MB - and is why it is not offered for anything larger.
+ */
+export async function downloadAttachmentsArchive(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) });
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  const files = ticket.attachments ?? [];
+  if (files.length === 0) throw ApiError.notFound('This request has no files.');
+
+  if (!storageReady()) throw ApiError.unavailable('File storage is not configured yet.');
+
+  let archive;
+  try {
+    const entries = [];
+    for (const file of files) {
+      // Sequential: five small objects, and a burst of parallel reads only
+      // trades a few milliseconds for five times the memory in flight.
+      // eslint-disable-next-line no-await-in-loop
+      const body = await readObject(file.key);
+      entries.push({
+        name: file.filename || `attachment-${entries.length + 1}`,
+        body,
+        modified: file.uploadedAt,
+      });
+    }
+    archive = zipStore(entries);
+  } catch (error) {
+    if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+    throw error;
+  }
+
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', `attachment; filename="${ticket.number}-files.zip"`);
+  res.set('Content-Length', String(archive.length));
+  res.send(archive);
 }
 
 export async function createTicket(req, res) {
@@ -1114,7 +1164,12 @@ export async function reassignTickets(req, res) {
       ticketNumber: populated.number,
     });
     // eslint-disable-next-line no-await-in-loop
-    await notifyTicketUpdated({ ticket: populated, actor: req.user, summary });
+    await notifyTicketUpdated({
+      ticket: populated,
+      actor: req.user,
+      summary,
+      event: changingDepartment ? 'moved' : 'assigned',
+    });
   }
 
   res.json({
@@ -1508,12 +1563,32 @@ export async function updateTicket(req, res) {
       ticketNumber: populated.number,
     });
 
+    /**
+     * The headline of what just happened, for the colour the bell wears.
+     *
+     * One save can move several things at once, so they are ranked by what a
+     * reader would call the event: a ticket that was finished is news whatever
+     * else moved with it.
+     */
+    const event =
+      populated.status === 'Cancelled' && before.status !== 'Cancelled'
+        ? 'cancelled'
+        : populated.status === 'Completed' && before.status !== 'Completed'
+          ? 'completed'
+          : before.status !== populated.status
+            ? 'status'
+            : before.committedDeadline !== nowCommitted
+              ? 'promise'
+              : before.assignees !== nowAssignees.join(',')
+                ? 'assigned'
+                : 'edited';
+
     // Who hears about it depends on which side moved: the raiser editing their
     // own request is news for the department, not for themselves.
     if (raisedByMe && !worksIt) {
-      await notifyTicketEdited({ ticket: populated, actor: req.user, summary });
+      await notifyTicketEdited({ ticket: populated, actor: req.user, summary, event });
     } else {
-      await notifyTicketUpdated({ ticket: populated, actor: req.user, summary });
+      await notifyTicketUpdated({ ticket: populated, actor: req.user, summary, event });
     }
   }
 

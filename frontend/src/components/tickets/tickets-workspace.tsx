@@ -194,6 +194,12 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
       tone: "completed",
     },
     {
+      label: "Cancelled",
+      value: count((ticket) => ticket.status === "Cancelled"),
+      caption: "",
+      tone: "cancelled",
+    },
+    {
       label: "Due Today",
       value: count(VIEWS.today),
       caption: "",

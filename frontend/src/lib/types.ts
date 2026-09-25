@@ -31,7 +31,7 @@ export type Stat = {
   label: string;
   value: number;
   caption: string;
-  tone: "new" | "progress" | "waiting" | "completed" | "overdue" | "due" | "admin";
+  tone: "new" | "progress" | "waiting" | "completed" | "cancelled" | "overdue" | "due" | "admin";
   /** What a click on this tile filters by, where the label is not enough. */
   key?: string;
 };

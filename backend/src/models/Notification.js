@@ -18,6 +18,29 @@ export const NOTIFICATION_TYPES = [
   'ticket.deleted',
 ];
 
+/**
+ * What actually happened, under the broad type.
+ *
+ * `ticket.updated` covers a ticket being finished, called off, promised a new
+ * date and handed to somebody else - four things a reader wants to tell apart
+ * at a glance, and four colours in the feed. The type says which page the
+ * event belongs to; this says what it was.
+ */
+export const NOTIFICATION_EVENTS = [
+  'raised',
+  'completed',
+  'cancelled',
+  'status',
+  'promise',
+  'assigned',
+  'moved',
+  'edited',
+  'message',
+  'handover',
+  'handover.answered',
+  'deleted',
+];
+
 const notificationSchema = new mongoose.Schema(
   {
     user: {
@@ -30,6 +53,12 @@ const notificationSchema = new mongoose.Schema(
       type: String,
       enum: NOTIFICATION_TYPES,
       required: true,
+    },
+    /** The finer action, for rows written since it existed. */
+    event: {
+      type: String,
+      enum: [...NOTIFICATION_EVENTS, null],
+      default: null,
     },
     ticket: {
       type: mongoose.Schema.Types.ObjectId,

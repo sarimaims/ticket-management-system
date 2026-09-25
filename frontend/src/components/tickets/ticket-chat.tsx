@@ -6,6 +6,7 @@ import {
   Building2,
   ChevronDown,
   CornerUpLeft,
+  Download,
   Mail,
   Mic,
   MessagesSquare,
@@ -40,7 +41,7 @@ import {
   useVoiceRecorder,
   type Draft,
 } from "@/components/tickets/chat-attachments";
-import { attachmentHref, type TicketRecord } from "@/lib/tickets";
+import { attachmentHref, attachmentsArchiveHref, type TicketRecord } from "@/lib/tickets";
 import { cn, formatTime } from "@/lib/utils";
 
 /** How often an open thread asks whether anything has been said. */
@@ -405,8 +406,29 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
         </p>
       )}
 
+      {/* What came with the request, and a way to take all of it in one go:
+          five photos is otherwise five trips through the lightbox. */}
+      {ticket.attachments.length > 0 && (
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
+            {ticket.attachments.length} {ticket.attachments.length === 1 ? "file" : "files"}
+          </p>
+          {ticket.attachments.length > 1 && (
+            <a
+              href={attachmentsArchiveHref(ticket.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+            >
+              <Download className="size-3" />
+              Download all
+            </a>
+          )}
+        </div>
+      )}
+
       {images.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
           {/* Small thumbnails: what belongs at the top of a thread is the fact
               that photos came with the request, not the photos. Past the first
               few, the last tile says how many more; any click opens the viewer,

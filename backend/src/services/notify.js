@@ -49,7 +49,7 @@ async function audienceFor(ticket) {
  * never break the action that triggered it: a failure here is logged and
  * swallowed, because a ticket being raised matters more than the bell.
  */
-async function deliver({ recipients, exclude, type, ticket, title, body, actorName }) {
+async function deliver({ recipients, exclude, type, event, ticket, title, body, actorName }) {
   const excluded = String(exclude ?? '');
   const unique = [...new Set(recipients.map(String))].filter((id) => id !== excluded);
   if (unique.length === 0) return 0;
@@ -59,6 +59,7 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
   const rows = unique.map((user) => ({
     user,
     type,
+    event: event ?? null,
     ticket: ticket._id,
     ticketNumber: ticket.number,
     title,
@@ -98,6 +99,7 @@ export async function notifyNewTicket({ ticket, actor }) {
       recipients: await audienceFor(ticket),
       exclude: actor._id,
       type: 'ticket.new',
+      event: 'raised',
       ticket,
       title: `${ticket.number} · new request`,
       body: ticket.subject,
@@ -114,12 +116,13 @@ export async function notifyNewTicket({ ticket, actor }) {
  * it, because what they were asked for is no longer what they read yesterday.
  * Only the receiving side is notified - the raiser made the change.
  */
-export async function notifyTicketEdited({ ticket, actor, summary }) {
+export async function notifyTicketEdited({ ticket, actor, summary, event = 'edited' }) {
   try {
     return await deliver({
       recipients: await audienceFor(ticket),
       exclude: actor._id,
       type: 'ticket.edited',
+      event,
       ticket,
       title: `${ticket.number} · request updated`,
       body: summary,
@@ -135,7 +138,7 @@ export async function notifyTicketEdited({ ticket, actor, summary }) {
  * A ticket moved: tell the person who raised it and the department working it.
  * `summary` is the same human line the activity log records.
  */
-export async function notifyTicketUpdated({ ticket, actor, summary }) {
+export async function notifyTicketUpdated({ ticket, actor, summary, event = 'status' }) {
   try {
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
@@ -143,6 +146,7 @@ export async function notifyTicketUpdated({ ticket, actor, summary }) {
       recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.updated',
+      event,
       ticket,
       title: `${ticket.number} · updated`,
       body: summary,
@@ -169,6 +173,7 @@ export async function notifyNewMessage({ ticket, actor, preview }) {
       recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.message',
+      event: 'message',
       ticket,
       title: `${ticket.number} · ${actor.name}`,
       body: preview,
@@ -192,6 +197,7 @@ export async function notifyHandoverAsked({ ticket, actor, recipients }) {
       recipients,
       exclude: actor._id,
       type: 'ticket.handover',
+      event: 'handover',
       ticket,
       title: `${ticket.number} · ${actor.name} asks you to take this on`,
       body: ticket.subject,
@@ -218,6 +224,7 @@ export async function notifyTicketDeleted({ ticket, actor, reason }) {
       recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.deleted',
+      event: 'deleted',
       ticket: {
         _id: null,
         number: ticket.number,
@@ -241,6 +248,7 @@ export async function notifyHandoverAnswered({ ticket, actor, recipient, accepte
       recipients: [recipient],
       exclude: actor._id,
       type: 'ticket.handover.answered',
+      event: 'handover.answered',
       ticket,
       title: `${ticket.number} · ${actor.name} ${accepted ? 'took it on' : 'turned it down'}`,
       body: ticket.subject,

@@ -347,6 +347,7 @@ export async function releaseTicket(req, res) {
     ticket: populated,
     actor: req.user,
     summary: names ? `released back to ${names}` : 'released back to the department',
+    event: 'assigned',
   });
 
   res.json({

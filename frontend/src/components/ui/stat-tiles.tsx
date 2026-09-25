@@ -10,6 +10,9 @@ const TILE_TONES: Record<Stat["tone"], string> = {
   progress: "bg-status-progress-bg text-status-progress-fg",
   waiting: "bg-status-waiting-bg text-status-waiting-fg",
   completed: "bg-status-completed-bg text-status-completed-fg",
+  // Called off is not a failure and not a success, so it stays out of the
+  // traffic lights entirely - the same neutral the badge wears.
+  cancelled: "bg-ink-100 text-ink-500",
   overdue: "bg-status-overdue-bg text-status-overdue-fg",
   due: "bg-status-accepted-bg text-status-accepted-fg",
   admin: "bg-tile-admin-bg text-tile-admin-fg",
