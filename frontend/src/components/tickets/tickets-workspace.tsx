@@ -15,7 +15,6 @@ import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Building,
-  ArrowRight,
   Trash2,
   Inbox,
   MessagesSquare,
@@ -48,6 +47,7 @@ import {
   type MemberOption,
 } from "@/lib/departments";
 import { useToast } from "@/components/ui/toast";
+import type { SortDirection } from "@/components/ui/table";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
@@ -66,16 +66,50 @@ import { activeUnit, activeUnitOnServer, subscribeActiveUnit } from "@/lib/activ
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import type { Stat, TicketStatus } from "@/lib/types";
 
-const STATUSES: TicketStatus[] = [
-  "New",
-  "Accepted",
-  "In Progress",
-  "Waiting",
-  "Completed",
-  "Overdue",
-];
+/**
+ * Every status a ticket can read as, in lifecycle order - which is what the
+ * filter offers and what the Status column sorts by. Overdue is in the list
+ * because it is worth filtering for, even though nobody can set it.
+ */
+const STATUSES: TicketStatus[] = ["New", "In Progress", "Completed", "Overdue"];
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
+
+/**
+ * What a column is ordered by when its heading is clicked.
+ *
+ * Each one names a fact on the row rather than a column, because two columns
+ * can read the same field - the deadline shows what was asked for and what was
+ * promised - and only one of them is the thing being sorted by.
+ */
+type SortKey =
+  | "number"
+  | "subject"
+  | "fromUnit"
+  | "fromDepartment"
+  | "raisedBy"
+  | "toUnit"
+  | "toDepartment"
+  | "assignees"
+  | "priority"
+  | "status"
+  | "createdAt"
+  | "deadline";
+
+/**
+ * Which way a column opens on its first click.
+ *
+ * Dates and urgency answer "what is most pressing", so they start at the top
+ * of the scale; names answer "where is X", so they start at A. Anything not
+ * named here opens ascending.
+ */
+const OPENS_DESCENDING: SortKey[] = ["createdAt", "priority"];
+
+/** How the queue arrives before anybody has clicked a heading. */
+const DEFAULT_SORT: { key: SortKey; direction: SortDirection } = {
+  key: "createdAt",
+  direction: "desc",
+};
 
 /** How often a live queue asks the API whether anything moved. */
 const REFRESH_MS = 7000;
@@ -125,24 +159,17 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
       tone: "progress",
     },
     {
-      label: "Waiting",
-      value: count((ticket) => ticket.status === "Waiting"),
+      label: "Completed",
+      value: count((ticket) => ticket.status === "Completed"),
       caption: "",
-      tone: "waiting",
+      tone: "completed",
     },
-    scope === "mine"
-      ? {
-          label: "Completed",
-          value: count((ticket) => ticket.status === "Completed"),
-          caption: "",
-          tone: "completed",
-        }
-      : {
-          label: "Due Today",
-          value: count((ticket) => isToday(ticket.deadline)),
-          caption: "",
-          tone: "due",
-        },
+    {
+      label: "Due Today",
+      value: count((ticket) => ticket.status !== "Completed" && isToday(ticket.deadline)),
+      caption: "",
+      tone: "due",
+    },
     {
       label: "Overdue",
       value: count((ticket) => ticket.status === "Overdue"),
@@ -152,8 +179,82 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
   ];
 }
 
+/**
+ * What one ticket is worth under one ordering: a number where the column is a
+ * scale, a lower-cased string where it is a name.
+ *
+ * A ticket with nothing in the column sorts to the end rather than the start,
+ * whichever way the arrow points - an empty cell is never the answer somebody
+ * clicked a heading looking for.
+ */
+function sortValue(ticket: TicketRecord, key: SortKey): string | number {
+  const names = (list: { name?: string }[]) =>
+    list
+      .map((item) => item.name ?? "")
+      .join(", ")
+      .toLowerCase();
+
+  switch (key) {
+    case "number":
+      return ticket.number.toLowerCase();
+    case "subject":
+      return ticket.subject.toLowerCase();
+    case "fromUnit":
+      return names(ticket.fromDepartments.map((item) => item.unit ?? {}));
+    case "fromDepartment":
+      return names(ticket.fromDepartments);
+    case "raisedBy":
+      return (ticket.raisedBy.name ?? "").toLowerCase();
+    case "toUnit":
+      return (ticket.department.unit?.name ?? "").toLowerCase();
+    case "toDepartment":
+      return (ticket.department.name ?? "").toLowerCase();
+    case "assignees":
+      return names(ticket.assignees);
+    case "priority":
+      return PRIORITIES.indexOf(ticket.priority);
+    case "status":
+      return STATUSES.indexOf(ticket.status);
+    case "createdAt":
+      return new Date(ticket.createdAt).getTime();
+    case "deadline":
+      return ticket.deadline ? new Date(ticket.deadline).getTime() : Number.POSITIVE_INFINITY;
+  }
+}
+
 /** Every cell in this table, tight enough that the whole row fits on screen. */
 const CELL = "px-2 py-1.5 text-[12px] align-middle";
+
+/**
+ * The rules that frame a band: its own colour at the two edges, and a fainter
+ * one between the columns inside it. A grey hairline did the job of a table
+ * that had no bands; these say where one side of a request ends.
+ */
+const FROM_EDGE = "border-l border-route-from-fg/30";
+const FROM_INNER = "border-l border-route-from-fg/10";
+const TO_EDGE = "border-l border-route-to-fg/30";
+const TO_INNER = "border-l border-route-to-fg/10";
+
+/**
+ * The two sides of a request, each washed in its own hue so a column belongs
+ * to one of them at a glance.
+ *
+ * Half-strength over the rows: a row already carries a colour of its own when
+ * it is done, or waiting on you, or the one you have open, and those have to
+ * keep reading straight across the table.
+ */
+const FROM = "bg-route-from-bg/70";
+const TO = "bg-route-to-bg/70";
+
+/** Full strength in the header, where there is no row colour to share with. */
+const FROM_HEAD = "bg-route-from-bg";
+const TO_HEAD = "bg-route-to-bg";
+
+/** A sub-heading inside a band: quieter than the group name above it. */
+const SUB = "px-2 pt-0 pb-1.5 text-[10px] font-medium text-ink-400";
+
+/** A fact this ticket does not carry. */
+const Blank = () => <span className="text-ink-300">—</span>;
 
 /**
  * One row, held apart from the table so a refresh only repaints the tickets
@@ -173,6 +274,7 @@ const TicketRow = memo(function TicketRow({
   selected,
   flashed,
   unreadMessages,
+  askedOfMe,
   showPick,
   canPick,
   canDelete,
@@ -192,6 +294,8 @@ const TicketRow = memo(function TicketRow({
   flashed: boolean;
   /** How many messages on this ticket the reader has not opened yet. */
   unreadMessages: number;
+  /** Somebody has asked this person to take this ticket on. */
+  askedOfMe: boolean;
   /** Whether this reader may remove tickets at all. */
   /** Whether the table is showing the tick column at all. */
   showPick: boolean;
@@ -206,17 +310,31 @@ const TicketRow = memo(function TicketRow({
 }) {
   const messages = unreadMessages > 0 ? unreadMessages : ticket.messageCount;
 
+  // Named once each: several departments of one unit all say the same thing.
+  const fromUnits = [
+    ...new Set(
+      ticket.fromDepartments
+        .map((item) => item.unit?.name)
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+
   return (
     <tr
       id={`ticket-row-${ticket.id}`}
       onClick={() => onOpen(ticket)}
       className={cn(
         "cursor-pointer border-b border-line transition-colors last:border-0",
-        selected ? "bg-brand-50" : "hover:bg-ink-50/70",
-        // Outlined rather than recoloured, so it reads as "this one" without
-        // competing with the status tints the row already carries.
-        flashed &&
-          "bg-status-waiting-bg ring-2 ring-status-waiting-fg ring-inset hover:bg-status-waiting-bg",
+        // No row-wide fill any more. The columns carry the colour now, and a
+        // row tinted underneath them left the table with two colour systems
+        // arguing across the same cell. What a ticket is, the status column
+        // says; what is waiting on you, the chip beside its number says.
+        "hover:bg-ink-50/70",
+        // Which is why the two things that are about *this* row rather than
+        // about the ticket are outlines: the one you have open, and the one a
+        // notification just brought you to.
+        selected && "ring-1 ring-royal-300 ring-inset",
+        flashed && "ring-2 ring-status-waiting-fg ring-inset",
       )}
     >
       {showPick && (
@@ -241,6 +359,12 @@ const TicketRow = memo(function TicketRow({
             Me every row is yours, and marking all of them marks none. */}
         {mine && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />}
         <span className="block font-bold whitespace-nowrap text-brand-600">#{ticket.number}</span>
+        {/* The one thing on a row that is a question rather than a fact. */}
+        {askedOfMe && (
+          <span className="mt-0.5 inline-block rounded bg-brand-600 px-1 py-px text-[9px] font-bold tracking-wide text-white uppercase">
+            Take it?
+          </span>
+        )}
         {mine && (
           <span className="mt-0.5 inline-block rounded bg-brand-50 px-1 py-px text-[9px] font-bold tracking-wide text-brand-700 uppercase">
             Mine
@@ -259,26 +383,67 @@ const TicketRow = memo(function TicketRow({
         )}
       </TableCell>
 
-      {scope !== "mine" && (
-        <TableCell className={cn(CELL, "whitespace-normal")}>
-          <span className="flex flex-wrap items-center gap-1">
-            <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
-            {byMe && (
-              <span className="rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
-                You
-              </span>
-            )}
-            <OriginTag role={ticket.raisedByRole} />
-          </span>
-        </TableCell>
-      )}
-
-      {/* Where it came from and where it went, read as one move. */}
-      <TableCell className={cn(CELL, "whitespace-normal")}>
-        <Route ticket={ticket} />
+      {/* Where the request came from: the unit, the department inside it, and
+          the person who asked. A manager sits above the departments, so their
+          first two cells stay empty and the tag beside their name says why. */}
+      <TableCell className={cn(CELL, FROM_EDGE, FROM, "whitespace-normal")}>
+        {fromUnits.length > 0 ? fromUnits.join(", ") : <Blank />}
       </TableCell>
 
-      <TableCell className={CELL}>
+      <TableCell className={cn(CELL, FROM_INNER, FROM, "whitespace-normal")}>
+        {ticket.fromDepartments.length === 0 ? (
+          <Blank />
+        ) : (
+          <span className="flex flex-wrap gap-1">
+            {ticket.fromDepartments.map((item) => (
+              <span
+                key={item.id}
+                className="rounded bg-surface px-1 py-px text-[10px] font-semibold text-route-from-fg"
+              >
+                {item.name}
+              </span>
+            ))}
+          </span>
+        )}
+      </TableCell>
+
+      <TableCell className={cn(CELL, FROM_INNER, FROM, "whitespace-normal")}>
+        <span className="flex flex-wrap items-center gap-1">
+          <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
+          {byMe && (
+            <span className="rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
+              You
+            </span>
+          )}
+          <OriginTag role={ticket.raisedByRole} />
+        </span>
+      </TableCell>
+
+      {/* And where it landed. One department per ticket, so this side never
+          holds a list: several departments asked at once are several tickets. */}
+      <TableCell className={cn(CELL, TO_EDGE, TO, "whitespace-normal")}>
+        {ticket.department.unit?.name ?? <Blank />}
+      </TableCell>
+
+      <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
+        {/* White rather than the brand tint it wore before: a red chip on an
+            orange band was two warm colours arguing over the same cell. */}
+        <span className="rounded bg-surface px-1 py-px text-[10px] font-semibold text-route-to-fg">
+          {ticket.department.name}
+        </span>
+      </TableCell>
+
+      <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
+        {ticket.assignees.length === 0 ? (
+          <span className="text-ink-400">Nobody yet</span>
+        ) : (
+          <span className="font-medium text-ink-700">
+            {ticket.assignees.map((person) => person.name).join(", ")}
+          </span>
+        )}
+      </TableCell>
+
+      <TableCell className={cn(CELL, TO_EDGE)}>
         <PriorityBadge priority={ticket.priority} className="px-1.5 py-0.5 text-[11px]" />
       </TableCell>
 
@@ -381,73 +546,6 @@ const TicketRow = memo(function TicketRow({
  * beat even when the answer is instant, because a button that does nothing
  * visible reads as broken.
  */
-/**
- * Which departments a ticket moved between, and - underneath, quietly - which
- * units those sit in.
- *
- * One line rather than a unit tag beside every department: in a table this
- * narrow, four chips on a row is unreadable, and the question being asked is
- * about the move as a whole. It says "within Head Office" when both ends share
- * a unit, and names both when they do not - which is the case worth noticing.
- */
-function Route({ ticket }: { ticket: TicketRecord }) {
-  const toUnit = ticket.department.unit ?? null;
-
-  // Distinct, because several departments of one unit say the same thing once.
-  const fromUnits = [
-    ...new Map(
-      ticket.fromDepartments
-        .map((item) => item.unit)
-        .filter((unit): unit is NonNullable<typeof unit> => Boolean(unit?.name))
-        .map((unit) => [unit.id, unit]),
-    ).values(),
-  ];
-
-  const within =
-    fromUnits.length === 1 && toUnit && fromUnits[0].id === toUnit.id ? toUnit.name : null;
-
-  return (
-    <span className="block">
-      <span className="flex flex-wrap items-center gap-1">
-        {ticket.fromDepartments.length === 0 ? (
-          // Empty for a manager: they sit above the departments, so the
-          // Raised By tag carries the origin instead.
-          <span className="text-ink-300">—</span>
-        ) : (
-          ticket.fromDepartments.map((item) => (
-            <span
-              key={item.id}
-              className="rounded bg-ink-100 px-1 py-px text-[10px] font-medium text-ink-600"
-            >
-              {item.name}
-            </span>
-          ))
-        )}
-        <ArrowRight className="size-3 shrink-0 text-ink-300" />
-        <span className="rounded bg-brand-50 px-1 py-px text-[10px] font-semibold text-brand-700">
-          {ticket.department.name}
-        </span>
-      </span>
-
-      {(within || toUnit) && (
-        <span className="mt-0.5 block truncate text-[10px] leading-none text-ink-400">
-          {within ? (
-            `within ${within}`
-          ) : fromUnits.length === 0 ? (
-            `into ${toUnit?.name}`
-          ) : (
-            <>
-              {fromUnits.map((unit) => unit.name).join(", ")}
-              <span className="px-1 text-ink-300">→</span>
-              {toUnit?.name}
-            </>
-          )}
-        </span>
-      )}
-    </span>
-  );
-}
-
 function RefreshButton({ onRefresh, syncedAt }: { onRefresh: () => void; syncedAt: number | null }) {
   const [spinning, setSpinning] = useState(false);
 
@@ -493,6 +591,7 @@ export function TicketsWorkspace({
   });
 
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState(DEFAULT_SORT);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [priorities, setPriorities] = useState<string[]>([]);
   const [where, setWhere] = useState<{ units: string[]; departments: string[] }>({
@@ -635,7 +734,7 @@ export function TicketsWorkspace({
 
   const rows = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
-    return inScope.filter((ticket) => {
+    const kept = inScope.filter((ticket) => {
       if (
         term &&
         !`${ticket.number} ${ticket.subject} ${ticket.requestType}`.toLowerCase().includes(term)
@@ -654,7 +753,48 @@ export function TicketsWorkspace({
       if (mineOnly && !isMine(ticket)) return false;
       return true;
     });
-  }, [inScope, deferredQuery, statuses, priorities, where, mineOnly, isMine]);
+
+    // A copy, because the list being sorted is the one the poll hands back.
+    // The tickets inside it are the same objects either way, so a reordering
+    // still repaints no row that did not move.
+    const factor = sort.direction === "asc" ? 1 : -1;
+
+    return [...kept].sort((left, right) => {
+      const a = sortValue(left, sort.key);
+      const b = sortValue(right, sort.key);
+
+      // Blanks last in both directions, so the tail of the table is always the
+      // part with nothing to say.
+      const missing = (value: string | number) => value === "" || value === Number.POSITIVE_INFINITY;
+      if (missing(a) !== missing(b)) return missing(a) ? 1 : -1;
+
+      const order =
+        typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b));
+
+      // Ties fall back on the ticket number, so two rows that are equal under
+      // the chosen column still hold a settled order between refreshes.
+      return order === 0 ? left.number.localeCompare(right.number) : order * factor;
+    });
+  }, [inScope, deferredQuery, statuses, priorities, where, mineOnly, isMine, sort]);
+
+  /**
+   * Clicking the column you are already sorted by turns it around; clicking
+   * another opens it whichever way that column is worth reading first.
+   */
+  const sortBy = useCallback((key: SortKey) => {
+    setSort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: OPENS_DESCENDING.includes(key) ? "desc" : "asc" },
+    );
+  }, []);
+
+  /** Everything a sortable heading needs, so the header reads as a list. */
+  const sortable = (key: SortKey) => ({
+    sortable: true,
+    sorted: sort.key === key ? sort.direction : null,
+    onSort: () => sortBy(key),
+  });
 
   /** The tick column appears when something in view could be acted on at all. */
   const selectable = useMemo(
@@ -683,7 +823,9 @@ export function TicketsWorkspace({
 
   const canDeletePicked = chosen.length > 0 && chosen.every(canDeleteTicket);
 
-  const columns = (scope === "mine" ? 8 : 9) + (showPicks ? 1 : 0);
+  // Ticket, subject, three from, three to, priority, status, created,
+  // deadline, actions - the same on every list.
+  const columns = 13 + (showPicks ? 1 : 0);
 
   /**
    * Arriving from a notification: find the ticket it named, clear whatever
@@ -913,11 +1055,11 @@ export function TicketsWorkspace({
           {/* Fluid rather than held open at a fixed width: on a desktop every
               column fits and nothing scrolls sideways, and the min-width below
               only catches phones. */}
-          <table className="w-full min-w-[820px] border-collapse">
+          <table className="w-full min-w-[1180px] border-collapse">
             <thead className="sticky top-0 z-10 border-b border-line bg-ink-50 shadow-[0_1px_0_var(--color-line)]">
               <tr>
                 {showPicks && (
-                  <TableHead className="w-8 px-2 py-2">
+                  <TableHead rowSpan={2} className="w-8 px-2 py-2">
                     <input
                       type="checkbox"
                       aria-label="Select every ticket that can be deleted"
@@ -938,33 +1080,68 @@ export function TicketsWorkspace({
                     />
                   </TableHead>
                 )}
-                <TableHead sortable className="px-2 py-2">
+                <TableHead {...sortable("number")} rowSpan={2} className="px-2 py-2">
                   Ticket
                 </TableHead>
-                <TableHead sortable className="w-[24%] px-2 py-2">
+                <TableHead {...sortable("subject")} rowSpan={2} className="w-[16%] px-2 py-2">
                   Subject
                 </TableHead>
-                {scope !== "mine" && (
-                  <TableHead sortable className="px-2 py-2">
-                    Raised By
-                  </TableHead>
-                )}
-                <TableHead sortable className="px-2 py-2">
-                  From → To
+                {/* Two banded groups rather than one "From to" column. Each
+                    side of a request is three separate facts - the unit, the
+                    department inside it and the person - and reading them
+                    straight down a column beats unpicking them from a phrase. */}
+                <TableHead
+                  colSpan={3}
+                  className={cn(FROM_EDGE, FROM_HEAD, "px-2 py-1 text-center text-route-from-fg")}
+                >
+                  Raised By / From
                 </TableHead>
-                <TableHead sortable className="px-2 py-2">
+                <TableHead
+                  colSpan={3}
+                  className={cn(TO_EDGE, TO_HEAD, "px-2 py-1 text-center text-route-to-fg")}
+                >
+                  To
+                </TableHead>
+                <TableHead {...sortable("priority")} rowSpan={2} className={cn(TO_EDGE, "px-2 py-2")}>
                   Priority
                 </TableHead>
-                <TableHead sortable className="px-2 py-2">
+                <TableHead {...sortable("status")} rowSpan={2} className="px-2 py-2">
                   Status
                 </TableHead>
-                <TableHead sortable className="px-2 py-2">
+                <TableHead {...sortable("createdAt")} rowSpan={2} className="px-2 py-2">
                   Created
                 </TableHead>
-                <TableHead sortable className="px-2 py-2" title="Asked for, and what was promised back">
+                <TableHead
+                  {...sortable("deadline")}
+                  rowSpan={2}
+                  className="px-2 py-2"
+                  title="Asked for, and what was promised back"
+                >
                   Deadline
                 </TableHead>
-                <TableHead className="px-2 py-2">Actions</TableHead>
+                <TableHead rowSpan={2} className="px-2 py-2">
+                  Actions
+                </TableHead>
+              </tr>
+              <tr>
+                <TableHead {...sortable("fromUnit")} className={cn(FROM_EDGE, SUB, FROM_HEAD)}>
+                  Unit
+                </TableHead>
+                <TableHead {...sortable("fromDepartment")} className={cn(FROM_INNER, SUB, FROM_HEAD)}>
+                  Department
+                </TableHead>
+                <TableHead {...sortable("raisedBy")} className={cn(FROM_INNER, SUB, FROM_HEAD)}>
+                  User
+                </TableHead>
+                <TableHead {...sortable("toUnit")} className={cn(TO_EDGE, SUB, TO_HEAD)}>
+                  Unit
+                </TableHead>
+                <TableHead {...sortable("toDepartment")} className={cn(TO_INNER, SUB, TO_HEAD)}>
+                  Department
+                </TableHead>
+                <TableHead {...sortable("assignees")} className={cn(TO_INNER, SUB, TO_HEAD)}>
+                  User
+                </TableHead>
               </tr>
             </thead>
             <tbody>
@@ -1005,6 +1182,7 @@ export function TicketsWorkspace({
                     selected={viewing?.id === ticket.id}
                     flashed={flashed === ticket.id}
                     unreadMessages={unreadByTicket.get(ticket.id) ?? 0}
+                    askedOfMe={ticket.awaitingMe}
                     showPick={showPicks}
                     canPick={canWorkTicket(ticket) || canDeleteTicket(ticket)}
                     canDelete={canDeleteTicket(ticket)}

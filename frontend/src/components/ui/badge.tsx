@@ -7,9 +7,7 @@ import type { TicketPriority, TicketStatus } from "@/lib/types";
 
 const STATUS_STYLES: Record<TicketStatus, string> = {
   New: "bg-status-new-bg text-status-new-fg",
-  Accepted: "bg-status-accepted-bg text-status-accepted-fg",
   "In Progress": "bg-status-progress-bg text-status-progress-fg",
-  Waiting: "bg-status-waiting-bg text-status-waiting-fg",
   Completed: "bg-status-completed-bg text-status-completed-fg",
   Overdue: "bg-status-overdue-bg text-status-overdue-fg",
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MessageSquare, PencilLine, RefreshCw, TicketPlus } from "lucide-react";
+import { HandHelping, MessageSquare, PencilLine, RefreshCw, TicketPlus } from "lucide-react";
 
 import type { NotificationRecord, NotificationType } from "@/lib/notifications";
 import { chime } from "@/lib/chime";
@@ -120,6 +120,20 @@ export const TYPE_META: Record<NotificationType, Meta> = {
     badge: "bg-chat-accent text-white",
     rail: "bg-chat-accent",
     label: "Message",
+  },
+  // An ask is the only notification that wants something back, so it wears
+  // the brand colour that everything actionable in this app wears.
+  "ticket.handover": {
+    icon: HandHelping,
+    badge: "bg-brand-600 text-white",
+    rail: "bg-brand-600",
+    label: "Asked of you",
+  },
+  "ticket.handover.answered": {
+    icon: HandHelping,
+    badge: "bg-status-completed-fg text-white",
+    rail: "bg-status-completed-fg",
+    label: "Answered",
   },
 };
 

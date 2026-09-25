@@ -140,3 +140,44 @@ export async function notifyNewMessage({ ticket, actor, preview }) {
     return 0;
   }
 }
+
+/**
+ * Somebody is asking these people to take a ticket off them.
+ *
+ * Addressed rather than broadcast: only the people actually asked hear about
+ * it, because it is a question put to them and not news about the ticket.
+ */
+export async function notifyHandoverAsked({ ticket, actor, recipients }) {
+  try {
+    return await deliver({
+      recipients,
+      exclude: actor._id,
+      type: 'ticket.handover',
+      ticket,
+      title: `${ticket.number} · ${actor.name} asks you to take this on`,
+      body: ticket.subject,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.handover):', error.message);
+    return 0;
+  }
+}
+
+/** And the answer, back to whoever asked. */
+export async function notifyHandoverAnswered({ ticket, actor, recipient, accepted }) {
+  try {
+    return await deliver({
+      recipients: [recipient],
+      exclude: actor._id,
+      type: 'ticket.handover.answered',
+      ticket,
+      title: `${ticket.number} · ${actor.name} ${accepted ? 'took it on' : 'turned it down'}`,
+      body: ticket.subject,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.handover.answered):', error.message);
+    return 0;
+  }
+}

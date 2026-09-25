@@ -2,14 +2,17 @@ import mongoose from 'mongoose';
 
 import { SYSTEM_ROLES } from './User.js';
 
-export const TICKET_STATUSES = [
-  'New',
-  'Accepted',
-  'In Progress',
-  'Waiting',
-  'Completed',
-  'Overdue',
-];
+/**
+ * What somebody can put a ticket in: not started, being worked, done.
+ *
+ * Overdue is deliberately not among them. It is not a decision anybody makes
+ * but a fact about the date, so it is worked out on the way out of the API
+ * rather than stored - see services/overdue.js.
+ */
+export const TICKET_STATUSES = ['New', 'In Progress', 'Completed'];
+
+/** Past its date and not finished. Assigned by the calendar, never by hand. */
+export const OVERDUE = 'Overdue';
 
 export const TICKET_PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
 
@@ -178,6 +181,11 @@ const ticketSchema = new mongoose.Schema(
 // person can see, and which of them moved most recently. These cover both
 // halves of the visibility filter so neither question scans the collection.
 ticketSchema.index({ department: 1, updatedAt: -1 });
+
+// The two shapes the queues ask for: "what is on this person" and "what is in
+// this state", newest first. Declared here so a fresh database gets them too.
+ticketSchema.index({ assignees: 1, updatedAt: -1 });
+ticketSchema.index({ status: 1, updatedAt: -1 });
 ticketSchema.index({ raisedBy: 1, updatedAt: -1 });
 
 ticketSchema.pre('save', async function assignNumber() {

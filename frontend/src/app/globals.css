@@ -81,6 +81,17 @@
   --color-status-overdue-bg: #fee2e2;
   --color-status-overdue-fg: #b91c1c;
 
+  /* --- Route bands: the two sides of a request -------------------------- *
+   * Where a ticket came from, and where it went. Two hues the app uses for
+   * nothing else, so a tinted column is never read as a status: purple for
+   * the asking side, orange for the working side. Kept pale, because they
+   * wash whole columns rather than sitting inside a badge.
+   * --------------------------------------------------------------------- */
+  --color-route-from-bg: #ede9fe;
+  --color-route-from-fg: #6d28d9;
+  --color-route-to-bg: #ffedd5;
+  --color-route-to-fg: #c2410c;
+
   /* --- Department role tags -------------------------------------------- *
    * Who someone is inside a department: head or team. Kept apart from the
    * ticket STATUS scale so a role tag is never mistaken for a ticket state.

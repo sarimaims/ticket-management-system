@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { timings } from '../utils/timings.js';
 import {
   buildTicketKey,
   createDownloadUrl,
@@ -15,12 +16,15 @@ import {
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
-import Ticket, { TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import Ticket, { OVERDUE, TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import { pastDue, statusOf } from '../services/overdue.js';
+import HandoverRequest from '../models/HandoverRequest.js';
 import TicketAssignment from '../models/TicketAssignment.js';
 import Unit from '../models/Unit.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
+import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
@@ -117,7 +121,7 @@ function presentUnit(unit) {
     : { id: String(unit) };
 }
 
-function present(ticket) {
+function present(ticket, { awaiting } = {}) {
   const department = ticket.department;
   const raisedBy = ticket.raisedBy;
   const populated = (value) => value && typeof value === 'object' && !(value instanceof mongoose.Types.ObjectId);
@@ -129,7 +133,9 @@ function present(ticket) {
     description: ticket.description,
     requestType: ticket.requestType,
     priority: ticket.priority,
-    status: ticket.status,
+    // What is stored is what a person last set; what is sent is that, unless
+    // the deadline has since made it late.
+    status: statusOf(ticket),
     project: ticket.project,
     deadline: ticket.deadline,
     committedDeadline: ticket.committedDeadline ?? null,
@@ -174,6 +180,12 @@ function present(ticket) {
     })),
     // How much has been said on it, so a row can show there is a conversation
     // without the list loading a single message.
+    /**
+     * Somebody has asked this particular reader to take it on and is waiting
+     * for an answer. Per-viewer, so it is computed where the request is, not
+     * stored on the ticket.
+     */
+    awaitingMe: Boolean(awaiting?.has(String(ticket._id))),
     messageCount: ticket.messageCount ?? 0,
     lastMessageAt: ticket.lastMessageAt ?? null,
     createdAt: ticket.createdAt,
@@ -229,36 +241,46 @@ async function resolveAttachments(req) {
   }
 
   const prefix = ticketKeyPrefixFor(String(req.user._id));
-  const files = [];
 
   for (const entry of input) {
     const key = entry?.key;
     if (typeof key !== 'string' || !key) throw ApiError.badRequest('An upload key is missing.');
     if (!key.startsWith(prefix)) throw ApiError.badRequest('That upload is not yours to attach.');
+  }
 
-    let object;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      object = await describeObject(key);
-    } catch (error) {
-      if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
-      throw ApiError.badRequest('An upload did not finish. Try attaching it again.');
-    }
+  /**
+   * Every file is inspected at once rather than one after the next.
+   *
+   * The bucket is a long way from this server - a single HEAD costs most of a
+   * second - so three attachments used to add nearly two seconds to raising a
+   * ticket, spent waiting in turn for answers that never depended on each
+   * other.
+   */
+  const described = await Promise.all(
+    input.map(async (entry) => {
+      try {
+        return await describeObject(entry.key);
+      } catch (error) {
+        if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+        throw ApiError.badRequest('An upload did not finish. Try attaching it again.');
+      }
+    }),
+  );
 
+  return input.map((entry, index) => {
+    const object = described[index];
     const problem = validateTicketUpload({ contentType: object.contentType, size: object.size });
     if (problem) throw ApiError.badRequest(problem);
 
-    files.push({
-      key,
+    return {
+      key: entry.key,
       filename: typeof entry.filename === 'string' ? entry.filename.slice(0, 160) : '',
       mimeType: object.contentType,
       size: object.size,
       uploadedBy: req.user._id,
       uploadedAt: new Date(),
-    });
-  }
-
-  return files;
+    };
+  });
 }
 
 /**
@@ -288,6 +310,10 @@ export async function downloadAttachment(req, res) {
 }
 
 export async function createTicket(req, res) {
+  // Reported back in Server-Timing, so a slow raise can be read off the
+  // browser's own network panel rather than guessed at.
+  const clock = timings(res);
+
   const {
     department,
     departments,
@@ -348,9 +374,15 @@ export async function createTicket(req, res) {
       const held = [];
       for (const userId of wanted) {
         if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
+      }
 
-        // eslint-disable-next-line no-await-in-loop
-        const candidate = await User.findById(userId);
+      // Everyone named for this department is fetched at once: one wait for
+      // the set rather than one per person.
+      const candidates = await User.find({ _id: { $in: wanted } });
+      const byId = new Map(candidates.map((person) => [String(person._id), person]));
+
+      for (const userId of wanted) {
+        const candidate = byId.get(String(userId));
         const belongs =
           candidate &&
           candidate.status !== 'suspended' &&
@@ -364,9 +396,40 @@ export async function createTicket(req, res) {
     }
   }
 
-  // Naming somebody is optional. A ticket with no name on it still reaches the
-  // department's head and team, who can pick it up or hand it on; requiring a
-  // name would mean knowing who works there before you are allowed to ask.
+  /**
+   * A department nobody was named for goes to whoever runs it.
+   *
+   * Naming somebody stays optional - requiring a name would mean knowing who
+   * works there before you are allowed to ask - but "nobody named" should not
+   * become "nobody's job". The head holds it until they hand it on or pass it
+   * down, which is the decision they are there to make.
+   *
+   * A department with no head yet keeps the older behaviour and lands in its
+   * queue unheld: better an unaddressed ticket than a rejected one.
+   */
+  const unstaffed = targets.filter((target) => !assignedTo.has(String(target._id)));
+  if (unstaffed.length > 0) {
+    // Every head of every unnamed department in one read, then sorted out in
+    // memory - the same one-wait-per-set rule as the named people above.
+    const heads = await User.find({
+      status: { $ne: 'suspended' },
+      memberships: {
+        $elemMatch: {
+          department: { $in: unstaffed.map((target) => target._id) },
+          role: 'head',
+        },
+      },
+    }).select('memberships');
+
+    for (const target of unstaffed) {
+      const key = String(target._id);
+      const owners = heads
+        .filter((person) => person.roleInDepartment(key) === 'head')
+        .map((person) => person._id);
+
+      if (owners.length > 0) assignedTo.set(key, owners);
+    }
+  }
 
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
@@ -374,9 +437,12 @@ export async function createTicket(req, res) {
   const stranger = fromIds.find((id) => !mine.has(id));
   if (stranger) throw ApiError.badRequest('You can only raise on behalf of your own departments.');
 
+  clock.step('validate');
+
   // Checked against the bucket before anything is written: a ticket must not
   // end up pointing at an upload that never landed.
   const attachments = await resolveAttachments(req);
+  clock.step('attachments');
 
   const shared = {
     subject: subject.trim(),
@@ -409,51 +475,62 @@ export async function createTicket(req, res) {
     );
   }
 
-  const populated = await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
-    .sort({ number: 1 })
-    .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
-    .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+  // One parallel step for every reference instead of a populate per path -
+  // the same reason the queues stopped using them.
+  clock.step('insert');
+
+  const populated = await hydrate(
+    await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
+      .sort({ number: 1 })
+      .lean(),
+  );
+
+  clock.step('read-back');
 
   const tickets = populated.map(present);
 
-  for (const ticket of populated) {
-    // eslint-disable-next-line no-await-in-loop
-    await record({
-      actor: req.user,
-      department: ticket.department,
-      action: 'ticket.created',
-      summary:
-        (ticket.assignees ?? []).length > 0
-          ? `raised ${ticket.number} "${ticket.subject}" for ${ticket.assignees
-              .map((person) => person.name)
-              .join(', ')}`
-          : `raised ${ticket.number} "${ticket.subject}"`,
-      ticketNumber: ticket.number,
-    });
-    // eslint-disable-next-line no-await-in-loop
-    await recordAssignment({
-      ticket,
-      from: [],
-      to: ticket.assignees ?? [],
-      actor: req.user,
-      kind: 'raised',
-    });
-    // The thread opens with the same line a group chat opens with: who
-    // started it. Everything said afterwards has something to follow.
-    // eslint-disable-next-line no-await-in-loop
-    await postSystemMessage({
-      ticket,
-      actor: req.user,
-      event: 'raised',
-      side: 'raiser',
-      body: `raised this ticket to ${ticket.department.name}`,
-    });
-    // eslint-disable-next-line no-await-in-loop
-    await notifyNewTicket({ ticket, actor: req.user });
-  }
+  /**
+   * The log, the assignment trail, the opening line of the thread and the
+   * bells. None of them depends on another, and none of them changes the
+   * answer - so they run together rather than one after the next. Each one
+   * already swallows its own failures, which is what makes that safe.
+   */
+  await Promise.all(
+    populated.flatMap((ticket) => [
+      record({
+        actor: req.user,
+        department: ticket.department,
+        action: 'ticket.created',
+        summary:
+          (ticket.assignees ?? []).length > 0
+            ? `raised ${ticket.number} "${ticket.subject}" for ${ticket.assignees
+                .map((person) => person.name)
+                .join(', ')}`
+            : `raised ${ticket.number} "${ticket.subject}"`,
+        ticketNumber: ticket.number,
+      }),
+      recordAssignment({
+        ticket,
+        from: [],
+        to: ticket.assignees ?? [],
+        actor: req.user,
+        kind: 'raised',
+      }),
+      // The thread opens with the same line a group chat opens with: who
+      // started it. Everything said afterwards has something to follow.
+      postSystemMessage({
+        ticket,
+        actor: req.user,
+        event: 'raised',
+        side: 'raiser',
+        body: `raised this ticket to ${ticket.department.name}`,
+      }),
+      notifyNewTicket({ ticket, actor: req.user }),
+    ]),
+  );
+
+  clock.step('log-and-notify');
+  clock.send();
 
   res.status(201).json({ success: true, tickets, ticket: tickets[0] });
 }
@@ -516,14 +593,42 @@ export async function listTickets(req, res) {
 
   if (scope === 'mine') filter.raisedBy = req.user._id;
   if (scope === 'assigned') {
-    // Only what is on this person by name. A department's whole queue lives on
-    // All Tickets; this page answers the narrower question people actually
-    // open it for - what have *I* been asked to do. The same rule holds for an
-    // admin: overseeing every department does not put their work on your desk.
-    filter.assignees = req.user._id;
+    /*
+     * What is on this person by name, plus what somebody is asking them to
+     * take on.
+     *
+     * A department's whole queue lives on All Tickets; this page answers the
+     * narrower question people actually open it for - what is on my desk. An
+     * unanswered request belongs there too: it is waiting on this person, and
+     * a request they cannot find is one they will not answer.
+     *
+     * Combined under $and so the visibility filter above keeps its own $or.
+     */
+    const asked = await HandoverRequest.find({
+      to: req.user._id,
+      status: 'pending',
+    }).distinct('ticket');
+
+    filter.$and = [
+      ...(filter.$and ?? []),
+      { $or: [{ assignees: req.user._id }, { _id: { $in: asked } }] },
+    ];
   }
 
-  if (status) filter.status = status;
+  if (status) {
+    /*
+     * Overdue is not in the collection, so asking for it is asking about the
+     * date instead - and asking for anything else has to exclude the tickets
+     * the date has taken away from it.
+     */
+    if (status === OVERDUE) {
+      filter.$and = [...(filter.$and ?? []), { status: { $ne: 'Completed' } }, pastDue()];
+    } else if (status === 'Completed') {
+      filter.status = status;
+    } else {
+      filter.$and = [...(filter.$and ?? []), { status }, pastDue(false)];
+    }
+  }
   if (priority) filter.priority = priority;
   if (department && mongoose.isValidObjectId(department)) filter.department = department;
 
@@ -545,7 +650,21 @@ export async function listTickets(req, res) {
 
   const tickets = await Ticket.find(filter).sort({ createdAt: -1 }).lean();
 
-  res.json({ success: true, tickets: (await hydrate(tickets)).map(present) });
+  // Which of these are waiting on an answer from the person reading them.
+  const awaiting = new Set(
+    (
+      await HandoverRequest.find({
+        to: req.user._id,
+        status: 'pending',
+        ticket: { $in: tickets.map((ticket) => ticket._id) },
+      }).distinct('ticket')
+    ).map(String),
+  );
+
+  res.json({
+    success: true,
+    tickets: (await hydrate(tickets)).map((ticket) => present(ticket, { awaiting })),
+  });
 }
 
 export async function getTicket(req, res) {
@@ -817,6 +936,11 @@ export async function reassignTickets(req, res) {
     if (!canWorkOn(req.user, ticket)) {
       throw ApiError.forbidden(`Only the receiving department can work ${ticket.number}.`);
     }
+    if (!assignsDirectly(req.user, ticket)) {
+      throw ApiError.forbidden(
+        'Only the department head can reassign. Ask a colleague to take a ticket on instead.',
+      );
+    }
   }
 
   /**
@@ -1025,6 +1149,14 @@ export async function updateTicket(req, res) {
   let movedCommitment = null;
 
   if (status !== undefined) {
+    // The one status nobody owns. Refused by name rather than by the list
+    // below, because "must be one of" reads as though it were missing.
+    if (status === OVERDUE) {
+      throw ApiError.badRequest(
+        'Overdue is set by the deadline, not by hand. Move the date or finish the ticket.',
+      );
+    }
+
     if (!TICKET_STATUSES.includes(status)) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
     }
@@ -1127,6 +1259,13 @@ export async function updateTicket(req, res) {
 
   if (assignees !== undefined) {
     if (!Array.isArray(assignees)) throw ApiError.badRequest('Assignees must be a list.');
+
+    // A head hands work out; anyone else asks and waits to be taken up on it.
+    if (!assignsDirectly(req.user, ticket)) {
+      throw ApiError.forbidden(
+        'Only the department head can reassign this. Ask a colleague to take it on instead.',
+      );
+    }
 
     const held = (ticket.assignees ?? []).map(String);
     const wanted = [...new Set(assignees.filter(Boolean).map(String))];

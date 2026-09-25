@@ -10,9 +10,7 @@ import type { TicketPriority, TicketStatus } from "@/lib/types";
 
 const STATUSES: TicketStatus[] = [
   "New",
-  "Accepted",
   "In Progress",
-  "Waiting",
   "Completed",
   "Overdue",
 ];
