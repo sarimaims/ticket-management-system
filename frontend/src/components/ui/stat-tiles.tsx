@@ -74,10 +74,19 @@ export function StatTiles({
             aria-pressed={lit}
             title={lit ? "Show all" : `Show ${stat.label.toLowerCase()}`}
             onClick={() => onSelect(key)}
+            // No rings, lifts or shadows: hover and the lit tile only deepen
+            // the tile's own tint. The wash is the tile's text colour at low
+            // opacity, laid under the content, so every tone darkens in its
+            // own hue in either theme.
             className={cn(
               tile,
-              "text-left ring-current/40 transition-shadow hover:ring-2 focus-visible:ring-2 focus-visible:outline-none",
-              lit && "ring-2 ring-current/70",
+              "relative isolate text-left focus-visible:outline-none",
+              "before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-current",
+              "before:opacity-0 before:transition-opacity before:duration-150",
+              "hover:before:opacity-[0.08] focus-visible:before:opacity-[0.1]",
+              "active:before:opacity-[0.16]",
+              // On: the one tile the list below is answering.
+              lit && "before:opacity-[0.14] hover:before:opacity-[0.18]",
             )}
           >
             {body}

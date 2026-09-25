@@ -23,6 +23,7 @@ import {
   Search,
   SlidersHorizontal,
   UserCheck,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ import {
   type SheetTab,
 } from "@/components/tickets/ticket-detail-sheet";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { DateField } from "@/components/tickets/date-field";
 import { ScopeFilter, type ScopeOption } from "@/components/ui/scope-filter";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import {
@@ -589,6 +591,69 @@ function RefreshButton({ onRefresh, syncedAt }: { onRefresh: () => void; syncedA
   );
 }
 
+/** A ticket with nobody on it, as a choice in the Assignee filter. */
+const UNASSIGNED = "__unassigned";
+
+/** The calendar day an instant fell on, where the reader is: "2026-09-25". */
+function localDay(value: string) {
+  const at = new Date(value);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
+
+/** Inside an inclusive range of days; either end may be left open. */
+const inRange = (day: string | null, from: string, to: string) =>
+  (!from && !to) || (day !== null && (!from || day >= from) && (!to || day <= to));
+
+type Range = { from: string; to: string };
+const NO_RANGE: Range = { from: "", to: "" };
+const NO_SCOPE = { units: [] as string[], departments: [] as string[] };
+
+/** One name the eye can find on a crowded filter row. */
+function FilterLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="shrink-0 text-[10px] font-bold tracking-wider text-ink-500 uppercase">
+      {children}
+    </span>
+  );
+}
+
+/** The hairline between one group of filters and the next. */
+function FilterDivider() {
+  return <span aria-hidden className="h-5 w-px shrink-0 bg-line-strong" />;
+}
+
+/** Two dates with a dash between: from and to, both optional. */
+function DateRange({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: Range;
+  onChange: (value: Range) => void;
+}) {
+  return (
+    <span className="flex items-center gap-1">
+      <DateField
+        id={`${id}-from`}
+        value={value.from}
+        onChange={(from) => onChange({ ...value, from })}
+        placeholder="From"
+        className="w-28 gap-1.5 px-2 [&>span]:text-[12px]"
+      />
+      <span className="text-ink-300">–</span>
+      <DateField
+        id={`${id}-to`}
+        value={value.to}
+        onChange={(to) => onChange({ ...value, to })}
+        placeholder="To"
+        className="w-28 gap-1.5 px-2 [&>span]:text-[12px]"
+      />
+    </span>
+  );
+}
+
 /**
  * `mine` lists what I raised; `assigned` lists what my departments have been
  * asked to do. The API decides what is visible - this only renders it.
@@ -622,6 +687,16 @@ export function TicketsWorkspace({
     units: [],
     departments: [],
   });
+
+  // The second row of filters: both ends of the move, who is at each end, and
+  // the two dates a ticket is judged by. Hidden until asked for, because most
+  // days the first row is all anybody needs.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [fromWhere, setFromWhere] = useState(NO_SCOPE);
+  const [raisers, setRaisers] = useState<string[]>([]);
+  const [holders, setHolders] = useState<string[]>([]);
+  const [created, setCreated] = useState<Range>(NO_RANGE);
+  const [due, setDue] = useState<Range>(NO_RANGE);
 
   /**
    * The unit chosen on the profile menu. It scopes the list rather than the
@@ -756,6 +831,80 @@ export function TicketsWorkspace({
     return [...byId.values()];
   }, [inScope]);
 
+  /** The sending side, counted the same way: where the requests came from. */
+  const fromOptions = useMemo(() => {
+    const byId = new Map<string, ScopeOption>();
+    for (const ticket of inScope) {
+      for (const item of ticket.fromDepartments) {
+        const found = byId.get(item.id);
+        if (found) {
+          found.count += 1;
+          continue;
+        }
+        byId.set(item.id, {
+          id: item.id,
+          name: item.name ?? "Department",
+          unit: item.unit?.id ? { id: item.unit.id, name: item.unit.name ?? "Unit" } : null,
+          count: 1,
+        });
+      }
+    }
+    return [...byId.values()];
+  }, [inScope]);
+
+  /** Everyone who raised something here, and everyone holding something. */
+  const raiserOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const ticket of inScope) byId.set(ticket.raisedBy.id, ticket.raisedBy.name ?? "Someone");
+    return [...byId]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [inScope]);
+
+  const holderOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const ticket of inScope) {
+      for (const person of ticket.assignees) byId.set(person.id, person.name ?? "Someone");
+    }
+    return [
+      { value: UNASSIGNED, label: "Unassigned" },
+      ...[...byId]
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  }, [inScope]);
+
+  /** How many of the second row are in use, for the dot on its button. */
+  const moreCount =
+    (fromWhere.units.length + fromWhere.departments.length > 0 ? 1 : 0) +
+    (raisers.length > 0 ? 1 : 0) +
+    (holders.length > 0 ? 1 : 0) +
+    (created.from || created.to ? 1 : 0) +
+    (due.from || due.to ? 1 : 0);
+
+  const anyFilter =
+    moreCount > 0 ||
+    query.trim() !== "" ||
+    statuses.length > 0 ||
+    priorities.length > 0 ||
+    where.units.length + where.departments.length > 0 ||
+    mineOnly ||
+    view !== null;
+
+  const clearFilters = () => {
+    setQuery("");
+    setStatuses([]);
+    setPriorities([]);
+    setWhere(NO_SCOPE);
+    setFromWhere(NO_SCOPE);
+    setRaisers([]);
+    setHolders([]);
+    setCreated(NO_RANGE);
+    setDue(NO_RANGE);
+    setMineOnly(false);
+    setView(null);
+  };
+
   /** The unit in view, named, so the bar can say what is being left out. */
   const unitName = useMemo(
     () => (session?.departments ?? []).find((item) => item.unit?.id === unit)?.unit?.name ?? "",
@@ -784,6 +933,23 @@ export function TicketsWorkspace({
         const byDepartment = where.departments.includes(ticket.department.id);
         if (!byUnit && !byDepartment) return false;
       }
+      if (fromWhere.units.length > 0 || fromWhere.departments.length > 0) {
+        const sent = ticket.fromDepartments.some(
+          (item) =>
+            fromWhere.departments.includes(item.id) ||
+            fromWhere.units.includes(item.unit?.id ?? ""),
+        );
+        if (!sent) return false;
+      }
+      if (raisers.length > 0 && !raisers.includes(ticket.raisedBy.id)) return false;
+      if (holders.length > 0) {
+        const held =
+          (holders.includes(UNASSIGNED) && ticket.assignees.length === 0) ||
+          ticket.assignees.some((person) => holders.includes(person.id));
+        if (!held) return false;
+      }
+      if (!inRange(localDay(ticket.createdAt), created.from, created.to)) return false;
+      if (!inRange(ticket.deadline?.slice(0, 10) ?? null, due.from, due.to)) return false;
       if (mineOnly && !isMine(ticket)) return false;
       if (view && !VIEWS[view](ticket)) return false;
       return true;
@@ -810,7 +976,22 @@ export function TicketsWorkspace({
       // the chosen column still hold a settled order between refreshes.
       return order === 0 ? left.number.localeCompare(right.number) : order * factor;
     });
-  }, [inScope, deferredQuery, statuses, priorities, where, mineOnly, isMine, view, sort]);
+  }, [
+    inScope,
+    deferredQuery,
+    statuses,
+    priorities,
+    where,
+    fromWhere,
+    raisers,
+    holders,
+    created,
+    due,
+    mineOnly,
+    isMine,
+    view,
+    sort,
+  ]);
 
   /** The tile lit is whichever one the current filter is exactly the answer to. */
   const activeTile = view ?? (statuses.length === 1 ? statuses[0] : null);
@@ -908,6 +1089,11 @@ export function TicketsWorkspace({
     setStatuses([]);
     setPriorities([]);
     setWhere({ units: [], departments: [] });
+    setFromWhere(NO_SCOPE);
+    setRaisers([]);
+    setHolders([]);
+    setCreated(NO_RANGE);
+    setDue(NO_RANGE);
     setMineOnly(false);
     setView(null);
     setFlashed(target.id);
@@ -1015,6 +1201,7 @@ export function TicketsWorkspace({
               options={departmentOptions}
               value={where}
               onChange={setWhere}
+              placeholder="To: all departments"
             />
           </div>
 
@@ -1042,6 +1229,38 @@ export function TicketsWorkspace({
               placeholder="All Priorities"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => setMoreOpen((current) => !current)}
+            aria-expanded={moreOpen}
+            aria-controls="ticket-filters-more"
+            className={cn(
+              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[13px] font-semibold transition-colors",
+              moreOpen || moreCount > 0
+                ? "border-ink-800 bg-ink-800 text-white hover:bg-ink-900"
+                : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
+            )}
+          >
+            <SlidersHorizontal className="size-3.5" />
+            Filters
+            {moreCount > 0 && (
+              <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] leading-none font-bold">
+                {moreCount}
+              </span>
+            )}
+          </button>
+
+          {anyFilter && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-brand-200 px-2.5 text-[13px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+            >
+              <X className="size-3.5" />
+              Clear
+            </button>
+          )}
 
           {canReassignPicked && (
             <Button
@@ -1097,6 +1316,12 @@ export function TicketsWorkspace({
             </button>
           )}
 
+          {!loading && (
+            <span className="shrink-0 text-[12px] font-medium text-ink-400">
+              {rows.length} {rows.length === 1 ? "ticket" : "tickets"}
+            </span>
+          )}
+
           {live && <RefreshButton onRefresh={refresh} syncedAt={syncedAt} />}
 
           {scope === "mine" && (
@@ -1109,6 +1334,70 @@ export function TicketsWorkspace({
             </Link>
           )}
         </div>
+
+        {moreOpen && (
+          <div
+            id="ticket-filters-more"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-ink-50 px-2.5 py-2"
+          >
+            {/* Four questions, each fenced off from the next: both ends of the
+                move in the order the table reads them, then the two dates a
+                ticket is judged by. */}
+            <span className="flex items-center gap-1.5">
+              <FilterLabel>From</FilterLabel>
+              <div className="w-44">
+                <ScopeFilter
+                  id="filter-from"
+                  options={fromOptions}
+                  value={fromWhere}
+                  onChange={setFromWhere}
+                  placeholder="Any unit / department"
+                />
+              </div>
+              <div className="w-36">
+                <MultiSelect
+                  display="summary"
+                  id="filter-raised-by"
+                  options={raiserOptions}
+                  value={raisers}
+                  onChange={setRaisers}
+                  placeholder="Any user"
+                  emptyMessage="Nobody has raised one"
+                />
+              </div>
+            </span>
+
+            <FilterDivider />
+
+            <span className="flex items-center gap-1.5">
+              <FilterLabel>To</FilterLabel>
+              <div className="w-36">
+                <MultiSelect
+                  display="summary"
+                  id="filter-assignee"
+                  options={holderOptions}
+                  value={holders}
+                  onChange={setHolders}
+                  placeholder="Any assignee"
+                />
+              </div>
+            </span>
+
+            <FilterDivider />
+
+            <span className="flex items-center gap-1.5">
+              <FilterLabel>Created</FilterLabel>
+              <DateRange id="filter-created" value={created} onChange={setCreated} />
+            </span>
+
+            <FilterDivider />
+
+            <span className="flex items-center gap-1.5">
+              <FilterLabel>Deadline</FilterLabel>
+              <DateRange id="filter-due" value={due} onChange={setDue} />
+            </span>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           {/* Fluid rather than held open at a fixed width: on a desktop every

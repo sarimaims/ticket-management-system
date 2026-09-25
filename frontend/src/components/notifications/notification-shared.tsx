@@ -4,6 +4,8 @@ import Link from "next/link";
 import { HandHelping, MessageSquare, PencilLine, RefreshCw, TicketPlus } from "lucide-react";
 
 import type { NotificationRecord, NotificationType } from "@/lib/notifications";
+import { useAuth } from "@/components/auth/auth-provider";
+import { canSeeAllTickets } from "@/lib/auth";
 import { chime } from "@/lib/chime";
 import { cn } from "@/lib/utils";
 
@@ -61,7 +63,7 @@ export function shortTime(iso: string) {
  * have hidden it, scrolls it into view and flashes it - so the click ends on
  * the row it was about rather than at the top of a list.
  */
-export const destination = (item: NotificationRecord) => {
+export const destination = (item: NotificationRecord, overseer = true) => {
   // The raiser reads a ticket on My Requests, the department on its own queue,
   // and a message goes to both - so the copy itself says which side it was
   // written for. Rows from before that flag fall back to the old rule: "new"
@@ -70,7 +72,8 @@ export const destination = (item: NotificationRecord) => {
   // All Tickets rather than Assigned to Me for the department's side: the
   // latter now lists only what is on you by name, and a notification must land
   // on a page that actually holds the row it is about.
-  const page = forRaiser ? "/my-requests" : "/all-tickets";
+  // A plain user has no All Tickets, so their side of it is Assigned to Me.
+  const page = forRaiser ? "/my-requests" : overseer ? "/all-tickets" : "/assigned-to-me";
 
   // The id is exact; the number still finds the row if the id is missing.
   const key = item.ticket ?? item.ticketNumber;
@@ -156,6 +159,7 @@ export function NotificationCard({
   onRead?: (id: string) => void | Promise<void>;
   compact?: boolean;
 }) {
+  const { session } = useAuth();
   const meta = TYPE_META[item.type] ?? TYPE_META["ticket.updated"];
   const Icon = meta.icon;
 
@@ -168,7 +172,7 @@ export function NotificationCard({
 
   return (
     <Link
-      href={destination(item) as "/"}
+      href={destination(item, canSeeAllTickets(session)) as "/"}
       onClick={() => {
         if (!item.read) void onRead?.(item.id);
         onNavigate?.();

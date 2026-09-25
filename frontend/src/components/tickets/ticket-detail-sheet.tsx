@@ -688,7 +688,7 @@ function SheetBody({
     }
   };
 
-  /** Steps off the ticket; with nobody else on it, the head gets it back. */
+  /** Steps off the ticket; with nobody else on it, it goes back to unheld. */
   const release = async () => {
     setPending(true);
     try {
@@ -698,7 +698,12 @@ function SheetBody({
       // The ticket itself moved, so the pane behind this has to be told.
       const fresh = await updateTicket(ticket.id, {});
       onSaved(fresh);
-      toast.success(`#${ticket.number} released`, `Now with ${holders(now)}`);
+      toast.success(
+        `#${ticket.number} released`,
+        now.length > 0
+          ? `Now with ${holders(now)}`
+          : `Back on ${ticket.department.name ?? "the department"}'s list for its head to hand out`,
+      );
     } catch (caught) {
       toast.error("Could not release the ticket", errorMessage(caught));
     } finally {

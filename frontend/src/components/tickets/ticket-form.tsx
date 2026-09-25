@@ -31,8 +31,9 @@ import type { TicketPriority } from "@/lib/types";
 /**
  * The boxes that must be filled, in the order they appear on the page.
  *
- * Naming a person is not among them: leaving it empty hands the request to
- * the department's head, and being made to pick a stranger out of a list
+ * Naming a person is not among them: leaving it empty leaves the request
+ * unassigned in the department's All Tickets for its head to hand out, and
+ * being made to pick a stranger out of a list
  * before you can ask a question is the worse failure of the two.
  */
 const REQUIRED = [
@@ -733,7 +734,7 @@ export function TicketForm() {
             value={picked.map((person) => pickKey(person.id, person.departmentId))}
             onChange={choosePeople}
             searchable
-            placeholder="Leave it empty and the department head takes it"
+            placeholder="Leave it empty and it goes to All Tickets, unassigned"
             emptyMessage={
               targetDepts.length === 0
                 ? "Choose a department first"
@@ -763,7 +764,7 @@ export function TicketForm() {
                 <span key={department.id}>
                   {index > 0 && " · "}
                   <span className="font-semibold text-ink-600">{department.name}</span>
-                  {who ? <> — starting with {who}</> : <> — starting with its head</>}
+                  {who ? <> — starting with {who}</> : <> — unassigned, for its head to hand out</>}
                 </span>
               );
             })}
@@ -1031,7 +1032,7 @@ function ReviewModal({
 
         <ReviewRow label="Addressed to">
           {people.length === 0 ? (
-            <span className="font-normal text-ink-400">The department head</span>
+            <span className="font-normal text-ink-400">Nobody yet · the head assigns it</span>
           ) : (
             people.map((person) => person.name).join(", ")
           )}

@@ -12,6 +12,38 @@ async function departmentMemberIds(departmentId) {
   return members.map((member) => member._id);
 }
 
+/** Whoever runs a department - the people an unassigned ticket is waiting on. */
+async function departmentHeadIds(departmentId) {
+  const heads = await User.find({
+    status: { $ne: 'suspended' },
+    memberships: { $elemMatch: { department: departmentId, role: 'head' } },
+  }).select('_id');
+  return heads.map((head) => head._id);
+}
+
+/**
+ * Who hears about something that happened on a ticket.
+ *
+ * Not the whole department. Somebody working in one is told about the tickets
+ * on their own desk; the head, who runs the queue, is told about all of it. A
+ * colleague's ticket is on the department's own list either way, and a bell
+ * for every one of them is a row of bells nobody reads.
+ *
+ * Whoever raised it is added by the callers where it belongs - they are
+ * waiting on an answer rather than working the ticket.
+ */
+async function audienceFor(ticket) {
+  const departmentId = ticket.department?._id ?? ticket.department;
+  const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person);
+  const heads = await departmentHeadIds(departmentId);
+
+  // A department with no head yet and nothing assigned would hear nothing at
+  // all, so it falls back to everyone in it.
+  if (holders.length === 0 && heads.length === 0) return departmentMemberIds(departmentId);
+
+  return [...holders, ...heads];
+}
+
 /**
  * Writes one notification per recipient. Like the activity log, this must
  * never break the action that triggered it: a failure here is logged and
@@ -51,22 +83,19 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
 /**
  * A ticket just landed in a department: tell whoever it landed on.
  *
- * Which is whoever was named, or - when nobody was - that department's head,
- * because an unaddressed request is assigned to the head on the way in. The
- * rest of the department is not rung: the ticket is on their queue either
- * way, and a bell for every request a colleague was asked for is noise.
+ * Which is whoever was named, or - when nobody was - that department's head.
+ * An unnamed ticket is left unassigned in All Tickets, and handing it out is
+ * the head's call, so the head is the one rung. The rest of the department is
+ * not: the ticket is on their queue either way, and a bell for every request
+ * a colleague was asked for is noise.
  *
- * A ticket that landed on nobody at all, which means a department with no
- * head yet, still tells everyone. Better an unnecessary bell than a request
- * raised into silence.
+ * A department with no head yet still tells everyone. Better an unnecessary
+ * bell than a request raised into silence.
  */
 export async function notifyNewTicket({ ticket, actor }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
-    const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person);
-
     return await deliver({
-      recipients: holders.length > 0 ? holders : await departmentMemberIds(departmentId),
+      recipients: await audienceFor(ticket),
       exclude: actor._id,
       type: 'ticket.new',
       ticket,
@@ -87,9 +116,8 @@ export async function notifyNewTicket({ ticket, actor }) {
  */
 export async function notifyTicketEdited({ ticket, actor, summary }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
     return await deliver({
-      recipients: await departmentMemberIds(departmentId),
+      recipients: await audienceFor(ticket),
       exclude: actor._id,
       type: 'ticket.edited',
       ticket,
@@ -109,11 +137,10 @@ export async function notifyTicketEdited({ ticket, actor, summary }) {
  */
 export async function notifyTicketUpdated({ ticket, actor, summary }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
     return await deliver({
-      recipients: [...(await departmentMemberIds(departmentId)), raiser],
+      recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.updated',
       ticket,
@@ -136,11 +163,10 @@ export async function notifyTicketUpdated({ ticket, actor, summary }) {
  */
 export async function notifyNewMessage({ ticket, actor, preview }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
     return await deliver({
-      recipients: [...(await departmentMemberIds(departmentId)), raiser],
+      recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.message',
       ticket,

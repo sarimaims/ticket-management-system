@@ -407,40 +407,11 @@ export async function createTicket(req, res) {
     }
   }
 
-  /**
-   * A department nobody was named for goes to whoever runs it.
-   *
-   * Naming somebody stays optional - requiring a name would mean knowing who
-   * works there before you are allowed to ask - but "nobody named" should not
-   * become "nobody's job". The head holds it until they hand it on or pass it
-   * down, which is the decision they are there to make.
-   *
-   * A department with no head yet keeps the older behaviour and lands in its
-   * queue unheld: better an unaddressed ticket than a rejected one.
+  /*
+   * A department nobody was named for is left unassigned. It sits in that
+   * department's All Tickets for the head to hand out; Assigned to Me only
+   * ever holds what has been put on somebody by name.
    */
-  const unstaffed = targets.filter((target) => !assignedTo.has(String(target._id)));
-  if (unstaffed.length > 0) {
-    // Every head of every unnamed department in one read, then sorted out in
-    // memory - the same one-wait-per-set rule as the named people above.
-    const heads = await User.find({
-      status: { $ne: 'suspended' },
-      memberships: {
-        $elemMatch: {
-          department: { $in: unstaffed.map((target) => target._id) },
-          role: 'head',
-        },
-      },
-    }).select('memberships');
-
-    for (const target of unstaffed) {
-      const key = String(target._id);
-      const owners = heads
-        .filter((person) => person.roleInDepartment(key) === 'head')
-        .map((person) => person._id);
-
-      if (owners.length > 0) assignedTo.set(key, owners);
-    }
-  }
 
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
