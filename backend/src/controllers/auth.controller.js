@@ -1,4 +1,5 @@
 import ApiError from '../utils/ApiError.js';
+import { phoneNumber } from '../utils/phoneNumber.js';
 import { forgetUser } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { clearAuthCookie, setAuthCookie, signToken } from '../utils/token.js';
@@ -10,6 +11,8 @@ export function presentUser(user) {
     id: String(user._id),
     name: user.name,
     email: user.email,
+    /** Accounts made before the field existed have none until they are edited. */
+    phone: user.phone ?? '',
     role: user.role,
     status: user.status,
     departments: (user.memberships ?? []).map((membership) => {
@@ -89,6 +92,41 @@ export async function me(req, res) {
   });
 }
 
+/**
+ * Your own phone number: set it, or change it to another one.
+ *
+ * Not cleared, ever. The number is on every ticket this person raises so the
+ * work can be chased at five o'clock, and an account that can quietly empty
+ * the field is an account nobody can reach. Changing it to a different number
+ * is always allowed - it is theirs, and a new SIM should not need an admin.
+ *
+ * The name and the email stay with an admin: those are how everyone else
+ * recognises this person, and are not for the person to rewrite.
+ */
+export async function changePhone(req, res) {
+  const { phone } = req.body ?? {};
+
+  if (phone === null || (typeof phone === 'string' && phone.trim() === '')) {
+    throw ApiError.badRequest('A phone number cannot be removed, only changed.');
+  }
+
+  // Throws with the reason when it is not one: same check the directory uses,
+  // so a number saved here is a number saved anywhere.
+  const number = phoneNumber(phone);
+
+  const user = await User.findById(req.user._id);
+  if (!user) throw ApiError.unauthorized('This session is no longer valid.');
+
+  user.phone = number;
+  await user.save();
+
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(user._id)),
+    features: { attachments: storageReady() },
+  });
+}
+
 /** The shortest password this workspace accepts, as everywhere else. */
 const MIN_PASSWORD = 8;
 
@@ -120,7 +158,7 @@ export async function changePassword(req, res) {
 
   // The model hashes it on save; the plain value never reaches the database.
   user.password = newPassword;
-  await user.save();
+  await user.save({ validateModifiedOnly: true });
   forgetUser(user._id);
 
   // A fresh cookie, so the browser that made the change keeps its full seven

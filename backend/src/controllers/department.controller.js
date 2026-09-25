@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { phoneNumber } from '../utils/phoneNumber.js';
 import { workEmail } from '../utils/workEmail.js';
 import Department from '../models/Department.js';
 import Unit from '../models/Unit.js';
@@ -356,7 +357,7 @@ export async function addMember(req, res) {
   const department = await Department.findById(req.params.id);
   if (!department) throw ApiError.notFound('Department not found.');
 
-  const { name, email, password, role } = req.body ?? {};
+  const { name, email, phone, password, role } = req.body ?? {};
 
   if (!canManageMembers(req.user, department._id)) {
     throw ApiError.forbidden('Only a head of this department, or an admin, can add members.');
@@ -387,6 +388,9 @@ export async function addMember(req, res) {
 
     user = await User.create({
       name: name.trim(),
+      // Only a new account needs one here; attaching an existing one keeps
+      // the number already on it.
+      phone: phoneNumber(phone),
       // Only a new account is held to the domain; attaching one that already
       // exists is a lookup, not a sign-up.
       email: workEmail(normalisedEmail),

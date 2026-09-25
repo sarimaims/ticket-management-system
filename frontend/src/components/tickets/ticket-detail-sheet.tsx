@@ -5,6 +5,7 @@ import {
   CalendarCheck,
   CalendarClock,
   CheckCircle2,
+  CircleSlash,
   Download,
   History,
   MessagesSquare,
@@ -23,6 +24,7 @@ import { TicketHistory } from "@/components/tickets/ticket-history";
 import { StatusPicker } from "@/components/tickets/status-picker";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { useAuth } from "@/components/auth/auth-provider";
+import { UserLink } from "@/components/users/user-profile";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
@@ -38,6 +40,7 @@ import {
   type HandoverRecord,
 } from "@/lib/handovers";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
+import { isClosed } from "@/lib/types";
 import type { TicketPriority, TicketStatus } from "@/lib/types";
 
 const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High", "Critical"];
@@ -853,7 +856,11 @@ function SheetBody({
               committedDeadline: committed || null,
               ...(promiseMoved ? { committedReason: why.trim() } : {}),
             }
-          : {}),
+          : // The raiser's one status: withdrawing what they asked for. Every
+            // other one belongs to the department, and the API refuses them.
+            cancelReason
+            ? { status: "Cancelled" as const, cancelReason }
+            : {}),
         ...(direct ? { assignees } : {}),
       });
       onSaved(saved);
@@ -972,7 +979,13 @@ function SheetBody({
               label="From"
               units={unitNames(ticket.fromDepartments)}
               departments={ticket.fromDepartments.map((item) => item.name).join(", ")}
-              people={ticket.raisedBy.name}
+              people={
+                <UserLink
+                  id={ticket.raisedBy.id}
+                  name={ticket.raisedBy.name ?? "Someone"}
+                  className="hover:text-brand-600"
+                />
+              }
               extra={<OriginTag role={ticket.raisedByRole} />}
             />
             <Route
@@ -980,7 +993,22 @@ function SheetBody({
               units={unitNames([ticket.department])}
               departments={ticket.department.name ?? ""}
               people={
-                ticket.assignees.length > 0 ? holders(ticket.assignees) : <Blank>Nobody yet</Blank>
+                ticket.assignees.length > 0 ? (
+                  // Each name its own link: the card is per person, not per
+                  // list.
+                  ticket.assignees.map((person, index) => (
+                    <span key={person.id}>
+                      {index > 0 && ", "}
+                      <UserLink
+                        id={person.id}
+                        name={person.name ?? "Someone"}
+                        className="hover:text-brand-600"
+                      />
+                    </span>
+                  ))
+                ) : (
+                  <Blank>Nobody yet</Blank>
+                )
               }
             />
           </Group>
@@ -1337,10 +1365,33 @@ function SheetBody({
               </p>
             </>
           ) : (
-            <Button size="sm" variant="outline" className="w-full" onClick={() => setEditing(true)}>
-              <PencilLine className="size-3.5" />
-              Edit request
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1"
+                onClick={() => setEditing(true)}
+              >
+                <PencilLine className="size-3.5" />
+                Edit request
+              </Button>
+
+              {/* Calling off what you asked for is not working the ticket, so
+                  it is the raiser's to do - until the department has finished
+                  it, when there is nothing left to withdraw. */}
+              {!canWork && !isClosed(ticket.status) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 text-brand-600"
+                  onClick={() => setCancelling(true)}
+                  disabled={pending}
+                >
+                  <CircleSlash className="size-3.5" />
+                  Cancel request
+                </Button>
+              )}
+            </div>
           )}
         </div>
       )}

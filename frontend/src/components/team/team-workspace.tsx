@@ -8,7 +8,10 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { UserLink } from "@/components/users/user-profile";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
+import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
@@ -133,7 +136,8 @@ export function TeamWorkspace() {
     const term = query.trim().toLowerCase();
 
     return users.filter((user) => {
-      if (term && !`${user.name} ${user.email}`.toLowerCase().includes(term)) return false;
+      if (term && !`${user.name} ${user.email} ${user.phone ?? ""}`.toLowerCase().includes(term))
+        return false;
       if (statuses.length > 0 && !statuses.includes(user.status)) return false;
       if (roles.length > 0 && !roles.includes(roleHere(user))) return false;
 
@@ -319,7 +323,11 @@ export function TeamWorkspace() {
                           />
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-semibold text-ink-900">
-                              {user.name}
+                              <UserLink
+                                id={user.id}
+                                name={user.name}
+                                className="hover:text-brand-600"
+                              />
                               {user.id === session?.id && (
                                 <span className="ml-1.5 rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
                                   You
@@ -328,6 +336,9 @@ export function TeamWorkspace() {
                             </span>
                             <span className="block truncate text-[11px] text-ink-500">
                               {user.email}
+                            </span>
+                            <span className="block truncate text-[11px] text-ink-500">
+                              {formatPhone(user.phone) || "No phone number"}
                             </span>
                           </span>
                         </span>
@@ -414,6 +425,7 @@ function AddUserModal({
   const [departmentId, setDepartmentId] = useState(departments[0]?.id ?? "");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState(false);
   const [role, setRole] = useState<DepartmentRole>("team");
@@ -427,6 +439,7 @@ function AddUserModal({
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setError("Enter a valid email address.");
     }
+    if (!isPhone(phone)) return setError(PHONE_HELP);
     if (password.length < MIN_PASSWORD) {
       return setError(`Password must be at least ${MIN_PASSWORD} characters.`);
     }
@@ -436,6 +449,7 @@ function AddUserModal({
       const member = await addMember(departmentId, {
         name: name.trim(),
         email: email.trim(),
+        phone: toStoredPhone(phone),
         password,
         role,
       });
@@ -481,6 +495,16 @@ function AddUserModal({
             />
           </Field>
         </div>
+
+        <Field label="Phone number" required htmlFor="team-phone">
+          <PhoneInput
+            id="team-phone"
+            className="h-9"
+            placeholder="+971 50 123 4567"
+            value={phone}
+            onChange={setPhone}
+          />
+        </Field>
 
         <div className="grid gap-3.5 sm:grid-cols-2">
           {/* Only the departments this person runs: the API refuses any other,

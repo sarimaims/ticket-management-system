@@ -24,6 +24,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { UserLink } from "@/components/users/user-profile";
+import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
@@ -195,7 +198,12 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
     return users.filter((user) => {
-      if (term && !`${user.name} ${user.email} ${shortId(user.id)}`.toLowerCase().includes(term))
+      if (
+        term &&
+        !`${user.name} ${user.email} ${user.phone ?? ""} ${shortId(user.id)}`
+          .toLowerCase()
+          .includes(term)
+      )
         return false;
       // An empty filter asks nothing of the row, so it lets everything past.
       // A ticked unit means everything under it, so either half of the answer
@@ -246,7 +254,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <Input
               className="h-8 text-[13px]"
               icon={<Search className="text-ink-400" />}
-              placeholder="Search by name, email or user ID..."
+              placeholder="Search by name, email, phone or user ID..."
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               aria-label="Search people"
@@ -334,8 +342,17 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                             className="size-8 text-[11px]"
                           />
                         <span className="min-w-0">
-                          <span className="block font-semibold text-ink-900">{user.name}</span>
+                          <UserLink
+                            id={user.id}
+                            name={user.name}
+                            className="block font-semibold text-ink-900 hover:text-brand-600"
+                          />
                           <span className="block truncate text-xs text-ink-400">{user.email}</span>
+                          {/* The way to reach them when the ticket cannot
+                              wait for a reply in the thread. */}
+                          <span className="block truncate text-xs text-ink-400">
+                            {formatPhone(user.phone) || "No phone number"}
+                          </span>
                         </span>
                       </span>
                     </TableCell>
@@ -512,6 +529,7 @@ function CreatePersonModal({
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [memberships, setMemberships] = useState<MembershipInput[]>([]);
@@ -527,6 +545,7 @@ function CreatePersonModal({
   const close = () => {
     setName("");
     setEmail("");
+    setPhone("");
     setPassword("");
     setShowPassword(false);
     setMemberships([]);
@@ -542,6 +561,7 @@ function CreatePersonModal({
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setError("Enter a valid email address.");
     }
+    if (!isPhone(phone)) return setError(PHONE_HELP);
     if (password.length < 8) return setError("Password must be at least 8 characters.");
     // A member with no department cannot raise from anywhere or be asked for
     // anything, so the account would be created unusable.
@@ -555,6 +575,7 @@ function CreatePersonModal({
       const created = await createUser({
         name: name.trim(),
         email: email.trim(),
+        phone: toStoredPhone(phone),
         password,
         role,
         // An admin holds no departments, so the picker's value is not sent.
@@ -620,7 +641,19 @@ function CreatePersonModal({
           </Field>
         </div>
 
-        <div className="grid gap-3.5">
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field label="Phone number" required htmlFor="person-phone">
+            <PhoneInput
+              id="person-phone"
+              placeholder="+971 50 123 4567"
+              value={phone}
+              onChange={setPhone}
+              name="person-phone"
+              autoComplete="off"
+              data-1p-ignore
+            />
+          </Field>
+
           <Field label="Temporary password" required htmlFor="person-password">
             <Input
               id="person-password"
@@ -909,6 +942,7 @@ function EditUserForm({
 }) {
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
+  const [phone, setPhone] = useState(user.phone ?? "");
   const [status, setStatus] = useState(user.status);
   const [role, setRole] = useState<"admin" | "user">(user.role === "admin" ? "admin" : "user");
   const [memberships, setMemberships] = useState<MembershipInput[]>(
@@ -937,6 +971,10 @@ function EditUserForm({
       setError("Enter a valid email address.");
       return;
     }
+    if (!isPhone(phone)) {
+      setError(PHONE_HELP);
+      return;
+    }
     if (password && password.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
@@ -955,6 +993,7 @@ function EditUserForm({
         await updateUser(user.id, {
           name: name.trim(),
           email: email.trim(),
+          phone: toStoredPhone(phone),
           ...(isManager ? {} : { memberships }),
           // Left blank means "keep the current password".
           ...(password ? { password } : {}),
@@ -989,6 +1028,16 @@ function EditUserForm({
             className="h-8"
             value={email}
             onChange={setEmail}
+          />
+        </Field>
+
+        <Field label="Phone number" required htmlFor="edit-phone">
+          <PhoneInput
+            id="edit-phone"
+            className="h-8"
+            placeholder="+971 50 123 4567"
+            value={phone}
+            onChange={setPhone}
           />
         </Field>
 

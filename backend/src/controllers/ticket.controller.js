@@ -1238,10 +1238,28 @@ export async function updateTicket(req, res) {
     project,
   } = req.body ?? {};
 
-  // Status is how a department works a ticket: theirs alone. A raiser asks for
-  // things and is told when they are done; they do not declare it themselves.
+  /**
+   * Status is how a department works a ticket: theirs alone. A raiser asks for
+   * things and is told when they are done; they do not declare it themselves.
+   *
+   * With one exception, which is not working the ticket at all: withdrawing
+   * the request. What was asked for is the raiser's, so they may call it off -
+   * with a reason, like anyone else - right up until the department has
+   * finished it. After that there is nothing left to withdraw.
+   */
   if (!worksIt && status !== undefined) {
-    throw ApiError.forbidden('Only the receiving department can change the status.');
+    const withdrawing = raisedByMe && status === 'Cancelled';
+
+    if (!withdrawing) {
+      throw ApiError.forbidden('Only the receiving department can change the status.');
+    }
+    if (CLOSED_STATUSES.includes(ticket.status)) {
+      throw ApiError.badRequest(
+        ticket.status === 'Cancelled'
+          ? 'This request has already been cancelled.'
+          : 'This request is already finished, so there is nothing to withdraw.',
+      );
+    }
   }
 
   // Who holds it is theirs and the raiser's, for the reason in assignsDirectly:

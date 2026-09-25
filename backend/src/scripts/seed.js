@@ -21,6 +21,9 @@ import User, { MANAGER_ROLES } from '../models/User.js';
 const SUPER_ADMIN = {
   name: process.env.SEED_ADMIN_NAME || 'Super Admin',
   email: (process.env.SEED_ADMIN_EMAIL || 'admin@flowdesk.com').toLowerCase(),
+  // Every account carries one; the owner's is set here so a fresh workspace
+  // is not born with an account its own rules would refuse.
+  phone: process.env.SEED_ADMIN_PHONE || '+971500000000',
   password: process.env.SEED_ADMIN_PASSWORD || 'admin1234',
 };
 
@@ -50,6 +53,12 @@ async function run() {
     if (admin.status !== 'active') {
       admin.status = 'active';
       fixes.push('status');
+    }
+    // An owner from before the field existed cannot be edited until it has
+    // one, so the seed puts the default back.
+    if (!admin.phone) {
+      admin.phone = SUPER_ADMIN.phone;
+      fixes.push('phone');
     }
     if ((admin.memberships ?? []).length > 0) {
       admin.memberships = [];

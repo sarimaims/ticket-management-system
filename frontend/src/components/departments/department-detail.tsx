@@ -20,7 +20,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { UserLink } from "@/components/users/user-profile";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
+import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
@@ -282,8 +285,15 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                         className="size-8 text-[11px]"
                       />
                       <span className="min-w-0">
-                        <span className="block font-semibold text-ink-900">{member.name}</span>
+                        <UserLink
+                          id={member.id}
+                          name={member.name}
+                          className="block font-semibold text-ink-900 hover:text-brand-600"
+                        />
                         <span className="block text-xs text-ink-400">{member.email}</span>
+                        <span className="block text-xs text-ink-400">
+                          {formatPhone(member.phone) || "No phone number"}
+                        </span>
                       </span>
                     </span>
                   </TableCell>
@@ -388,6 +398,7 @@ function AddMemberModal({
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<DepartmentRole>("team");
   const [showPassword, setShowPassword] = useState(false);
@@ -412,6 +423,7 @@ function AddMemberModal({
   const close = () => {
     setName("");
     setEmail("");
+    setPhone("");
     setPassword("");
     setRole("team");
     setShowPassword(false);
@@ -428,6 +440,12 @@ function AddMemberModal({
       setError("Email is required.");
       return;
     }
+    // Required for a new account, which the API decides; an email that
+    // already has one keeps the number already on it.
+    if (phone && !isPhone(phone)) {
+      setError(PHONE_HELP);
+      return;
+    }
     if (password && password.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
@@ -438,6 +456,7 @@ function AddMemberModal({
       const member = await addMember(departmentId, {
         name: name.trim() || undefined,
         email: email.trim(),
+        phone: phone ? toStoredPhone(phone) : undefined,
         password: password || undefined,
         role,
       });
@@ -509,6 +528,20 @@ function AddMemberModal({
             />
           </Field>
 
+          <Field label="Phone number" hint="(new accounts only)" htmlFor="member-phone">
+            <PhoneInput
+              id="member-phone"
+              className="h-8"
+              placeholder="+971 50 123 4567"
+              value={phone}
+              onChange={setPhone}
+              name="member-phone"
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+            />
+          </Field>
+
           <Field label="Role" required htmlFor="member-role">
             <Select
               id="member-role"
@@ -520,36 +553,36 @@ function AddMemberModal({
               <option value="team">User</option>
             </Select>
           </Field>
+
+          <Field label="Temporary password" htmlFor="member-password">
+            <Input
+              id="member-password"
+              type={showPassword ? "text" : "password"}
+              className="h-8"
+              icon={<Lock className="text-ink-500" />}
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              name="member-password"
+              autoComplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              trailing={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
+                </button>
+              }
+            />
+          </Field>
         </div>
 
-        <Field label="Temporary password" htmlFor="member-password">
-          <Input
-            id="member-password"
-            type={showPassword ? "text" : "password"}
-            className="h-8"
-            icon={<Lock className="text-ink-500" />}
-            placeholder="At least 8 characters"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            name="member-password"
-            autoComplete="new-password"
-            data-1p-ignore
-            data-lpignore="true"
-            trailing={
-              <button
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
-              </button>
-            }
-          />
-        </Field>
-
         <p className="text-xs text-ink-400">
-          Name and password are only used when the email is new. An email that already has an
+          Name, phone and password are only used when the email is new. An email that already has an
           account is simply added to this department.
         </p>
 

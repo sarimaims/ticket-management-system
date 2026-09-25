@@ -15,6 +15,7 @@ import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Building,
+  CircleSlash,
   Trash2,
   Inbox,
   MessagesSquare,
@@ -68,6 +69,7 @@ import {
 import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
+import { UserLink } from "@/components/users/user-profile";
 import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
 import { activeUnit, activeUnitOnServer, subscribeActiveUnit } from "@/lib/active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
@@ -314,6 +316,7 @@ const TicketRow = memo(function TicketRow({
   showPick,
   canPick,
   canDelete,
+  canCancel,
   canPrioritise,
   picked,
   onPick,
@@ -340,6 +343,8 @@ const TicketRow = memo(function TicketRow({
   /** Whether this reader can do anything with this row in a batch. */
   canPick: boolean;
   canDelete: boolean;
+  /** The raiser calling off their own request, on a list that cannot work it. */
+  canCancel: boolean;
   picked: boolean;
   onPick: (id: string, picked: boolean) => void;
   onOpen: (ticket: TicketRecord, tab?: SheetTab) => void;
@@ -450,7 +455,11 @@ const TicketRow = memo(function TicketRow({
 
       <TableCell className={cn(CELL, FROM_INNER, FROM, "whitespace-normal")}>
         <span className="flex flex-wrap items-center gap-1">
-          <span className="font-medium text-ink-700">{ticket.raisedBy.name}</span>
+          <UserLink
+            id={ticket.raisedBy.id}
+            name={ticket.raisedBy.name ?? "Someone"}
+            className="font-medium text-ink-700 hover:text-brand-600"
+          />
           {byMe && (
             <span className="rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
               You
@@ -479,7 +488,16 @@ const TicketRow = memo(function TicketRow({
           <span className="text-ink-400">Nobody yet</span>
         ) : (
           <span className="font-medium text-ink-700">
-            {ticket.assignees.map((person) => person.name).join(", ")}
+            {ticket.assignees.map((person, index) => (
+              <span key={person.id}>
+                {index > 0 && ", "}
+                <UserLink
+                  id={person.id}
+                  name={person.name ?? "Someone"}
+                  className="hover:text-brand-600"
+                />
+              </span>
+            ))}
           </span>
         )}
       </TableCell>
@@ -570,6 +588,21 @@ const TicketRow = memo(function TicketRow({
           >
             <SlidersHorizontal className="size-4" />
           </button>
+
+          {canCancel && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onStatus(ticket, "Cancelled");
+              }}
+              className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+              aria-label={`Cancel ${ticket.number}`}
+              title="Cancel this request"
+            >
+              <CircleSlash className="size-4" />
+            </button>
+          )}
 
           {canDelete && (
             <button
@@ -1612,6 +1645,11 @@ export function TicketsWorkspace({
                     showPick={showPicks}
                     canPick={canWorkTicket(ticket) || canDeleteTicket(ticket)}
                     canDelete={canDeleteTicket(ticket)}
+                    canCancel={
+                      ticket.raisedBy.id === meId &&
+                      !isClosed(ticket.status) &&
+                      !canWorkTicket(ticket)
+                    }
                     picked={picked.has(ticket.id)}
                     onPick={pickOne}
                     onOpen={openTicket}

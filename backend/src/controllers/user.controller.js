@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { phoneNumber } from '../utils/phoneNumber.js';
 import { workEmail } from '../utils/workEmail.js';
 import { forgetUser } from '../middleware/auth.js';
 import Department from '../models/Department.js';
@@ -109,6 +110,24 @@ export async function listMyTeam(req, res) {
 }
 
 /**
+ * One person's card, for anyone signed in.
+ *
+ * Deliberately not behind the admin gate the rest of this file sits behind:
+ * the point of it is that whoever is holding a ticket can look up the person
+ * at the other end and phone them. It answers with exactly what the directory
+ * already shows about somebody - name, email, phone, where they work - and
+ * nothing an admin alone is trusted with.
+ */
+export async function getUserProfile(req, res) {
+  assertObjectId(req.params.id, 'user id');
+
+  const user = await User.findById(req.params.id).populate(WITH_DEPARTMENTS);
+  if (!user) throw ApiError.notFound('User not found.');
+
+  res.json({ success: true, user: presentUser(user) });
+}
+
+/**
  * Turns whatever was sent into a clean membership list: one entry per
  * department, a valid role on each, and every department checked to exist.
  *
@@ -162,10 +181,11 @@ async function cleanMemberships(memberships) {
  * filed afterwards.
  */
 export async function createUser(req, res) {
-  const { name, email, password, role = 'admin', memberships } = req.body ?? {};
+  const { name, email, phone, password, role = 'admin', memberships } = req.body ?? {};
 
   if (!name?.trim()) throw ApiError.badRequest('Name is required.');
   if (!email?.trim()) throw ApiError.badRequest('Email is required.');
+  const number = phoneNumber(phone);
   if (!password || password.length < 8) {
     throw ApiError.badRequest('Password must be at least 8 characters.');
   }
@@ -185,6 +205,7 @@ export async function createUser(req, res) {
   const user = await User.create({
     name: name.trim(),
     email: normalisedEmail,
+    phone: number,
     password,
     role,
     status: 'active',
@@ -213,7 +234,7 @@ export async function updateUser(req, res) {
   if (!user) throw ApiError.notFound('User not found.');
   assertVisible(user, req.user);
 
-  const { name, email, password, status, role, memberships } = req.body ?? {};
+  const { name, email, phone, password, status, role, memberships } = req.body ?? {};
   const isSelf = String(user._id) === String(req.user._id);
 
   if (typeof name === 'string') {
@@ -227,6 +248,15 @@ export async function updateUser(req, res) {
       throw ApiError.conflict('Another account already uses this email.');
     }
     user.email = normalised;
+  }
+
+  /*
+   * Every account carries a number. One sent here is checked the same way it
+   * is on the way in; an account from before the field existed is asked for
+   * one now, rather than being saved back without it.
+   */
+  if (phone !== undefined || !user.phone) {
+    user.phone = phoneNumber(phone);
   }
 
   // Set only when a new one is sent: an empty field means "leave it alone".
