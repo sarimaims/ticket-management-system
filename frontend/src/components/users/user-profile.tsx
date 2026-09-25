@@ -33,7 +33,11 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
   return (
     <ProfileContext.Provider value={open}>
       {children}
-      {shown && <ProfileCard id={shown.id} name={shown.name} onClose={close} />}
+      {shown && (
+        // Keyed by who it is: opening a second person starts a fresh card
+        // rather than showing the first one's details under a new name.
+        <ProfileCard key={shown.id} id={shown.id} name={shown.name} onClose={close} />
+      )}
     </ProfileContext.Provider>
   );
 }
@@ -174,8 +178,6 @@ function ProfileCard({
 
   useEffect(() => {
     const controller = new AbortController();
-    setUser(null);
-    setError("");
 
     getUserProfile(id, controller.signal)
       .then(setUser)

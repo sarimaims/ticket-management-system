@@ -114,8 +114,11 @@ export type TicketScope = "mine" | "assigned" | "all";
  * Where one attachment is read from. The API answers with a redirect to a
  * freshly signed link, so this can be the href of an ordinary anchor.
  */
-export function attachmentHref(ticketId: string, index: number) {
-  return `${BASE}/tickets/${ticketId}/attachments/${index}`;
+export function attachmentHref(ticketId: string, index: number, save?: boolean) {
+  // `save` asks the API for a link that arrives as a download rather than
+  // opening in a tab. Left off for thumbnails and the lightbox, which have to
+  // stay viewable.
+  return `${BASE}/tickets/${ticketId}/attachments/${index}${save ? "?save=1" : ""}`;
 }
 
 /**

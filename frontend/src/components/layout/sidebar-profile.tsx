@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Building, Check, ChevronUp, Layers, LogOut, Settings } from "lucide-react";
 
@@ -8,12 +8,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { RoleTag } from "@/components/ui/badge";
 import { useAuth } from "@/components/auth/auth-provider";
 import { avatarTone, initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
-import {
-  activeUnit,
-  activeUnitOnServer,
-  setActiveUnit,
-  subscribeActiveUnit,
-} from "@/lib/active-unit";
+import { setActiveUnit } from "@/lib/active-unit";
+import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,11 +21,7 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
   const { session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const chosenUnit = useSyncExternalStore(
-    subscribeActiveUnit,
-    activeUnit,
-    activeUnitOnServer,
-  );
+  const chosenUnit = useActiveUnit();
 
   useEffect(() => {
     if (!open) return;

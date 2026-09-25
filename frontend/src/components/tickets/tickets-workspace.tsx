@@ -71,7 +71,7 @@ import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
 import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
-import { activeUnit, activeUnitOnServer, subscribeActiveUnit } from "@/lib/active-unit";
+import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import { isClosed, type Stat, type TicketPriority, type TicketStatus } from "@/lib/types";
 
@@ -483,24 +483,29 @@ const TicketRow = memo(function TicketRow({
         </span>
       </TableCell>
 
-      <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
-        {ticket.assignees.length === 0 ? (
-          <span className="text-ink-400">Nobody yet</span>
-        ) : (
-          <span className="font-medium text-ink-700">
-            {ticket.assignees.map((person, index) => (
-              <span key={person.id}>
-                {index > 0 && ", "}
-                <UserLink
-                  id={person.id}
-                  name={person.name ?? "Someone"}
-                  className="hover:text-brand-600"
-                />
-              </span>
-            ))}
-          </span>
-        )}
-      </TableCell>
+      {/* Who is doing it is the receiving department's business. On your own
+          requests the question is whether it is done, not whose desk it is
+          on - so the column is not there to read or to sort by. */}
+      {scope !== "mine" && (
+        <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
+          {ticket.assignees.length === 0 ? (
+            <span className="text-ink-400">Nobody yet</span>
+          ) : (
+            <span className="font-medium text-ink-700">
+              {ticket.assignees.map((person, index) => (
+                <span key={person.id}>
+                  {index > 0 && ", "}
+                  <UserLink
+                    id={person.id}
+                    name={person.name ?? "Someone"}
+                    className="hover:text-brand-600"
+                  />
+                </span>
+              ))}
+            </span>
+          )}
+        </TableCell>
+      )}
 
       <TableCell className={cn(CELL, TO_EDGE)}>
         {canPrioritise ? (
@@ -769,7 +774,7 @@ export function TicketsWorkspace({
    * request: the server already decided what this person may read, and this
    * only narrows what is shown of it.
    */
-  const unit = useSyncExternalStore(subscribeActiveUnit, activeUnit, activeUnitOnServer);
+  const unit = useActiveUnit();
   const [viewing, setViewing] = useState<TicketRecord | null>(null);
   // Which pane the sheet opens on. Held here rather than inside the sheet, so
   // the chat icon on a row can go straight to the conversation.
@@ -1128,7 +1133,8 @@ export function TicketsWorkspace({
 
   // Ticket, subject, three from, three to, priority, status, created,
   // deadline, actions - the same on every list.
-  const columns = 13 + (showPicks ? 1 : 0);
+  // One fewer on your own requests, where the assignee column is not shown.
+  const columns = (scope === "mine" ? 12 : 13) + (showPicks ? 1 : 0);
 
   /**
    * Arriving from a notification: find the ticket it named, clear whatever
@@ -1482,16 +1488,20 @@ export function TicketsWorkspace({
                   placeholder="Any unit / department"
                 />
               </div>
-              <div className="w-36">
-                <MultiSelect
-                  display="summary"
-                  id="filter-assignee"
-                  options={holderOptions}
-                  value={holders}
-                  onChange={setHolders}
-                  placeholder="Any assignee"
-                />
-              </div>
+              {/* Filtering by who holds it belongs where the holders are shown;
+                  on your own requests that column is not there to narrow. */}
+              {scope !== "mine" && (
+                <div className="w-36">
+                  <MultiSelect
+                    display="summary"
+                    id="filter-assignee"
+                    options={holderOptions}
+                    value={holders}
+                    onChange={setHolders}
+                    placeholder="Any assignee"
+                  />
+                </div>
+              )}
             </span>
 
             <FilterDivider />
@@ -1556,7 +1566,7 @@ export function TicketsWorkspace({
                   Raised By / From
                 </TableHead>
                 <TableHead
-                  colSpan={3}
+                  colSpan={scope === "mine" ? 2 : 3}
                   className={cn(TO_EDGE, TO_HEAD, "px-2 py-1 text-center text-route-to-fg")}
                 >
                   To
@@ -1598,9 +1608,11 @@ export function TicketsWorkspace({
                 <TableHead {...sortable("toDepartment")} className={cn(TO_INNER, SUB, TO_HEAD)}>
                   Department
                 </TableHead>
-                <TableHead {...sortable("assignees")} className={cn(TO_INNER, SUB, TO_HEAD)}>
-                  User
-                </TableHead>
+                {scope !== "mine" && (
+                  <TableHead {...sortable("assignees")} className={cn(TO_INNER, SUB, TO_HEAD)}>
+                    User
+                  </TableHead>
+                )}
               </tr>
             </thead>
             <tbody>

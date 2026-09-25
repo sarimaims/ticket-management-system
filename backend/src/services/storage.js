@@ -240,14 +240,28 @@ export async function createUploadUrl({ key, contentType, size }) {
  * for a photo attached to an internal ticket. Set S3_PUBLIC_BASE_URL when the
  * bucket is behind a CDN and genuinely public.
  */
-export async function createDownloadUrl(key) {
+export async function createDownloadUrl(key, { saveAs } = {}) {
   if (env.s3.publicBaseUrl) {
     return `${env.s3.publicBaseUrl.replace(/\/+$/, '')}/${key}`;
   }
 
-  return getSignedUrl(s3(), new GetObjectCommand({ Bucket: env.s3.bucket, Key: key }), {
-    expiresIn: DOWNLOAD_URL_TTL,
-  });
+  // `saveAs` makes S3 answer with Content-Disposition: attachment, which is
+  // what turns a link into a save rather than a photo opening in a tab. The
+  // `download` attribute on an anchor cannot do it: the file comes from
+  // another origin.
+  const disposition = saveAs
+    ? `attachment; filename="${String(saveAs).replace(/[^\w.\-() ]/g, '_')}"`
+    : undefined;
+
+  return getSignedUrl(
+    s3(),
+    new GetObjectCommand({
+      Bucket: env.s3.bucket,
+      Key: key,
+      ...(disposition ? { ResponseContentDisposition: disposition } : {}),
+    }),
+    { expiresIn: DOWNLOAD_URL_TTL },
+  );
 }
 
 /**

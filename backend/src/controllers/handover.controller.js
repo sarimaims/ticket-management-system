@@ -12,21 +12,21 @@ import {
   notifyHandoverAsked,
   notifyTicketUpdated,
 } from '../services/notify.js';
-import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
+import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 
 /**
  * Who may move a ticket without being asked.
  *
  * A head runs the department and a manager oversees all of them, so both hand
- * work out directly. So does the person who raised it: they could name who
- * should pick it up while raising it, and that right does not expire at
- * submit - it is their request that is sitting there unanswered.
+ * work out directly. Nobody else does - least of all the person who raised it:
+ * asking for something is not the same as deciding whose desk it lands on, and
+ * a requester reaching into another department's rota is how work gets put on
+ * people who never agreed to it.
  *
  * Everyone else asks, and the person asked decides.
  */
 export function assignsDirectly(user, ticket) {
   if (MANAGER_ROLES.includes(user.role)) return true;
-  if (isRaiser(user, ticket)) return true;
   return user.roleInDepartment(ticket.department?._id ?? ticket.department) === 'head';
 }
 

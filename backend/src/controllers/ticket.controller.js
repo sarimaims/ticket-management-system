@@ -322,7 +322,11 @@ export async function downloadAttachment(req, res) {
     // from another origin - from showing this as an <img>. The redirect only
     // hands out a link this person could already open, so it may be embedded.
     res.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.redirect(await createDownloadUrl(file.key));
+
+    // ?save=1 is the download button; without it the same URL is what the
+    // thumbnails and the lightbox read, and those must stay viewable.
+    const saveAs = req.query.save ? file.filename || 'attachment' : undefined;
+    res.redirect(await createDownloadUrl(file.key, { saveAs }));
   } catch (error) {
     if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
     throw error;
@@ -1262,10 +1266,9 @@ export async function updateTicket(req, res) {
     }
   }
 
-  // Who holds it is theirs and the raiser's, for the reason in assignsDirectly:
-  // naming somebody is part of asking. Which of them may do it without the
-  // other's agreement is decided there, further down.
-  if (!worksIt && !raisedByMe && assignees !== undefined) {
+  // Who holds it belongs to the department doing the work. Raising a request
+  // says what is needed and by when; it does not say who has to do it.
+  if (!worksIt && assignees !== undefined) {
     throw ApiError.forbidden('Only the receiving department can hand this ticket on.');
   }
 

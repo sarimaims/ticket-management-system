@@ -3,11 +3,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  Building2,
   ChevronDown,
   CornerUpLeft,
   Download,
-  Mail,
   Mic,
   MessagesSquare,
   Paperclip,
@@ -34,6 +32,7 @@ import {
   type MessageRecord,
 } from "@/lib/messages";
 import { ChatMessage } from "@/components/tickets/chat-message";
+import { useUserProfile } from "@/components/users/user-profile";
 import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
 import {
   DraftPreview,
@@ -253,66 +252,6 @@ function People({
 }
 
 /** One person in the thread, opened from the list. */
-function PersonCard({
-  person,
-  meId,
-  onClose,
-}: {
-  person: Participant | null;
-  meId?: string;
-  onClose: () => void;
-}) {
-  return (
-    <Modal open={person !== null} onClose={onClose} title="Contact details" className="max-w-sm">
-      {person && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <Avatar
-              initials={initials(person.name)}
-              tone={person.standing === "requester" ? "head" : "team"}
-              className="size-11 text-sm"
-            />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-ink-900">
-                {person.name}
-                {person.id === meId && <span className="ml-1 font-normal text-ink-400">(you)</span>}
-              </p>
-              <p className="text-[12px] text-ink-500">{STANDING[person.standing].detail}</p>
-            </div>
-          </div>
-
-          {(person.where || person.email) && (
-            <ul className="space-y-1.5 text-[13px] text-ink-600">
-              {person.where && (
-                <li className="flex items-center gap-2">
-                  <Building2 className="size-4 shrink-0 text-ink-400" />
-                  <span className="truncate">{person.where}</span>
-                </li>
-              )}
-              {person.email && (
-                <li className="flex items-center gap-2">
-                  <Mail className="size-4 shrink-0 text-ink-400" />
-                  <span className="truncate">{person.email}</span>
-                </li>
-              )}
-            </ul>
-          )}
-
-          {person.email && person.id !== meId && (
-            <a
-              href={`mailto:${person.email}`}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-line py-2 text-[13px] font-semibold text-ink-700 transition-colors hover:bg-ink-50"
-            >
-              <Mail className="size-4" />
-              Email
-            </a>
-          )}
-        </div>
-      )}
-    </Modal>
-  );
-}
-
 /**
  * Something that happened, sitting in the thread among the things that were
  * said: raised, retitled, handed on.
@@ -384,55 +323,91 @@ function SystemLine({ message }: { message: MessageRecord }) {
 /** How many photo thumbnails the request card shows before "+N". */
 const THUMBS = 4;
 
+/** Long enough that it is worth folding away rather than filling the pane. */
+const LONG_DESCRIPTION = 180;
+
 function RequestCard({ ticket }: { ticket: TicketRecord }) {
   /** Photos that would not load; they fall back to a file chip. */
   const [broken, setBroken] = useState<number[]>([]);
   /** Which photo is open, by its place among the photos. */
   const [viewing, setViewing] = useState<number | null>(null);
+  /** A long request is folded to two lines until somebody wants the rest. */
+  const [open, setOpen] = useState(false);
+
   const isImage = (file: TicketRecord["attachments"][number]) =>
     file.mimeType.startsWith("image/") && !broken.includes(file.index);
-  const images = ticket.attachments.filter(isImage);
-  const others = ticket.attachments.filter((file) => !isImage(file));
+
+  const files = ticket.attachments;
+  const images = files.filter(isImage);
+  const others = files.filter((file) => !isImage(file));
+  const many = files.length > 1;
+  const long = (ticket.description ?? "").length > LONG_DESCRIPTION;
 
   return (
-    <div className="rounded-xl border border-line bg-ink-100/70 px-3 py-2.5">
-      <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
-        Request · #{ticket.number}
-      </p>
-      <p className="mt-1 text-[13px] leading-snug font-bold text-ink-900">{ticket.subject}</p>
-      {ticket.description && (
-        <p className="mt-1 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-600">
-          {ticket.description}
+    <div className="rounded-xl border border-line bg-ink-100/70 px-2.5 py-2">
+      {/* One line for what this is and what can be taken from it: the count
+          used to sit on a line of its own, above a button saying the same
+          thing twice. */}
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
+          Request · #{ticket.number}
         </p>
-      )}
 
-      {/* What came with the request, and a way to take all of it in one go:
-          five photos is otherwise five trips through the lightbox. */}
-      {ticket.attachments.length > 0 && (
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">
-            {ticket.attachments.length} {ticket.attachments.length === 1 ? "file" : "files"}
+        {files.length > 0 && (
+          <a
+            href={
+              many
+                ? attachmentsArchiveHref(ticket.id)
+                : attachmentHref(ticket.id, files[0].index, true)
+            }
+            target="_blank"
+            rel="noreferrer"
+            title={
+              many
+                ? `Download all ${files.length} files as one zip`
+                : `Download ${files[0].filename}`
+            }
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line-strong bg-surface py-[3px] pr-2 pl-1.5 text-[10px] font-bold text-ink-700 shadow-xs transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-600"
+          >
+            <Download className="size-3" />
+            {many ? `All ${files.length}` : "Download"}
+            {many && (
+              <span className="rounded-sm bg-ink-100 px-1 text-[9px] font-bold tracking-wide text-ink-500 uppercase">
+                zip
+              </span>
+            )}
+          </a>
+        )}
+      </div>
+
+      <p className="mt-0.5 text-[12.5px] leading-snug font-bold text-ink-900">{ticket.subject}</p>
+
+      {ticket.description && (
+        <>
+          <p
+            className={cn(
+              "mt-0.5 text-[11.5px] leading-relaxed whitespace-pre-wrap text-ink-600",
+              long && !open && "line-clamp-2",
+            )}
+          >
+            {ticket.description}
           </p>
-          {ticket.attachments.length > 1 && (
-            <a
-              href={attachmentsArchiveHref(ticket.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+          {long && (
+            <button
+              type="button"
+              onClick={() => setOpen((current) => !current)}
+              className="mt-0.5 text-[10px] font-bold text-ink-400 uppercase transition-colors hover:text-brand-600"
             >
-              <Download className="size-3" />
-              Download all
-            </a>
+              {open ? "Less" : "More"}
+            </button>
           )}
-        </div>
+        </>
       )}
 
-      {images.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {/* Small thumbnails: what belongs at the top of a thread is the fact
-              that photos came with the request, not the photos. Past the first
-              few, the last tile says how many more; any click opens the viewer,
-              which steps through all of them. */}
+      {/* Photos and files share one row: what belongs at the top of a thread
+          is that something came with the request, not the something. */}
+      {files.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {images.slice(0, THUMBS).map((file, index) => {
             const hidden = images.length - THUMBS;
             const last = index === THUMBS - 1 && hidden > 0;
@@ -442,7 +417,7 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
                 type="button"
                 onClick={() => setViewing(index)}
                 aria-label={last ? `Open photos, ${hidden} more` : `Open ${file.filename}`}
-                className="relative block size-14 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-line bg-surface"
+                className="relative block size-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-line bg-surface"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- the API
                     redirects to a short-lived signed URL the optimiser cannot reach. */}
@@ -454,33 +429,31 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
                   className="size-full object-cover"
                 />
                 {last && (
-                  <span className="absolute inset-0 grid place-items-center bg-ink-900/55 text-[13px] font-bold text-white">
+                  <span className="absolute inset-0 grid place-items-center bg-ink-900/55 text-[12px] font-bold text-white">
                     +{hidden}
                   </span>
                 )}
               </button>
             );
           })}
-        </div>
-      )}
 
-      {others.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
           {others.map((file) => (
-            <li key={file.index}>
-              <a
-                href={attachmentHref(ticket.id, file.index)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-ink-50 px-2 py-1 text-[11px] font-medium text-ink-700 transition-colors hover:bg-ink-100"
-              >
-                <Paperclip className="size-3 shrink-0 text-ink-400" />
-                <span className="truncate">{file.filename}</span>
-                <span className="shrink-0 text-ink-400">{formatBytes(file.size)}</span>
-              </a>
-            </li>
+            <a
+              key={file.index}
+              href={attachmentHref(ticket.id, file.index, true)}
+              target="_blank"
+              rel="noreferrer"
+              title={file.filename}
+              className="inline-flex h-11 max-w-[11rem] min-w-0 items-center gap-1.5 rounded-md border border-line bg-surface px-2 text-[10.5px] font-medium text-ink-700 transition-colors hover:border-brand-300 hover:text-brand-600"
+            >
+              <Paperclip className="size-3 shrink-0 text-ink-400" />
+              <span className="min-w-0">
+                <span className="block truncate">{file.filename}</span>
+                <span className="block text-[9.5px] text-ink-400">{formatBytes(file.size)}</span>
+              </span>
+            </a>
           ))}
-        </ul>
+        </div>
       )}
 
       {viewing !== null && images[viewing] && (
@@ -514,7 +487,8 @@ export function TicketChat({
   /** Everyone in the department being asked; the raiser comes off the ticket. */
   const [team, setTeam] = useState<MemberOption[] | null>(null);
   const [peopleOpen, setPeopleOpen] = useState(false);
-  const [picked, setPicked] = useState<Participant | null>(null);
+  // One profile card for the whole app; the thread no longer keeps its own.
+  const openProfile = useUserProfile();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -933,9 +907,8 @@ export function TicketChat({
         meId={meId}
         open={peopleOpen}
         onToggle={() => setPeopleOpen((current) => !current)}
-        onPick={setPicked}
+        onPick={(person) => openProfile(person.id, person.name)}
       />
-      <PersonCard person={picked} meId={meId} onClose={() => setPicked(null)} />
 
       <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
         <RequestCard ticket={ticket} />

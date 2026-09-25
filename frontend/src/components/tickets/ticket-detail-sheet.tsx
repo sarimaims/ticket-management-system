@@ -370,7 +370,8 @@ function Group({
   tone = "plain",
   children,
 }: {
-  title: string;
+  /** Left out where the block says what it is without being told. */
+  title?: string;
   tone?: GroupTone;
   children: React.ReactNode;
 }) {
@@ -378,8 +379,10 @@ function Group({
 
   return (
     <section className={cn("mt-2 rounded-lg px-2.5 py-2", style.card)}>
-      <p className={cn("text-[10px] font-bold tracking-wider uppercase", style.label)}>{title}</p>
-      <dl className="mt-1">{children}</dl>
+      {title && (
+        <p className={cn("text-[10px] font-bold tracking-wider uppercase", style.label)}>{title}</p>
+      )}
+      <dl className={cn(title && "mt-1")}>{children}</dl>
     </section>
   );
 }
@@ -414,37 +417,79 @@ function MiniLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?:
 }
 
 /**
- * One end of the ticket's journey, read left to right the way the org chart
- * nests: unit, then department, then the person at that end.
+ * Both ends of the ticket's journey, as a table without being one.
+ *
+ * Naming every value on the value itself - "UNIT Central, DEPT Digital" - said
+ * the same three words twice over and made the line twice as long. A heading
+ * row says it once: the columns carry the meaning, the rows carry the answers,
+ * and From and To line up underneath each other so the move reads across.
+ *
+ * Not a real <table>: this is two records of three fields, and the sheet is
+ * narrow enough that a table's own layout rules would fight the wrapping.
  */
+const ROUTE_COLUMNS = "grid grid-cols-[2.4rem_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)] gap-x-2";
+
+function RouteHead() {
+  return (
+    <div className={cn(ROUTE_COLUMNS, "border-b border-line px-1 pb-1")}>
+      <span />
+      {["Unit", "Department", "People"].map((column) => (
+        <span
+          key={column}
+          className="truncate text-[9px] font-bold tracking-[0.07em] text-ink-400 uppercase"
+        >
+          {column}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** One end of the journey: the row under the headings. */
 function Route({
   label,
+  tone,
   units,
   departments,
   people,
   extra,
 }: {
   label: string;
+  /** Which end this is, in the same two colours the tickets table uses. */
+  tone: "from" | "to";
   units: string;
   departments: string;
   people: React.ReactNode;
   extra?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 py-1">
-      <dt className="shrink-0 text-[11px] text-ink-500">{label}</dt>
-      <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-0.5 text-right text-[12px] break-words">
-        {units && (
-          <>
-            <span className="text-ink-500">{units}</span>
-            <span className="text-ink-300">·</span>
-          </>
+    <div className={cn(ROUTE_COLUMNS, "items-start rounded px-1 py-1.5 hover:bg-ink-50/70")}>
+      <span
+        className={cn(
+          "text-[10px] font-bold tracking-wide uppercase",
+          tone === "from" ? "text-route-from-fg" : "text-route-to-fg",
         )}
-        <span className="font-medium text-ink-700">{departments || "—"}</span>
-        <span className="text-ink-300">·</span>
-        <span className="font-bold text-ink-900">{people}</span>
+      >
+        {label}
+      </span>
+
+      <span className="min-w-0 text-[12px] break-words text-ink-600">{units || <Blank />}</span>
+
+      {/* The department is the load-bearing word on each line, so it is the one
+          that wears the end's colour. */}
+      <span
+        className={cn(
+          "min-w-0 text-[12px] font-semibold break-words",
+          tone === "from" ? "text-route-from-fg" : "text-route-to-fg",
+        )}
+      >
+        {departments || <Blank />}
+      </span>
+
+      <span className="flex min-w-0 flex-wrap items-center gap-1 text-[12px] font-semibold break-words text-ink-900">
+        {people}
         {extra}
-      </dd>
+      </span>
     </div>
   );
 }
@@ -554,8 +599,9 @@ export function TicketDetailSheet({
  * Who hands a ticket over, and who has to ask.
  *
  * A head runs the department and a manager oversees all of them, so both move
- * work directly. So does whoever raised it: they could name who should pick it
- * up while raising it, and that right does not expire at submit.
+ * work directly. Whoever raised it does not: asking for something says what is
+ * needed and by when, not whose desk it lands on, and a requester reaching into
+ * another department's rota is how work is put on people who never agreed to it.
  *
  * Everyone else asks a colleague and waits to be taken up on it: putting a
  * deadline on somebody's desk without their knowing is how work goes missing.
@@ -563,7 +609,6 @@ export function TicketDetailSheet({
  */
 function assignsDirectly(session: ReturnType<typeof useAuth>["session"], ticket: TicketRecord) {
   if (isAdmin(session)) return true;
-  if (session?.id && ticket.raisedBy.id === session.id) return true;
   return (session?.departments ?? []).some(
     (membership) => membership.id === ticket.department.id && membership.role === "head",
   );
@@ -974,9 +1019,11 @@ function SheetBody({
         <div className={cn(editing && "hidden")}>
           {/* Both ends of the move on one line each: unit, department, and the
               person at that end - who raised it, and who has it now. */}
-          <Group title="Route" tone="route">
+          <Group tone="route">
+            <RouteHead />
             <Route
               label="From"
+              tone="from"
               units={unitNames(ticket.fromDepartments)}
               departments={ticket.fromDepartments.map((item) => item.name).join(", ")}
               people={
@@ -990,6 +1037,7 @@ function SheetBody({
             />
             <Route
               label="To"
+              tone="to"
               units={unitNames([ticket.department])}
               departments={ticket.department.name ?? ""}
               people={
