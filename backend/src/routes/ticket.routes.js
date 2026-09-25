@@ -8,6 +8,7 @@ import {
   deleteTicket,
   deleteTickets,
   downloadAttachment,
+  downloadAttachmentsArchive,
   getTicket,
   listAssignments,
   listTickets,
@@ -42,6 +43,9 @@ router.post('/', asyncHandler(createTicket));
 router.post('/attachments/upload-url', asyncHandler(createTicketUploadTarget));
 // One file back, as a redirect to a link signed at the moment it is followed.
 router.get('/:id/attachments/:index', asyncHandler(downloadAttachment));
+// All of them at once. Built here rather than redirected to, because a zip of
+// several objects does not exist in the bucket to be signed.
+router.get('/:id/attachments.zip', asyncHandler(downloadAttachmentsArchive));
 
 router.get('/:id', asyncHandler(getTicket));
 

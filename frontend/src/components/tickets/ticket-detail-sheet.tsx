@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarCheck,
   CalendarClock,
   CheckCircle2,
+  CircleSlash,
   Download,
   History,
   MessagesSquare,
@@ -17,18 +18,20 @@ import { Button } from "@/components/ui/button";
 import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
-import { DateField } from "@/components/tickets/date-field";
+import { DateField, todayISO } from "@/components/tickets/date-field";
 import { TicketChat } from "@/components/tickets/ticket-chat";
 import { TicketHistory } from "@/components/tickets/ticket-history";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { useAuth } from "@/components/auth/auth-provider";
+import { UserLink } from "@/components/users/user-profile";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
 import { attachmentHref, updateTicket, type TicketRecord } from "@/lib/tickets";
 import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
-import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, isAdmin, isHead } from "@/lib/auth";
 import {
   answerHandover,
   askHandover,
@@ -37,6 +40,7 @@ import {
   type HandoverRecord,
 } from "@/lib/handovers";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
+import { isClosed } from "@/lib/types";
 import type { TicketPriority, TicketStatus } from "@/lib/types";
 
 const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High", "Critical"];
@@ -109,7 +113,10 @@ export function DeadlineVerdict({
   if (inline) {
     return (
       <span
-        className={cn("font-semibold", late ? "text-status-waiting-fg" : "text-status-completed-fg")}
+        className={cn(
+          "font-semibold",
+          late ? "text-status-waiting-fg" : "text-status-completed-fg",
+        )}
       >
         {late
           ? `That is after the ${formatDate(asked!)} they asked for.`
@@ -217,6 +224,7 @@ function RequestEditor({
       <Field label="Deadline" required htmlFor="edit-deadline">
         <DateField
           id="edit-deadline"
+          min={todayISO()}
           value={draft.deadline}
           onChange={(value) => set("deadline", value)}
           clearable={false}
@@ -362,7 +370,8 @@ function Group({
   tone = "plain",
   children,
 }: {
-  title: string;
+  /** Left out where the block says what it is without being told. */
+  title?: string;
   tone?: GroupTone;
   children: React.ReactNode;
 }) {
@@ -370,8 +379,10 @@ function Group({
 
   return (
     <section className={cn("mt-2 rounded-lg px-2.5 py-2", style.card)}>
-      <p className={cn("text-[10px] font-bold tracking-wider uppercase", style.label)}>{title}</p>
-      <dl className="mt-1">{children}</dl>
+      {title && (
+        <p className={cn("text-[10px] font-bold tracking-wider uppercase", style.label)}>{title}</p>
+      )}
+      <dl className={cn(title && "mt-1")}>{children}</dl>
     </section>
   );
 }
@@ -405,31 +416,87 @@ function MiniLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?:
   );
 }
 
-/** The units a set of departments sit in, named once each. */
-function Unit({ of }: { of: { unit?: { id: string; name?: string } | null }[] }) {
-  const names = [
-    ...new Set(of.map((item) => item.unit?.name).filter((name): name is string => Boolean(name))),
-  ];
-  if (names.length === 0) return null;
+/**
+ * Both ends of the ticket's journey, as a table without being one.
+ *
+ * Naming every value on the value itself - "UNIT Central, DEPT Digital" - said
+ * the same three words twice over and made the line twice as long. A heading
+ * row says it once: the columns carry the meaning, the rows carry the answers,
+ * and From and To line up underneath each other so the move reads across.
+ *
+ * Not a real <table>: this is two records of three fields, and the sheet is
+ * narrow enough that a table's own layout rules would fight the wrapping.
+ */
+const ROUTE_COLUMNS = "grid grid-cols-[2.4rem_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)] gap-x-2";
 
-  return <span className="w-full text-[10px] font-normal text-ink-400">{names.join(", ")}</span>;
-}
-
-function Chips({ items }: { items: { id: string; name?: string }[] }) {
-  if (items.length === 0) return <Blank />;
+function RouteHead() {
   return (
-    <>
-      {items.map((item) => (
+    <div className={cn(ROUTE_COLUMNS, "border-b border-line px-1 pb-1")}>
+      <span />
+      {["Unit", "Department", "People"].map((column) => (
         <span
-          key={item.id}
-          className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-600"
+          key={column}
+          className="truncate text-[9px] font-bold tracking-[0.07em] text-ink-400 uppercase"
         >
-          {item.name}
+          {column}
         </span>
       ))}
-    </>
+    </div>
   );
 }
+
+/** One end of the journey: the row under the headings. */
+function Route({
+  label,
+  tone,
+  units,
+  departments,
+  people,
+  extra,
+}: {
+  label: string;
+  /** Which end this is, in the same two colours the tickets table uses. */
+  tone: "from" | "to";
+  units: string;
+  departments: string;
+  people: React.ReactNode;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <div className={cn(ROUTE_COLUMNS, "items-start rounded px-1 py-1.5 hover:bg-ink-50/70")}>
+      <span
+        className={cn(
+          "text-[10px] font-bold tracking-wide uppercase",
+          tone === "from" ? "text-route-from-fg" : "text-route-to-fg",
+        )}
+      >
+        {label}
+      </span>
+
+      <span className="min-w-0 text-[12px] break-words text-ink-600">{units || <Blank />}</span>
+
+      {/* The department is the load-bearing word on each line, so it is the one
+          that wears the end's colour. */}
+      <span
+        className={cn(
+          "min-w-0 text-[12px] font-semibold break-words",
+          tone === "from" ? "text-route-from-fg" : "text-route-to-fg",
+        )}
+      >
+        {departments || <Blank />}
+      </span>
+
+      <span className="flex min-w-0 flex-wrap items-center gap-1 text-[12px] font-semibold break-words text-ink-900">
+        {people}
+        {extra}
+      </span>
+    </div>
+  );
+}
+
+/** Unit names under a set of departments, each named once. */
+const unitNames = (of: { unit?: { name?: string } | null }[]) =>
+  [...new Set(of.map((item) => item.unit?.name).filter(Boolean))].join(", ");
 
 /**
  * Everything known about one ticket, in a sheet beside the list. Two different
@@ -464,6 +531,30 @@ export function TicketDetailSheet({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [ticket, onClose]);
 
+  /**
+   * A press anywhere outside the sheet closes it - on a wide screen too, where
+   * there is no backdrop because the list behind stays in use. Pressing another
+   * row closes this one and the click that follows opens that one.
+   *
+   * Pickers, menus, dialogs and toasts opened from inside the sheet are drawn
+   * on the body rather than inside it, so a press on one of those is not
+   * "outside" and leaves the sheet where it is.
+   */
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!ticket) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target || panel.current?.contains(target)) return;
+      if (target.closest('[role="dialog"], [role="menu"], [role="listbox"], [role="alert"]')) {
+        return;
+      }
+      onClose();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [ticket, onClose]);
+
   return (
     <>
       {ticket && (
@@ -475,6 +566,7 @@ export function TicketDetailSheet({
       )}
 
       <aside
+        ref={panel}
         aria-hidden={!ticket}
         aria-label="Ticket details"
         className={cn(
@@ -507,8 +599,9 @@ export function TicketDetailSheet({
  * Who hands a ticket over, and who has to ask.
  *
  * A head runs the department and a manager oversees all of them, so both move
- * work directly. So does whoever raised it: they could name who should pick it
- * up while raising it, and that right does not expire at submit.
+ * work directly. Whoever raised it does not: asking for something says what is
+ * needed and by when, not whose desk it lands on, and a requester reaching into
+ * another department's rota is how work is put on people who never agreed to it.
  *
  * Everyone else asks a colleague and waits to be taken up on it: putting a
  * deadline on somebody's desk without their knowing is how work goes missing.
@@ -516,7 +609,6 @@ export function TicketDetailSheet({
  */
 function assignsDirectly(session: ReturnType<typeof useAuth>["session"], ticket: TicketRecord) {
   if (isAdmin(session)) return true;
-  if (session?.id && ticket.raisedBy.id === session.id) return true;
   return (session?.departments ?? []).some(
     (membership) => membership.id === ticket.department.id && membership.role === "head",
   );
@@ -562,6 +654,8 @@ function SheetBody({
   /** Who this person is proposing to hand it to, before they send the ask. */
   const [asking, setAsking] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
+  /** Open while Cancelled waits on its remark. */
+  const [cancelling, setCancelling] = useState(false);
   const toast = useToast();
 
   // The raiser's side of the sheet: reading turns into editing in place, so
@@ -648,6 +742,9 @@ function SheetBody({
   /** Only somebody holding a ticket has anything to hand on. */
   const holdsIt = ticket.assignees.some((person) => person.id === meId);
 
+  /** Transferring is how a user passes work on; a head assigns or releases instead. */
+  const transfers = !direct && !isHead(session);
+
   /** Puts the ask in front of the people chosen above. */
   const sendAsk = async () => {
     if (asking.length === 0) return;
@@ -668,7 +765,7 @@ function SheetBody({
     }
   };
 
-  /** Steps off the ticket; with nobody else on it, the head gets it back. */
+  /** Steps off the ticket; with nobody else on it, it goes back to unheld. */
   const release = async () => {
     setPending(true);
     try {
@@ -678,7 +775,12 @@ function SheetBody({
       // The ticket itself moved, so the pane behind this has to be told.
       const fresh = await updateTicket(ticket.id, {});
       onSaved(fresh);
-      toast.success(`#${ticket.number} released`, `Now with ${holders(now)}`);
+      toast.success(
+        `#${ticket.number} released`,
+        now.length > 0
+          ? `Now with ${holders(now)}`
+          : `Back on ${ticket.department.name ?? "the department"}'s list for its head to hand out`,
+      );
     } catch (caught) {
       toast.error("Could not release the ticket", errorMessage(caught));
     } finally {
@@ -741,7 +843,10 @@ function SheetBody({
 
       const moved = changes(ticket, saved);
       if (moved.length === 0) {
-        toast.show({ title: `#${ticket.number} has no changes to save`, tone: "info" });
+        toast.show({
+          title: `#${ticket.number} has no changes to save`,
+          tone: "info",
+        });
       } else {
         toast.success(
           `#${ticket.number} updated`,
@@ -767,7 +872,7 @@ function SheetBody({
   }, [ticket.department.id, canWork, direct]);
 
   /** Saving closes the sheet; the toast carries what changed. */
-  const save = async (nextStatus: TicketStatus = status) => {
+  const save = async (nextStatus: TicketStatus = status, cancelReason?: string) => {
     const promiseMoved = committed !== (ticket.committedDeadline?.slice(0, 10) ?? "");
 
     // The reason is the whole point of the date: the person waiting is told
@@ -792,22 +897,32 @@ function SheetBody({
         ...(canWork
           ? {
               status: nextStatus,
+              ...(cancelReason ? { cancelReason } : {}),
               committedDeadline: committed || null,
               ...(promiseMoved ? { committedReason: why.trim() } : {}),
             }
-          : {}),
+          : // The raiser's one status: withdrawing what they asked for. Every
+            // other one belongs to the department, and the API refuses them.
+            cancelReason
+            ? { status: "Cancelled" as const, cancelReason }
+            : {}),
         ...(direct ? { assignees } : {}),
       });
       onSaved(saved);
 
       const moved = changes(ticket, saved);
       if (moved.length === 0) {
-        toast.show({ title: `#${ticket.number} has no changes to save`, tone: "info" });
+        toast.show({
+          title: `#${ticket.number} has no changes to save`,
+          tone: "info",
+        });
       } else {
         toast.success(
           nextStatus === "Completed" && ticket.status !== "Completed"
             ? `#${ticket.number} marked as resolved`
-            : `#${ticket.number} updated`,
+            : nextStatus === "Cancelled" && ticket.status !== "Cancelled"
+              ? `#${ticket.number} cancelled`
+              : `#${ticket.number} updated`,
           moved.join(" · "),
         );
       }
@@ -821,6 +936,16 @@ function SheetBody({
 
   return (
     <>
+      <CancelTicketModal
+        ticket={cancelling ? ticket : null}
+        pending={pending}
+        onClose={() => setCancelling(false)}
+        onConfirm={(reason) => {
+          setCancelling(false);
+          void save("Cancelled", reason);
+        }}
+      />
+
       {/* No header band: the sheet opens straight onto its tabs. What the
           band carried has moved into the panes, where it is read rather than
           skipped - the subject onto the description card, the way out onto
@@ -867,79 +992,82 @@ function SheetBody({
               {ticket.description}
             </p>
           </section>
+
+          {/* Why it was called off, where anyone opening it looks first. */}
+          {ticket.status === "Cancelled" && ticket.cancelReason && (
+            <section className="mt-2 rounded-lg border border-line bg-ink-50 px-2.5 py-2">
+              <p className="text-[10px] font-bold tracking-wider text-ink-500 uppercase">
+                Cancelled
+                {ticket.cancelledByName && (
+                  <span className="font-medium normal-case">
+                    {" "}
+                    · by {ticket.cancelledByName}
+                    {ticket.cancelledAt ? ` · ${formatDateOf(ticket.cancelledAt)}` : ""}
+                  </span>
+                )}
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-700">
+                {ticket.cancelReason}
+              </p>
+            </section>
+          )}
         </div>
 
         {/* Grouped rather than gridded: "where it goes", "who", "when" are the
             three questions actually being asked of this pane, and a label beside
             its value reads faster than a label above it. */}
         <div className={cn(editing && "hidden")}>
-          <Group title="Where it goes" tone="route">
-            <Fact label="From">
-              {ticket.fromDepartments.length > 0 ? (
-                <>
-                  <Chips items={ticket.fromDepartments} />
-                  {/* The unit under the department, quietly: the queue answers
-                      this in one line, and there is room here to name each
-                      side of the move. */}
-                  <Unit of={ticket.fromDepartments} />
-                </>
-              ) : (
-                <Blank>Raised directly</Blank>
-              )}
-            </Fact>
-            <Fact label="To">
-              <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
-                {ticket.department.name}
-              </span>
-              <Unit of={[ticket.department]} />
-            </Fact>
-          </Group>
-
-          <Group title="Who" tone="who">
-            <Fact label="Raised by">
-              {ticket.raisedBy.name}
-              <OriginTag role={ticket.raisedByRole} />
-            </Fact>
-            {/* A ticket can be held by more than one person now, so the row
-                names all of them rather than the first. */}
-            <Fact label={ticket.assignees.length > 1 ? "Assignees" : "Assignee"}>
-              {ticket.assignees.length > 0 ? (
-                holders(ticket.assignees)
-              ) : (
-                <Blank>Nobody yet</Blank>
-              )}
-            </Fact>
+          {/* Both ends of the move on one line each: unit, department, and the
+              person at that end - who raised it, and who has it now. */}
+          <Group tone="route">
+            <RouteHead />
+            <Route
+              label="From"
+              tone="from"
+              units={unitNames(ticket.fromDepartments)}
+              departments={ticket.fromDepartments.map((item) => item.name).join(", ")}
+              people={
+                <UserLink
+                  id={ticket.raisedBy.id}
+                  name={ticket.raisedBy.name ?? "Someone"}
+                  className="hover:text-brand-600"
+                />
+              }
+              extra={<OriginTag role={ticket.raisedByRole} />}
+            />
+            <Route
+              label="To"
+              tone="to"
+              units={unitNames([ticket.department])}
+              departments={ticket.department.name ?? ""}
+              people={
+                ticket.assignees.length > 0 ? (
+                  // Each name its own link: the card is per person, not per
+                  // list.
+                  ticket.assignees.map((person, index) => (
+                    <span key={person.id}>
+                      {index > 0 && ", "}
+                      <UserLink
+                        id={person.id}
+                        name={person.name ?? "Someone"}
+                        className="hover:text-brand-600"
+                      />
+                    </span>
+                  ))
+                ) : (
+                  <Blank>Nobody yet</Blank>
+                )
+              }
+            />
           </Group>
 
           <Group title="Dates" tone="dates">
-            <Fact label="Raised on">
+            <Fact label="Created">
               {formatDateOf(ticket.createdAt)}
               <span className="font-normal text-ink-400">{formatTime(ticket.createdAt)}</span>
             </Fact>
-            <Fact label="They asked for">
+            <Fact label="Deadline">
               {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : <Blank>Not set</Blank>}
-            </Fact>
-            <Fact label="Promised for">
-              {ticket.committedDeadline ? (
-                <>
-                  <DeadlineVerdict
-                    requested={ticket.deadline}
-                    committed={ticket.committedDeadline}
-                  />
-                  {ticket.committedBy?.name && (
-                    <span className="w-full text-[10px] font-normal text-ink-400">
-                      by {ticket.committedBy.name}
-                      {ticket.committedAt ? ` · ${formatDateOf(ticket.committedAt)}` : ""}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <Blank>Nothing promised yet</Blank>
-              )}
-            </Fact>
-            <Fact label="Last updated">
-              {formatDateOf(ticket.updatedAt)}
-              <span className="font-normal text-ink-400">{formatTime(ticket.updatedAt)}</span>
             </Fact>
           </Group>
 
@@ -987,16 +1115,9 @@ function SheetBody({
 
         {(canWork || direct) && !editing && (
           <div className="mt-2 rounded-lg bg-status-waiting-bg/45 px-2.5 py-2">
-            <p className="text-[10px] font-bold tracking-wider text-status-waiting-fg uppercase">
-              {canWork ? "Work this ticket" : "Address this request"}
-            </p>
-
-            <div
-              className={cn(
-                "mt-1.5 grid gap-x-2 gap-y-2",
-                canWork ? "grid-cols-2" : "grid-cols-1",
-              )}
-            >
+            {/* One column, in the order it is done: how it is going, letting
+                go of it, passing it on, the date, and why. */}
+            <div className="space-y-2.5">
               {/* A raiser is not working the ticket, so the half of this pane
                   that says how the work is going is not theirs to fill in. */}
               {canWork && (
@@ -1004,69 +1125,92 @@ function SheetBody({
                   <MiniLabel>Status</MiniLabel>
                   <StatusPicker
                     value={status}
-                    onChange={setStatus}
+                    // Cancelling saves at once, with its remark; every other
+                    // status waits for Save changes like the rest of the pane.
+                    onChange={(next) =>
+                      next === "Cancelled" && ticket.status !== "Cancelled"
+                        ? setCancelling(true)
+                        : setStatus(next)
+                    }
                     label={`Status for #${ticket.number}`}
-                    className="h-8 justify-between px-2.5 text-[13px]"
+                    className="h-8 w-full justify-between px-2.5 text-[13px]"
                   />
                 </div>
               )}
 
-              <div className="min-w-0">
-                {direct ? (
-                  <>
-                    <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
-                    <MultiSelect
-                      id="sheet-assignee"
-                      // Everyone but you. A ticket is handed to somebody; if
-                      // you are already on it you stay, so the list can still
-                      // be saved - it just cannot gain you.
-                      options={members
-                        .filter(
-                          (member) => member.id !== meId || assignees.includes(member.id),
-                        )
-                        .map((member) => ({
-                          value: member.id,
-                          label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
-                        }))}
-                      value={assignees}
-                      onChange={setAssignees}
-                      display="summary"
-                      placeholder="Nobody yet"
-                      emptyMessage="Nobody is in this department"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <MiniLabel htmlFor="sheet-ask">Ask someone to take it</MiniLabel>
-                    <MultiSelect
-                      id="sheet-ask"
-                      // Only people who are not already on it: the rest have
-                      // nothing to accept. The head is left out too - handing
-                      // it back to them is what Release is for.
-                      options={members
-                        .filter(
-                          (member) =>
-                            member.id !== meId &&
-                            member.departmentRole !== "head" &&
-                            !ticket.assignees.some((person) => person.id === member.id),
-                        )
-                        .map((member) => ({
-                          value: member.id,
-                          label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
-                        }))}
-                      value={asking}
-                      onChange={setAsking}
-                      display="summary"
-                      placeholder={sentByMe ? "Waiting on an answer" : "Choose who to ask"}
-                      emptyMessage="Nobody else is in this department"
-                      disabled={Boolean(sentByMe) || !holdsIt}
-                    />
-                  </>
-                )}
-              </div>
+              {/* Giving it back rather than passing it sideways. */}
+              {!direct && holdsIt && (
+                <div className="min-w-0">
+                  <MiniLabel>Release</MiniLabel>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-full px-2.5 text-[12px]"
+                    disabled={pending}
+                    onClick={() => void release()}
+                  >
+                    Release back to the head
+                  </Button>
+                </div>
+              )}
+
+              {(direct || transfers) && (
+                <div className="min-w-0">
+                  {direct ? (
+                    <>
+                      <MiniLabel htmlFor="sheet-assignee">Assignee</MiniLabel>
+                      <MultiSelect
+                        id="sheet-assignee"
+                        // Everyone but you. A ticket is handed to somebody; if
+                        // you are already on it you stay, so the list can still
+                        // be saved - it just cannot gain you.
+                        options={members
+                          .filter((member) => member.id !== meId || assignees.includes(member.id))
+                          .map((member) => ({
+                            value: member.id,
+                            label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                          }))}
+                        value={assignees}
+                        onChange={setAssignees}
+                        display="summary"
+                        placeholder="Nobody yet"
+                        emptyMessage="Nobody is in this department"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <MiniLabel htmlFor="sheet-ask">Transfer to</MiniLabel>
+                      <MultiSelect
+                        id="sheet-ask"
+                        // Only people who are not already on it: the rest have
+                        // nothing to accept. The head is left out too - handing
+                        // it back to them is what Release is for.
+                        options={members
+                          .filter(
+                            (member) =>
+                              member.id !== meId &&
+                              member.departmentRole !== "head" &&
+                              !ticket.assignees.some((person) => person.id === member.id),
+                          )
+                          .map((member) => ({
+                            value: member.id,
+                            label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                          }))}
+                        value={asking}
+                        onChange={setAsking}
+                        display="summary"
+                        placeholder={sentByMe ? "Waiting on an answer" : "Choose who to ask"}
+                        emptyMessage="Nobody else is in this department"
+                        disabled={Boolean(sentByMe) || !holdsIt}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
 
               {!direct && (
-                <div className="col-span-2 min-w-0 space-y-2">
+                <div className="min-w-0 space-y-2">
                   {/* Only ever reached by somebody in the department: a raiser
                       names people outright and never has to ask. */}
                   {/* Somebody is waiting on this person. It is the only thing
@@ -1134,7 +1278,7 @@ function SheetBody({
                     </div>
                   )}
 
-                  {!sentByMe && holdsIt && (
+                  {transfers && !sentByMe && holdsIt && (
                     <Button
                       type="button"
                       size="sm"
@@ -1147,21 +1291,9 @@ function SheetBody({
                     </Button>
                   )}
 
-                  {/* Giving it back rather than passing it sideways. */}
-                  {holdsIt && (
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() => void release()}
-                      className="w-full text-center text-[11px] font-semibold text-ink-500 transition-colors hover:text-brand-600 disabled:opacity-50"
-                    >
-                      Release back to the head
-                    </button>
-                  )}
-
-                  {!holdsIt && !waitingOnMe && (
+                  {transfers && !holdsIt && !waitingOnMe && (
                     <p className="text-[11px] text-ink-400">
-                      Only somebody holding this ticket can ask a colleague to take it on.
+                      Only somebody holding this ticket can transfer it.
                     </p>
                   )}
                 </div>
@@ -1171,15 +1303,8 @@ function SheetBody({
                   It is already two rows up under Dates; what this pane needs is
                   the date you are promising, and what it is being judged
                   against. */}
-              <div className="col-span-2 min-w-0">
-                <MiniLabel htmlFor="sheet-committed">
-                  I can resolve by
-                  {ticket.deadline && (
-                    <span className="font-medium normal-case">
-                      · they asked for {formatDate(ticket.deadline.slice(0, 10))}
-                    </span>
-                  )}
-                </MiniLabel>
+              <div className="min-w-0">
+                <MiniLabel htmlFor="sheet-committed">Pick a date</MiniLabel>
 
                 {/* A promise already given is shown as one, with the reason it
                     was given for. Moving it is a deliberate second click, and
@@ -1210,6 +1335,7 @@ function SheetBody({
                   <div className="space-y-1.5">
                     <DateField
                       id="sheet-committed"
+                      min={todayISO()}
                       value={committed}
                       onChange={setCommitted}
                       placeholder="Pick a date"
@@ -1220,6 +1346,7 @@ function SheetBody({
                         anything has changed is a box in the way. */}
                     {committed !== (ticket.committedDeadline?.slice(0, 10) ?? "") && (
                       <div>
+                        <MiniLabel htmlFor="sheet-committed-why">Remark</MiniLabel>
                         <Textarea
                           id="sheet-committed-why"
                           value={why}
@@ -1242,7 +1369,7 @@ function SheetBody({
                             whyMissing ? "font-semibold text-brand-600" : "text-ink-400",
                           )}
                         >
-                          Required · {ticket.raisedBy.name} is told the date and the reason.
+                          Required when the date changes.
                         </p>
                       </div>
                     )}
@@ -1265,21 +1392,6 @@ function SheetBody({
                 )}
               </div>
             </div>
-
-            {committed ? (
-              <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-ink-50 px-2 py-1.5 text-[11px] leading-snug text-ink-500">
-                <CalendarCheck className="mt-px size-3.5 shrink-0 text-ink-400" />
-                <span>
-                  {ticket.raisedBy.name} sees this as your commitment.{" "}
-                  <DeadlineVerdict requested={ticket.deadline} committed={committed} inline />
-                </span>
-              </p>
-            ) : (
-              <p className="mt-1.5 text-[11px] leading-snug text-ink-400">
-                Anyone in {departmentName} can take this on; every handover and every promised
-                date is listed under History.
-              </p>
-            )}
           </div>
         )}
       </div>
@@ -1301,10 +1413,33 @@ function SheetBody({
               </p>
             </>
           ) : (
-            <Button size="sm" variant="outline" className="w-full" onClick={() => setEditing(true)}>
-              <PencilLine className="size-3.5" />
-              Edit request
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1"
+                onClick={() => setEditing(true)}
+              >
+                <PencilLine className="size-3.5" />
+                Edit request
+              </Button>
+
+              {/* Calling off what you asked for is not working the ticket, so
+                  it is the raiser's to do - until the department has finished
+                  it, when there is nothing left to withdraw. */}
+              {!canWork && !isClosed(ticket.status) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 text-brand-600"
+                  onClick={() => setCancelling(true)}
+                  disabled={pending}
+                >
+                  <CircleSlash className="size-3.5" />
+                  Cancel request
+                </Button>
+              )}
+            </div>
           )}
         </div>
       )}

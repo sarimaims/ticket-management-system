@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 const ACTION_DOTS: Record<string, string> = {
   "ticket.created": "bg-status-new-fg",
   "ticket.updated": "bg-status-progress-fg",
+  "ticket.deleted": "bg-status-overdue-fg",
   "member.added": "bg-status-completed-fg",
   "member.removed": "bg-status-overdue-fg",
   "member.role_changed": "bg-status-waiting-fg",
@@ -43,6 +44,7 @@ const ACTION_DOTS: Record<string, string> = {
 const ACTION_LABELS: Record<string, string> = {
   "ticket.created": "Ticket raised",
   "ticket.updated": "Ticket updated",
+  "ticket.deleted": "Ticket deleted",
   "member.added": "Member added",
   "member.removed": "Member removed",
   "member.role_changed": "Role changed",

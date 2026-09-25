@@ -50,12 +50,15 @@ export function ScopeFilter({
   onChange,
   id,
   className,
+  placeholder = "All departments",
 }: {
   options: ScopeOption[];
   value: ScopeValue;
   onChange: (value: ScopeValue) => void;
   id?: string;
   className?: string;
+  /** What the closed control says while nothing is picked. */
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState("");
@@ -193,7 +196,7 @@ export function ScopeFilter({
   const picked = value.units.length + value.departments.length;
 
   const summary = () => {
-    if (picked === 0) return "All departments";
+    if (picked === 0) return placeholder;
     if (value.units.length === 1 && value.departments.length === 0) {
       return groups.find((group) => group.id === value.units[0])?.name ?? "1 unit";
     }

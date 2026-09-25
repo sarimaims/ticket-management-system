@@ -8,15 +8,22 @@ import {
   createUploadUrl,
   describeObject,
   isConfigured as storageReady,
+  readObject,
   StorageUnavailable,
   TICKET_FILE,
   ticketKeyPrefixFor,
   validateTicketUpload,
 } from '../services/storage.js';
+import { zipStore } from '../services/zip.js';
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
-import Ticket, { OVERDUE, TICKET_PRIORITIES, TICKET_STATUSES } from '../models/Ticket.js';
+import Ticket, {
+  CLOSED_STATUSES,
+  OVERDUE,
+  TICKET_PRIORITIES,
+  TICKET_STATUSES,
+} from '../models/Ticket.js';
 import { pastDue, statusOf } from '../services/overdue.js';
 import HandoverRequest from '../models/HandoverRequest.js';
 import TicketAssignment from '../models/TicketAssignment.js';
@@ -28,7 +35,12 @@ import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
-import { notifyNewTicket, notifyTicketEdited, notifyTicketUpdated } from '../services/notify.js';
+import {
+  notifyNewTicket,
+  notifyTicketDeleted,
+  notifyTicketEdited,
+  notifyTicketUpdated,
+} from '../services/notify.js';
 
 /**
  * The department a ticket sits with, and the unit above it.
@@ -145,6 +157,10 @@ function present(ticket, { awaiting } = {}) {
     committedAt: ticket.committedAt ?? null,
     /** Why the current promise is the date it is. Empty when none was made. */
     committedReason: ticket.committedReason ?? '',
+    /** Why it was called off. Empty unless it is Cancelled. */
+    cancelReason: ticket.cancelReason ?? '',
+    cancelledByName: ticket.cancelledByName ?? '',
+    cancelledAt: ticket.cancelledAt ?? null,
     department: populated(department)
       ? {
           id: String(department._id),
@@ -306,11 +322,63 @@ export async function downloadAttachment(req, res) {
     // from another origin - from showing this as an <img>. The redirect only
     // hands out a link this person could already open, so it may be embedded.
     res.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.redirect(await createDownloadUrl(file.key));
+
+    // ?save=1 is the download button; without it the same URL is what the
+    // thumbnails and the lightbox read, and those must stay viewable.
+    const saveAs = req.query.save ? file.filename || 'attachment' : undefined;
+    res.redirect(await createDownloadUrl(file.key, { saveAs }));
   } catch (error) {
     if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
     throw error;
   }
+}
+
+/**
+ * Every file on the request, as one zip.
+ *
+ * Downloading five photos one at a time means five clicks and five trips
+ * through the lightbox. This reads the objects here and packs them, so the
+ * browser is handed a single file with the ticket's number on it.
+ *
+ * Unlike a single attachment there is no redirect to hide behind: the bytes
+ * pass through this worker. That is bounded by what a request may carry -
+ * five files of 10 MB - and is why it is not offered for anything larger.
+ */
+export async function downloadAttachmentsArchive(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) });
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  const files = ticket.attachments ?? [];
+  if (files.length === 0) throw ApiError.notFound('This request has no files.');
+
+  if (!storageReady()) throw ApiError.unavailable('File storage is not configured yet.');
+
+  let archive;
+  try {
+    const entries = [];
+    for (const file of files) {
+      // Sequential: five small objects, and a burst of parallel reads only
+      // trades a few milliseconds for five times the memory in flight.
+      // eslint-disable-next-line no-await-in-loop
+      const body = await readObject(file.key);
+      entries.push({
+        name: file.filename || `attachment-${entries.length + 1}`,
+        body,
+        modified: file.uploadedAt,
+      });
+    }
+    archive = zipStore(entries);
+  } catch (error) {
+    if (error instanceof StorageUnavailable) throw ApiError.unavailable(error.message);
+    throw error;
+  }
+
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', `attachment; filename="${ticket.number}-files.zip"`);
+  res.set('Content-Length', String(archive.length));
+  res.send(archive);
 }
 
 export async function createTicket(req, res) {
@@ -343,11 +411,42 @@ export async function createTicket(req, res) {
   if (!deadline) throw ApiError.badRequest('Deadline is required.');
   const dueDate = new Date(deadline);
   if (Number.isNaN(dueDate.getTime())) throw ApiError.badRequest('Invalid deadline.');
+  if (beforeToday(deadline)) throw ApiError.badRequest('The deadline cannot be in the past.');
   if (priority && !TICKET_PRIORITIES.includes(priority)) {
     throw ApiError.badRequest(`Priority must be one of: ${TICKET_PRIORITIES.join(', ')}.`);
   }
 
-  const targets = await Department.find({ _id: { $in: targetIds }, isActive: true });
+  /**
+   * Everything the answer needs, asked for at once.
+   *
+   * The departments being asked, the departments being asked *from*, and the
+   * people named on the form - three questions that do not depend on each
+   * other, and used to be three waits on a database a long way away.
+   */
+  const wantedPeople = [
+    ...new Set(
+      Object.values(assignees && typeof assignees === 'object' && !Array.isArray(assignees) ? assignees : {})
+        .flatMap((picked) => (Array.isArray(picked) ? picked : [picked]))
+        .filter((id) => id && mongoose.isValidObjectId(id))
+        .map(String),
+    ),
+  ];
+
+  const fromWanted = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))].filter((id) =>
+    mongoose.isValidObjectId(id),
+  );
+
+  const [targets, fromDocs, namedPeople] = await Promise.all([
+    // Populated here so the answer can be built without reading the rows back.
+    Department.find({ _id: { $in: targetIds }, isActive: true }).populate('unit', 'name code'),
+    Department.find({ _id: { $in: fromWanted } })
+      .select('name code unit')
+      .populate('unit', 'name code')
+      .lean(),
+    wantedPeople.length > 0 ? User.find({ _id: { $in: wantedPeople } }) : [],
+  ]);
+
+  const peopleById = new Map(namedPeople.map((person) => [String(person._id), person]));
   if (targets.length !== targetIds.length) {
     throw ApiError.badRequest('One or more departments do not exist.');
   }
@@ -387,13 +486,8 @@ export async function createTicket(req, res) {
         }
       }
 
-      // Everyone named for this department is fetched at once: one wait for
-      // the set rather than one per person.
-      const candidates = await User.find({ _id: { $in: wanted } });
-      const byId = new Map(candidates.map((person) => [String(person._id), person]));
-
       for (const userId of wanted) {
-        const candidate = byId.get(String(userId));
+        const candidate = peopleById.get(String(userId));
         const belongs =
           candidate &&
           candidate.status !== 'suspended' &&
@@ -407,41 +501,11 @@ export async function createTicket(req, res) {
     }
   }
 
-  /**
-   * A department nobody was named for goes to whoever runs it.
-   *
-   * Naming somebody stays optional - requiring a name would mean knowing who
-   * works there before you are allowed to ask - but "nobody named" should not
-   * become "nobody's job". The head holds it until they hand it on or pass it
-   * down, which is the decision they are there to make.
-   *
-   * A department with no head yet keeps the older behaviour and lands in its
-   * queue unheld: better an unaddressed ticket than a rejected one.
+  /*
+   * A department nobody was named for is left unassigned. It sits in that
+   * department's All Tickets for the head to hand out; Assigned to Me only
+   * ever holds what has been put on somebody by name.
    */
-  const unstaffed = targets.filter((target) => !assignedTo.has(String(target._id)));
-  if (unstaffed.length > 0) {
-    // Every head of every unnamed department in one read, then sorted out in
-    // memory - the same one-wait-per-set rule as the named people above.
-    const heads = await User.find({
-      status: { $ne: 'suspended' },
-      memberships: {
-        $elemMatch: {
-          department: { $in: unstaffed.map((target) => target._id) },
-          role: 'head',
-        },
-      },
-    }).select('memberships');
-
-    for (const target of unstaffed) {
-      const key = String(target._id);
-      const owners = heads
-        .filter((person) => person.roleInDepartment(key) === 'head')
-        .map((person) => person._id);
-
-      if (owners.length > 0) assignedTo.set(key, owners);
-    }
-  }
-
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
   const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
@@ -490,23 +554,42 @@ export async function createTicket(req, res) {
   // the same reason the queues stopped using them.
   clock.step('insert');
 
-  const populated = await hydrate(
-    await Ticket.find({ _id: { $in: created.map((item) => item._id) } })
-      .sort({ number: 1 })
-      .lean(),
-  );
+  /**
+   * Built from what is already in hand rather than read back.
+   *
+   * Every reference a new ticket holds was fetched a moment ago to check it:
+   * the department it goes to, the ones it is raised from, the people on it -
+   * and the person raising it is the caller. Asking the database to hand them
+   * back was a round trip spent learning nothing new.
+   */
+  const departmentById = new Map(targets.map((target) => [String(target._id), target]));
+  const raiser = { _id: req.user._id, name: req.user.name, email: req.user.email };
 
-  clock.step('read-back');
+  const populated = created.map((ticket) => ({
+    ...ticket.toObject(),
+    department: departmentById.get(String(ticket.department)) ?? ticket.department,
+    fromDepartments: fromDocs,
+    raisedBy: raiser,
+    assignees: (ticket.assignees ?? []).map((id) => peopleById.get(String(id)) ?? id),
+    committedBy: null,
+  }));
+
+  clock.step('assemble');
 
   const tickets = populated.map(present);
+
+  // The ticket exists now, and that is all the person raising it is waiting
+  // to hear - so they are told before the bookkeeping below, not after it.
+  clock.send();
+  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
 
   /**
    * The log, the assignment trail, the opening line of the thread and the
    * bells. None of them depends on another, and none of them changes the
-   * answer - so they run together rather than one after the next. Each one
-   * already swallows its own failures, which is what makes that safe.
+   * answer - so they run together, after the reply has gone. Each one already
+   * swallows its own failures; the catch is for anything that slips past.
    */
-  await Promise.all(
+  Promise.all(
     populated.flatMap((ticket) => [
       record({
         actor: req.user,
@@ -538,12 +621,7 @@ export async function createTicket(req, res) {
       }),
       notifyNewTicket({ ticket, actor: req.user }),
     ]),
-  );
-
-  clock.step('log-and-notify');
-  clock.send();
-
-  res.status(201).json({ success: true, tickets, ticket: tickets[0] });
+  ).catch((error) => console.error('After-create bookkeeping failed:', error.message));
 }
 
 /**
@@ -633,8 +711,8 @@ export async function listTickets(req, res) {
      * the date has taken away from it.
      */
     if (status === OVERDUE) {
-      filter.$and = [...(filter.$and ?? []), { status: { $ne: 'Completed' } }, pastDue()];
-    } else if (status === 'Completed') {
+      filter.$and = [...(filter.$and ?? []), { status: { $nin: CLOSED_STATUSES } }, pastDue()];
+    } else if (CLOSED_STATUSES.includes(status)) {
       filter.status = status;
     } else {
       filter.$and = [...(filter.$and ?? []), { status }, pastDue(false)];
@@ -808,6 +886,17 @@ export async function listAssignments(req, res) {
   });
 }
 
+/**
+ * Whether a date the client sent falls before today.
+ *
+ * Compared as calendar days, YYYY-MM-DD, because that is what the date pickers
+ * send: a deadline of today is fine all day, whatever the hour.
+ */
+function beforeToday(value) {
+  const day = typeof value === 'string' ? value.slice(0, 10) : new Date(value).toISOString().slice(0, 10);
+  return day < new Date().toLocaleDateString('en-CA');
+}
+
 /** As many as one request may remove at once. A mistake should stay small. */
 const MAX_DELETE = 200;
 
@@ -854,16 +943,24 @@ export function deletableBy(user, ticket) {
  * Two people may do it: a manager, at any time, and whoever raised the ticket,
  * for a short while after raising it.
  */
-async function removeTickets(ids, actor) {
+async function removeTickets(ids, actor, rawReason) {
   const valid = [...new Set(ids.filter((id) => mongoose.isValidObjectId(id)))];
   if (valid.length === 0) throw ApiError.badRequest('No ticket was named.');
+
+  // Why it went is the one thing the department that was asked cannot work
+  // out for themselves, so it is required and travels with the bell and the log.
+  const reason = typeof rawReason === 'string' ? rawReason.trim() : '';
+  if (reason.length < 3) throw ApiError.badRequest('Say why the ticket is being deleted.');
+  if (reason.length > MAX_DELETE_REASON) {
+    throw ApiError.badRequest(`Keep the reason under ${MAX_DELETE_REASON} characters.`);
+  }
   if (valid.length > MAX_DELETE) {
     throw ApiError.badRequest(`Delete at most ${MAX_DELETE} tickets at a time.`);
   }
 
   const tickets = await Ticket.find({ _id: { $in: valid } })
     .populate('department', 'name')
-    .select('number subject department raisedBy createdAt');
+    .select('number subject department raisedBy assignees createdAt');
 
   if (tickets.length === 0) throw ApiError.notFound('Ticket not found.');
 
@@ -887,13 +984,21 @@ async function removeTickets(ids, actor) {
       actor,
       department: ticket.department,
       action: 'ticket.deleted',
-      summary: `deleted ${ticket.number} "${ticket.subject}"`,
+      summary: `deleted ${ticket.number} "${ticket.subject}" · reason: ${reason}`,
       ticketNumber: ticket.number,
     });
   }
 
+  // The people who would otherwise go looking for it: whoever holds it, the
+  // head of the department it was sent to, and the raiser when somebody else
+  // removed it. Sent after the reply, like every other bell.
+  for (const ticket of tickets) void notifyTicketDeleted({ ticket, actor, reason });
+
   return tickets;
 }
+
+/** Long enough for a sentence, short enough to read in a bell. */
+const MAX_DELETE_REASON = 300;
 
 /**
  * Hands a batch of tickets to the same people at once.
@@ -1063,7 +1168,12 @@ export async function reassignTickets(req, res) {
       ticketNumber: populated.number,
     });
     // eslint-disable-next-line no-await-in-loop
-    await notifyTicketUpdated({ ticket: populated, actor: req.user, summary });
+    await notifyTicketUpdated({
+      ticket: populated,
+      actor: req.user,
+      summary,
+      event: changingDepartment ? 'moved' : 'assigned',
+    });
   }
 
   res.json({
@@ -1076,16 +1186,16 @@ export async function reassignTickets(req, res) {
 
 /** One ticket, by id. */
 export async function deleteTicket(req, res) {
-  const [ticket] = await removeTickets([req.params.id], req.user);
+  const [ticket] = await removeTickets([req.params.id], req.user, req.body?.reason);
   res.json({ success: true, deleted: 1, numbers: [ticket.number] });
 }
 
 /** Several at once: `{ ids: [...] }`. */
 export async function deleteTickets(req, res) {
-  const { ids } = req.body ?? {};
+  const { ids, reason } = req.body ?? {};
   if (!Array.isArray(ids)) throw ApiError.badRequest('Send the tickets to delete as a list.');
 
-  const removed = await removeTickets(ids, req.user);
+  const removed = await removeTickets(ids, req.user, reason);
   res.json({
     success: true,
     deleted: removed.length,
@@ -1123,6 +1233,7 @@ export async function updateTicket(req, res) {
     deadline,
     committedDeadline,
     committedReason,
+    cancelReason,
     assignees,
     priority,
     subject,
@@ -1131,16 +1242,33 @@ export async function updateTicket(req, res) {
     project,
   } = req.body ?? {};
 
-  // Status is how a department works a ticket: theirs alone. A raiser asks for
-  // things and is told when they are done; they do not declare it themselves.
+  /**
+   * Status is how a department works a ticket: theirs alone. A raiser asks for
+   * things and is told when they are done; they do not declare it themselves.
+   *
+   * With one exception, which is not working the ticket at all: withdrawing
+   * the request. What was asked for is the raiser's, so they may call it off -
+   * with a reason, like anyone else - right up until the department has
+   * finished it. After that there is nothing left to withdraw.
+   */
   if (!worksIt && status !== undefined) {
-    throw ApiError.forbidden('Only the receiving department can change the status.');
+    const withdrawing = raisedByMe && status === 'Cancelled';
+
+    if (!withdrawing) {
+      throw ApiError.forbidden('Only the receiving department can change the status.');
+    }
+    if (CLOSED_STATUSES.includes(ticket.status)) {
+      throw ApiError.badRequest(
+        ticket.status === 'Cancelled'
+          ? 'This request has already been cancelled.'
+          : 'This request is already finished, so there is nothing to withdraw.',
+      );
+    }
   }
 
-  // Who holds it is theirs and the raiser's, for the reason in assignsDirectly:
-  // naming somebody is part of asking. Which of them may do it without the
-  // other's agreement is decided there, further down.
-  if (!worksIt && !raisedByMe && assignees !== undefined) {
+  // Who holds it belongs to the department doing the work. Raising a request
+  // says what is needed and by when; it does not say who has to do it.
+  if (!worksIt && assignees !== undefined) {
     throw ApiError.forbidden('Only the receiving department can hand this ticket on.');
   }
 
@@ -1187,6 +1315,22 @@ export async function updateTicket(req, res) {
     if (!TICKET_STATUSES.includes(status)) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
     }
+
+    // Calling a ticket off always says why: the person who asked is told, and
+    // "cancelled" on its own answers nothing.
+    if (status === 'Cancelled' && ticket.status !== 'Cancelled') {
+      const why = typeof cancelReason === 'string' ? cancelReason.trim() : '';
+      if (why.length < 3) throw ApiError.badRequest('Say why the ticket is being cancelled.');
+      if (why.length > 400) throw ApiError.badRequest('Keep the reason under 400 characters.');
+      ticket.cancelReason = why;
+      ticket.cancelledByName = req.user.name;
+      ticket.cancelledAt = new Date();
+    } else if (status !== 'Cancelled' && ticket.status === 'Cancelled') {
+      // Reopened: the old reason no longer describes it.
+      ticket.cancelReason = '';
+      ticket.cancelledByName = '';
+      ticket.cancelledAt = null;
+    }
     ticket.status = status;
   }
 
@@ -1225,6 +1369,11 @@ export async function updateTicket(req, res) {
     if (!deadline) throw ApiError.badRequest('Deadline is required.');
     const parsed = new Date(deadline);
     if (Number.isNaN(parsed.getTime())) throw ApiError.badRequest('Invalid deadline.');
+    // Only a new date is judged: resending the one an old ticket already has
+    // must not be refused just because that day has gone.
+    if (asDay(parsed) !== asDay(ticket.deadline) && beforeToday(deadline)) {
+      throw ApiError.badRequest('The deadline cannot be in the past.');
+    }
     ticket.deadline = parsed;
   }
 
@@ -1241,6 +1390,9 @@ export async function updateTicket(req, res) {
     // Only a real move counts. The sheet sends this field on every save, so
     // resending the date already promised must not demand a fresh reason.
     const moved = asDay(parsed) !== asDay(ticket.committedDeadline);
+    if (moved && parsed && beforeToday(committedDeadline)) {
+      throw ApiError.badRequest('The promised date cannot be in the past.');
+    }
 
     if (moved) {
       const why = typeof committedReason === 'string' ? committedReason.trim() : '';
@@ -1357,7 +1509,11 @@ export async function updateTicket(req, res) {
 
   const changes = [];
   if (before.status !== populated.status) {
-    changes.push(`status ${before.status} -> ${populated.status}`);
+    changes.push(
+      populated.status === 'Cancelled'
+        ? `cancelled the ticket - ${populated.cancelReason}`
+        : `status ${before.status} -> ${populated.status}`,
+    );
   }
   if (before.priority !== populated.priority) {
     changes.push(`priority ${before.priority} -> ${populated.priority}`);
@@ -1428,12 +1584,32 @@ export async function updateTicket(req, res) {
       ticketNumber: populated.number,
     });
 
+    /**
+     * The headline of what just happened, for the colour the bell wears.
+     *
+     * One save can move several things at once, so they are ranked by what a
+     * reader would call the event: a ticket that was finished is news whatever
+     * else moved with it.
+     */
+    const event =
+      populated.status === 'Cancelled' && before.status !== 'Cancelled'
+        ? 'cancelled'
+        : populated.status === 'Completed' && before.status !== 'Completed'
+          ? 'completed'
+          : before.status !== populated.status
+            ? 'status'
+            : before.committedDeadline !== nowCommitted
+              ? 'promise'
+              : before.assignees !== nowAssignees.join(',')
+                ? 'assigned'
+                : 'edited';
+
     // Who hears about it depends on which side moved: the raiser editing their
     // own request is news for the department, not for themselves.
     if (raisedByMe && !worksIt) {
-      await notifyTicketEdited({ ticket: populated, actor: req.user, summary });
+      await notifyTicketEdited({ ticket: populated, actor: req.user, summary, event });
     } else {
-      await notifyTicketUpdated({ ticket: populated, actor: req.user, summary });
+      await notifyTicketUpdated({ ticket: populated, actor: req.user, summary, event });
     }
   }
 

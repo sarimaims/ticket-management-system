@@ -28,6 +28,7 @@ export type Member = {
   id: string;
   name: string;
   email: string;
+  phone: string;
   role: "superadmin" | "user";
   status: "active" | "invited" | "suspended";
   departments: Membership[];
@@ -172,6 +173,8 @@ export function addMember(
   input: {
     name?: string;
     email: string;
+    /** Required for a new account; an existing one keeps the number it has. */
+    phone?: string;
     password?: string;
     role: DepartmentRole;
   },

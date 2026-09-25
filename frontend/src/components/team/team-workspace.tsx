@@ -1,13 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertCircle, Building2, Eye, EyeOff, Search, UserPlus } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { UserLink } from "@/components/users/user-profile";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
+import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
@@ -63,7 +67,12 @@ export function TeamWorkspace() {
   const [query, setQuery] = useState("");
   /** Unit and department are the same axis at two depths, so they are one. */
   const [where, setWhere] = useState<ScopeValue>({ units: [], departments: [] });
-  const [roles, setRoles] = useState<string[]>([]);
+  // A tile elsewhere can link straight to a role: `?role=head` or `?role=team`.
+  const params = useSearchParams();
+  const [roles, setRoles] = useState<string[]>(() => {
+    const named = params.get("role");
+    return named === "head" || named === "team" ? [named] : [];
+  });
   const [statuses, setStatuses] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
 
@@ -127,7 +136,8 @@ export function TeamWorkspace() {
     const term = query.trim().toLowerCase();
 
     return users.filter((user) => {
-      if (term && !`${user.name} ${user.email}`.toLowerCase().includes(term)) return false;
+      if (term && !`${user.name} ${user.email} ${user.phone ?? ""}`.toLowerCase().includes(term))
+        return false;
       if (statuses.length > 0 && !statuses.includes(user.status)) return false;
       if (roles.length > 0 && !roles.includes(roleHere(user))) return false;
 
@@ -154,24 +164,28 @@ export function TeamWorkspace() {
         value: users.length,
         caption: mine.length === 1 ? (mine[0].name ?? "Your department") : `${mine.length} departments`,
         tone: "new",
+        key: "all",
       },
       {
         label: "Heads",
         value: users.filter((user) => roleHere(user) === "head").length,
         caption: "Running a department",
         tone: "admin",
+        key: "head",
       },
       {
         label: "Active",
         value: users.filter((user) => user.status === "active").length,
         caption: "Signed in and working",
         tone: "completed",
+        key: "active",
       },
       {
         label: "Suspended",
         value: users.filter((user) => user.status === "suspended").length,
         caption: "Access revoked",
         tone: "overdue",
+        key: "suspended",
       },
     ],
     [users, mine, roleHere],
@@ -181,7 +195,28 @@ export function TeamWorkspace() {
     <>
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} />
+      {/* Team Members clears both filters; Heads narrows by role, the other
+          two by status. Clicking the lit tile lets go of it. */}
+      <StatTiles
+        stats={stats}
+        loading={loading}
+        active={
+          roles.length === 1 && statuses.length === 0
+            ? roles[0]
+            : statuses.length === 1 && roles.length === 0
+              ? statuses[0]
+              : roles.length === 0 && statuses.length === 0
+                ? "all"
+                : null
+        }
+        onSelect={(key) => {
+          const lit =
+            (roles.length === 1 && roles[0] === key) ||
+            (statuses.length === 1 && statuses[0] === key);
+          setRoles(key === "head" && !lit ? ["head"] : []);
+          setStatuses((key === "active" || key === "suspended") && !lit ? [key] : []);
+        }}
+      />
 
       <Card className="mt-3 overflow-hidden">
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">
@@ -288,7 +323,11 @@ export function TeamWorkspace() {
                           />
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-semibold text-ink-900">
-                              {user.name}
+                              <UserLink
+                                id={user.id}
+                                name={user.name}
+                                className="hover:text-brand-600"
+                              />
                               {user.id === session?.id && (
                                 <span className="ml-1.5 rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
                                   You
@@ -297,6 +336,9 @@ export function TeamWorkspace() {
                             </span>
                             <span className="block truncate text-[11px] text-ink-500">
                               {user.email}
+                            </span>
+                            <span className="block truncate text-[11px] text-ink-500">
+                              {formatPhone(user.phone) || "No phone number"}
                             </span>
                           </span>
                         </span>
@@ -383,6 +425,7 @@ function AddUserModal({
   const [departmentId, setDepartmentId] = useState(departments[0]?.id ?? "");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState(false);
   const [role, setRole] = useState<DepartmentRole>("team");
@@ -396,6 +439,7 @@ function AddUserModal({
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setError("Enter a valid email address.");
     }
+    if (!isPhone(phone)) return setError(PHONE_HELP);
     if (password.length < MIN_PASSWORD) {
       return setError(`Password must be at least ${MIN_PASSWORD} characters.`);
     }
@@ -405,6 +449,7 @@ function AddUserModal({
       const member = await addMember(departmentId, {
         name: name.trim(),
         email: email.trim(),
+        phone: toStoredPhone(phone),
         password,
         role,
       });
@@ -450,6 +495,16 @@ function AddUserModal({
             />
           </Field>
         </div>
+
+        <Field label="Phone number" required htmlFor="team-phone">
+          <PhoneInput
+            id="team-phone"
+            className="h-9"
+            placeholder="+971 50 123 4567"
+            value={phone}
+            onChange={setPhone}
+          />
+        </Field>
 
         <div className="grid gap-3.5 sm:grid-cols-2">
           {/* Only the departments this person runs: the API refuses any other,

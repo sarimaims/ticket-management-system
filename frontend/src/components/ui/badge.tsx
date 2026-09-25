@@ -10,6 +10,8 @@ const STATUS_STYLES: Record<TicketStatus, string> = {
   New: "bg-status-new-bg text-status-new-fg",
   "In Progress": "bg-status-progress-bg text-status-progress-fg",
   Completed: "bg-status-completed-bg text-status-completed-fg",
+  // Called off rather than done: quiet grey, so it reads as closed but not won.
+  Cancelled: "bg-ink-100 text-ink-500",
   Overdue: "bg-status-overdue-bg text-status-overdue-fg",
 };
 

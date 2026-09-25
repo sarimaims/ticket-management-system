@@ -42,16 +42,16 @@ const DEPARTMENTS = [
  * people picker look broken the first time it is opened on one.
  */
 const MEMBERS = [
-  { name: 'Yusra Kamal', email: 'yusra.kamal@flowdesk.com', department: 'Patient Experience', role: 'head' },
-  { name: 'Hassan Raza', email: 'hassan.raza@flowdesk.com', department: 'Patient Experience', role: 'team' },
-  { name: 'Iqra Shahid', email: 'iqra.shahid@flowdesk.com', department: 'Dental', role: 'head' },
-  { name: 'Waleed Akram', email: 'waleed.akram@flowdesk.com', department: 'Dental', role: 'team' },
-  { name: 'Sadia Raheel', email: 'sadia.raheel@flowdesk.com', department: 'Clinical Training', role: 'head' },
-  { name: 'Bilal Munir', email: 'bilal.munir@flowdesk.com', department: 'Clinical Training', role: 'team' },
-  { name: 'Nauman Sheikh', email: 'nauman.sheikh@flowdesk.com', department: 'Compliance', role: 'head' },
-  { name: 'Anum Zafar', email: 'anum.zafar@flowdesk.com', department: 'Compliance', role: 'team' },
-  { name: 'Rehan Abbasi', email: 'rehan.abbasi@flowdesk.com', department: 'Internal Audit', role: 'head' },
-  { name: 'Komal Ashraf', email: 'komal.ashraf@flowdesk.com', department: 'Internal Audit', role: 'team' },
+  { name: 'Yusra Kamal', email: 'yusra.kamal@flowdesk.com', phone: '+971501000101', department: 'Patient Experience', role: 'head' },
+  { name: 'Hassan Raza', email: 'hassan.raza@flowdesk.com', phone: '+971501000102', department: 'Patient Experience', role: 'team' },
+  { name: 'Iqra Shahid', email: 'iqra.shahid@flowdesk.com', phone: '+971501000103', department: 'Dental', role: 'head' },
+  { name: 'Waleed Akram', email: 'waleed.akram@flowdesk.com', phone: '+971501000104', department: 'Dental', role: 'team' },
+  { name: 'Sadia Raheel', email: 'sadia.raheel@flowdesk.com', phone: '+971501000105', department: 'Clinical Training', role: 'head' },
+  { name: 'Bilal Munir', email: 'bilal.munir@flowdesk.com', phone: '+971501000106', department: 'Clinical Training', role: 'team' },
+  { name: 'Nauman Sheikh', email: 'nauman.sheikh@flowdesk.com', phone: '+971501000107', department: 'Compliance', role: 'head' },
+  { name: 'Anum Zafar', email: 'anum.zafar@flowdesk.com', phone: '+971501000108', department: 'Compliance', role: 'team' },
+  { name: 'Rehan Abbasi', email: 'rehan.abbasi@flowdesk.com', phone: '+971501000109', department: 'Internal Audit', role: 'head' },
+  { name: 'Komal Ashraf', email: 'komal.ashraf@flowdesk.com', phone: '+971501000110', department: 'Internal Audit', role: 'team' },
 ];
 
 /**
@@ -374,6 +374,7 @@ async function run() {
       user = await User.create({
         name: entry.name,
         email: entry.email,
+        phone: entry.phone,
         password: MEMBER_PASSWORD,
         role: 'user',
         status: 'active',

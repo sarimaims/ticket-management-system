@@ -36,6 +36,8 @@ export type Session = {
   id: string;
   name: string;
   email: string;
+  /** Empty only on an account made before the field existed. */
+  phone: string;
   role: Role;
   status: "active" | "invited" | "suspended";
   departments: Membership[];
@@ -74,6 +76,16 @@ export function changePassword(currentPassword: string, newPassword: string) {
     method: "POST",
     body: { currentPassword, newPassword },
   });
+}
+
+/**
+ * Your own phone number. It can be set and it can be changed; it cannot be
+ * emptied, because colleagues are given it on every ticket you raise.
+ */
+export function changePhone(phone: string) {
+  return api<UserResponse>("/auth/phone", { method: "POST", body: { phone } }).then(
+    (data) => data.user,
+  );
 }
 
 export function logout() {

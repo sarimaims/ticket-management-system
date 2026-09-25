@@ -10,13 +10,14 @@ import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Roughly how tall the open list is, used to decide which way it opens. */
-const LIST_HEIGHT = 196;
+const LIST_HEIGHT = 232;
 
 /** A filled dot per status, so the list reads by colour before it is read. */
 const DOTS: Record<TicketStatus, string> = {
   New: "bg-status-new-fg",
   "In Progress": "bg-status-progress-fg",
   Completed: "bg-status-completed-fg",
+  Cancelled: "bg-ink-400",
   Overdue: "bg-status-overdue-fg",
 };
 

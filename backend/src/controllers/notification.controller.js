@@ -9,6 +9,8 @@ function present(item) {
   return {
     id: String(item._id),
     type: item.type,
+    /** The finer action. Null on rows written before it existed. */
+    event: item.event ?? null,
     ticket: item.ticket ? String(item.ticket) : null,
     ticketNumber: item.ticketNumber,
     title: item.title,

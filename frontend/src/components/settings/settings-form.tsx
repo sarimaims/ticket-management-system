@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Lock, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, Lock, Phone, ShieldCheck } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ import { Field, Input } from "@/components/ui/field";
 import { RoleTag } from "@/components/ui/badge";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/ui/toast";
-import { avatarTone, changePassword, initials, ROLE_LABEL } from "@/lib/auth";
+import { avatarTone, changePassword, changePhone, initials, ROLE_LABEL } from "@/lib/auth";
+import { formatPhone } from "@/lib/phone";
 import { errorMessage } from "@/lib/api";
 
 /** The same floor the API enforces, said out loud before it is hit. */
@@ -248,6 +249,105 @@ function PasswordCard() {
   );
 }
 
+/**
+ * Your own number, in place.
+ *
+ * Set it once and it can be changed as often as you like; what it cannot be is
+ * emptied. Colleagues are given this number on every ticket you raise, so an
+ * account that can quietly blank it is an account nobody can reach - and the
+ * button that would do it is simply not here, rather than being offered and
+ * refused.
+ */
+function PhoneLine() {
+  const { session, setSession } = useAuth();
+  const toast = useToast();
+
+  const current = session?.phone ?? "";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(current);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+
+  const open = () => {
+    setDraft(current);
+    setError("");
+    setEditing(true);
+  };
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!draft.trim()) {
+      setError("A number cannot be removed, only changed.");
+      return;
+    }
+
+    setPending(true);
+    try {
+      const saved = await changePhone(draft.trim());
+      setSession(saved);
+      setEditing(false);
+      toast.success("Phone number saved", formatPhone(saved.phone));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <p className="flex items-center gap-1.5 truncate text-[11px] text-ink-400">
+        <Phone className="size-3 shrink-0" />
+        {formatPhone(current) || "No phone number yet"}
+        <button
+          type="button"
+          onClick={open}
+          className="rounded px-1 font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+        >
+          {current ? "Change" : "Add"}
+        </button>
+      </p>
+    );
+  }
+
+  return (
+    <form className="mt-1 flex items-start gap-1.5" onSubmit={submit}>
+      <span className="min-w-0 flex-1">
+        <Input
+          autoFocus
+          id="profile-phone"
+          className="h-8 text-[12px]"
+          inputMode="tel"
+          placeholder="+971 50 123 4567"
+          aria-label="Your phone number"
+          value={draft}
+          invalid={Boolean(error)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setError("");
+          }}
+        />
+        {error && <span className="mt-0.5 block text-[10px] font-medium text-brand-600">{error}</span>}
+      </span>
+
+      <Button type="submit" size="sm" className="h-8 shrink-0" disabled={pending}>
+        {pending ? "Saving…" : "Save"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 shrink-0"
+        onClick={() => setEditing(false)}
+        disabled={pending}
+      >
+        Cancel
+      </Button>
+    </form>
+  );
+}
+
 export function SettingsForm() {
   const { session } = useAuth();
 
@@ -276,6 +376,9 @@ export function SettingsForm() {
               {name || "Your account"}
             </p>
             <p className="truncate text-[11px] text-ink-400">{email}</p>
+            {/* The number colleagues are given when a ticket has to be
+                chased off the thread. Yours to set and to change. */}
+            <PhoneLine />
           </div>
           {session?.role && (
             <span className="shrink-0 rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">
@@ -308,7 +411,8 @@ export function SettingsForm() {
         </div>
 
         <p className="border-t border-line px-3.5 py-2 text-[11px] text-ink-400">
-          Your name and email appear on every ticket you raise. Ask an admin to change them.
+          Your name, email and phone number appear on every ticket you raise. The number is
+          yours to keep current; ask an admin to change your name or email.
         </p>
       </Card>
 

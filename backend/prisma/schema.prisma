@@ -74,6 +74,9 @@ model User {
   id           String       @id @default(auto()) @map("_id") @db.ObjectId
   name         String
   email        String       @unique
+  /// Required by the app on every write. Optional here only because accounts
+  /// made before the field existed have none until they are next edited.
+  phone        String?
   /// bcrypt hash. Mongoose marks this `select: false`; Prisma has no such
   /// flag, so never hand a raw user object to a response.
   password     String
@@ -94,6 +97,7 @@ model User {
   threadReads        ThreadRead[]
 
   @@index([memberships.departmentId])
+  @@index([phone])
   @@map("users")
 }
 

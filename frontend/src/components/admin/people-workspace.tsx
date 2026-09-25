@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   Eye,
@@ -22,6 +24,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { UserLink } from "@/components/users/user-profile";
+import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
@@ -84,18 +89,21 @@ function statsFor(users: DirectoryUser[], scope: Scope): Stat[] {
       value: users.length,
       caption: "In this directory",
       tone: "new",
+      key: "all",
     },
     {
       label: "Active",
       value: count((user) => user.status === "active"),
       caption: "Signed in and working",
       tone: "completed",
+      key: "active",
     },
     {
       label: "Suspended",
       value: count((user) => user.status === "suspended"),
       caption: "Access revoked",
       tone: "overdue",
+      key: "suspended",
     },
   ];
 }
@@ -122,21 +130,15 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   /** Unit and department are the same axis at two depths, so they are one. */
   const [where, setWhere] = useState<ScopeValue>({ units: [], departments: [] });
 
-  // The units represented by the departments in this workspace. One person
-  // can hold departments in several of them, so both are worth filtering by
-  // and worth naming on the chips - but only once there is more than one.
-  const units = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string }>();
-    for (const item of departments) {
-      if (item.unit?.id && !seen.has(item.unit.id)) {
-        seen.set(item.unit.id, { id: item.unit.id, name: item.unit.name ?? "Unit" });
-      }
-    }
-    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [departments]);
-  const manyUnits = units.length > 1;
+  // The units used to be counted here, to decide whether naming one on a chip
+  // was worth the room. The chips name it either way now, so the count went.
   const [statuses, setStatuses] = useState<string[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
+  // A tile elsewhere can link straight to a role: `?role=head` or `?role=team`.
+  const params = useSearchParams();
+  const [roles, setRoles] = useState<string[]>(() => {
+    const named = params.get("role");
+    return named === "head" || named === "team" ? [named] : [];
+  });
 
   const [editing, setEditing] = useState<DirectoryUser | null>(null);
   const [removing, setRemoving] = useState<DirectoryUser | null>(null);
@@ -147,7 +149,13 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        setUsers(await listUsers({ role: scopeRole || undefined }, signal));
+        const found = await listUsers({ role: scopeRole || undefined }, signal);
+        // Admins have their own page; the user directory is the org chart only.
+        setUsers(
+          scope === "admins"
+            ? found
+            : found.filter((user) => user.role !== "admin" && user.role !== "superadmin"),
+        );
         setError("");
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -159,7 +167,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [scopeRole],
+    [scope, scopeRole],
   );
 
   useEffect(() => {
@@ -190,7 +198,12 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
     return users.filter((user) => {
-      if (term && !`${user.name} ${user.email} ${shortId(user.id)}`.toLowerCase().includes(term))
+      if (
+        term &&
+        !`${user.name} ${user.email} ${user.phone ?? ""} ${shortId(user.id)}`
+          .toLowerCase()
+          .includes(term)
+      )
         return false;
       // An empty filter asks nothing of the row, so it lets everything past.
       // A ticked unit means everything under it, so either half of the answer
@@ -224,7 +237,16 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     <>
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} />
+      {/* The tiles are the status filter at a glance: Total clears it, the
+          other two narrow the list to what they count. */}
+      <StatTiles
+        stats={stats}
+        loading={loading}
+        active={statuses.length === 1 ? statuses[0] : statuses.length === 0 ? "all" : null}
+        onSelect={(key) =>
+          setStatuses(key === "all" || (statuses.length === 1 && statuses[0] === key) ? [] : [key])
+        }
+      />
 
       <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-3 py-2.5">
@@ -232,7 +254,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <Input
               className="h-8 text-[13px]"
               icon={<Search className="text-ink-400" />}
-              placeholder="Search by name, email or user ID..."
+              placeholder="Search by name, email, phone or user ID..."
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               aria-label="Search people"
@@ -250,12 +272,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             <div className="min-w-[132px] flex-1 lg:w-40 lg:flex-none">
               <MultiSelect
                 options={[
-                  // The API does not send the super admin to an admin, so the
-                  // filter does not offer a choice that can only return none.
-                  ...(session?.role === "superadmin"
-                    ? [{ value: "superadmin", label: "Super Admin" }]
-                    : []),
-                  { value: "admin", label: "Admin" },
+                  // Admins are listed under Admin Access, not here.
                   { value: "head", label: "Head" },
                   { value: "team", label: "User" },
                 ]}
@@ -325,8 +342,17 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                             className="size-8 text-[11px]"
                           />
                         <span className="min-w-0">
-                          <span className="block font-semibold text-ink-900">{user.name}</span>
+                          <UserLink
+                            id={user.id}
+                            name={user.name}
+                            className="block font-semibold text-ink-900 hover:text-brand-600"
+                          />
                           <span className="block truncate text-xs text-ink-400">{user.email}</span>
+                          {/* The way to reach them when the ticket cannot
+                              wait for a reply in the thread. */}
+                          <span className="block truncate text-xs text-ink-400">
+                            {formatPhone(user.phone) || "No phone number"}
+                          </span>
                         </span>
                       </span>
                     </TableCell>
@@ -339,13 +365,17 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                           {user.departments.map((item) => (
                             <span
                               key={item.id}
-                              className="inline-flex items-center gap-1 rounded-md bg-ink-100 py-0.5 pr-1 pl-2 text-[11px] font-medium text-ink-600"
+                              className="inline-flex items-center gap-1 rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600"
                             >
-                              {manyUnits && item.unit?.name && (
+                              {/* Where the department sits, always - one unit
+                                  today is two tomorrow, and a department name
+                                  on its own does not say which one it is.
+                                  What they are inside it is the Role column's
+                                  question, asked once, on the right. */}
+                              {item.unit?.name && (
                                 <span className="text-ink-400">{item.unit.name} ·</span>
                               )}
                               {item.name ?? "Department"}
-                              <RoleTag role={item.role} className="px-1 py-0 text-[10px]" />
                             </span>
                           ))}
                         </span>
@@ -499,6 +529,7 @@ function CreatePersonModal({
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [memberships, setMemberships] = useState<MembershipInput[]>([]);
@@ -514,6 +545,7 @@ function CreatePersonModal({
   const close = () => {
     setName("");
     setEmail("");
+    setPhone("");
     setPassword("");
     setShowPassword(false);
     setMemberships([]);
@@ -529,6 +561,7 @@ function CreatePersonModal({
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setError("Enter a valid email address.");
     }
+    if (!isPhone(phone)) return setError(PHONE_HELP);
     if (password.length < 8) return setError("Password must be at least 8 characters.");
     // A member with no department cannot raise from anywhere or be asked for
     // anything, so the account would be created unusable.
@@ -542,6 +575,7 @@ function CreatePersonModal({
       const created = await createUser({
         name: name.trim(),
         email: email.trim(),
+        phone: toStoredPhone(phone),
         password,
         role,
         // An admin holds no departments, so the picker's value is not sent.
@@ -607,7 +641,19 @@ function CreatePersonModal({
           </Field>
         </div>
 
-        <div className="grid gap-3.5">
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field label="Phone number" required htmlFor="person-phone">
+            <PhoneInput
+              id="person-phone"
+              placeholder="+971 50 123 4567"
+              value={phone}
+              onChange={setPhone}
+              name="person-phone"
+              autoComplete="off"
+              data-1p-ignore
+            />
+          </Field>
+
           <Field label="Temporary password" required htmlFor="person-password">
             <Input
               id="person-password"
@@ -682,6 +728,9 @@ function CreatePersonModal({
 
 /* ------------------------------------------------------------------ menu */
 
+/** Roughly how tall the open menu is, used to decide which way it opens. */
+const MENU_HEIGHT = 148;
+
 function RowMenu({
   user,
   isSelf,
@@ -696,21 +745,55 @@ function RowMenu({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  /** Where the menu is pinned, in viewport coordinates. */
+  const [at, setAt] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  /**
+   * Pinned to the window rather than to the row.
+   *
+   * Inside the row it was clipped by the table's own scroll box and drawn over
+   * the footer beneath it, so the last row's menu was the one you could not
+   * read. Here it opens upwards when the bottom of the window is close.
+   */
+  const place = () => {
+    const rect = trigger.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const room = window.innerHeight - rect.bottom;
+    setAt({
+      right: Math.max(8, window.innerWidth - rect.right),
+      ...(room > MENU_HEIGHT
+        ? { top: rect.bottom + 6 }
+        : { bottom: Math.max(8, window.innerHeight - rect.top + 6) }),
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const inRoot = root.current?.contains(event.target as Node);
+      // The menu itself lives at the end of the body now, so "inside the row"
+      // is no longer the same question as "inside the menu".
+      const inMenu = (event.target as HTMLElement).closest?.("[data-row-menu]");
+      if (!inRoot && !inMenu) setOpen(false);
     };
+    // A menu pinned to a row cannot follow it, so it closes when the page moves.
+    const onScroll = () => setOpen(false);
+    const onResize = () => place();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
 
@@ -720,8 +803,12 @@ function RowMenu({
   return (
     <div ref={root} className="relative">
       <button
+        ref={trigger}
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          place();
+          setOpen((current) => !current);
+        }}
         aria-haspopup="menu"
         aria-expanded={open}
         className={ACTION_BTN}
@@ -730,10 +817,14 @@ function RowMenu({
         <MoreHorizontal className="size-4" />
       </button>
 
-      {open && (
+      {open &&
+        at &&
+        createPortal(
         <div
           role="menu"
-          className="absolute right-0 z-30 mt-1.5 w-52 rounded-field border border-line bg-surface p-1.5 shadow-xl shadow-ink-900/10"
+          data-row-menu
+          style={{ right: at.right, top: at.top, bottom: at.bottom }}
+          className="fixed z-50 w-52 rounded-field border border-line bg-surface p-1.5 shadow-xl shadow-ink-900/10"
         >
           <button
             type="button"
@@ -792,7 +883,8 @@ function RowMenu({
             <Trash2 className="size-4" />
             Delete user
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -850,6 +942,7 @@ function EditUserForm({
 }) {
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
+  const [phone, setPhone] = useState(user.phone ?? "");
   const [status, setStatus] = useState(user.status);
   const [role, setRole] = useState<"admin" | "user">(user.role === "admin" ? "admin" : "user");
   const [memberships, setMemberships] = useState<MembershipInput[]>(
@@ -878,6 +971,10 @@ function EditUserForm({
       setError("Enter a valid email address.");
       return;
     }
+    if (!isPhone(phone)) {
+      setError(PHONE_HELP);
+      return;
+    }
     if (password && password.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
@@ -896,6 +993,7 @@ function EditUserForm({
         await updateUser(user.id, {
           name: name.trim(),
           email: email.trim(),
+          phone: toStoredPhone(phone),
           ...(isManager ? {} : { memberships }),
           // Left blank means "keep the current password".
           ...(password ? { password } : {}),
@@ -930,6 +1028,16 @@ function EditUserForm({
             className="h-8"
             value={email}
             onChange={setEmail}
+          />
+        </Field>
+
+        <Field label="Phone number" required htmlFor="edit-phone">
+          <PhoneInput
+            id="edit-phone"
+            className="h-8"
+            placeholder="+971 50 123 4567"
+            value={phone}
+            onChange={setPhone}
           />
         </Field>
 

@@ -7,22 +7,26 @@ import User, { MANAGER_ROLES } from '../models/User.js';
 import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
 import { postSystemMessage } from '../services/chat.js';
-import { notifyHandoverAnswered, notifyHandoverAsked } from '../services/notify.js';
-import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
+import {
+  notifyHandoverAnswered,
+  notifyHandoverAsked,
+  notifyTicketUpdated,
+} from '../services/notify.js';
+import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
 
 /**
  * Who may move a ticket without being asked.
  *
  * A head runs the department and a manager oversees all of them, so both hand
- * work out directly. So does the person who raised it: they could name who
- * should pick it up while raising it, and that right does not expire at
- * submit - it is their request that is sitting there unanswered.
+ * work out directly. Nobody else does - least of all the person who raised it:
+ * asking for something is not the same as deciding whose desk it lands on, and
+ * a requester reaching into another department's rota is how work gets put on
+ * people who never agreed to it.
  *
  * Everyone else asks, and the person asked decides.
  */
 export function assignsDirectly(user, ticket) {
   if (MANAGER_ROLES.includes(user.role)) return true;
-  if (isRaiser(user, ticket)) return true;
   return user.roleInDepartment(ticket.department?._id ?? ticket.department) === 'head';
 }
 
@@ -277,10 +281,12 @@ export async function answerHandover(req, res) {
  * Gives a ticket back.
  *
  * The holder steps off it. Anyone else still on it keeps it; if that leaves
- * nobody, it goes back to the department's head, the same place a ticket
- * nobody was named for starts - "nobody's job" is not a state it should be
- * released into. Any ask this person still has out is withdrawn with it,
- * since they no longer have anything to hand on.
+ * nobody, it goes back to being unassigned - which is where a ticket nobody
+ * was named for starts, and means the same thing: it sits in the department's
+ * All Tickets for the head to hand out again.
+ *
+ * Any ask this person still has out is withdrawn with it, since they no
+ * longer have anything to hand on.
  */
 export async function releaseTicket(req, res) {
   const ticket = await readableTicket(req);
@@ -295,20 +301,11 @@ export async function releaseTicket(req, res) {
     throw ApiError.forbidden('Only somebody holding this ticket can release it.');
   }
 
-  const departmentId = ticket.department?._id ?? ticket.department;
   const from = await User.find({ _id: { $in: ticket.assignees ?? [] } }).select('name');
 
-  let held = holders.filter((id) => id !== me);
-  if (held.length === 0) {
-    const heads = await User.find({
-      _id: { $ne: req.user._id },
-      status: { $ne: 'suspended' },
-      memberships: { $elemMatch: { department: departmentId, role: 'head' } },
-    }).select('_id');
-    held = heads.map((person) => String(person._id));
-  }
-
-  ticket.assignees = held;
+  // Whoever is left, which is often nobody - and nobody is the answer: the
+  // head picks it up off the department's queue like any other unheld ticket.
+  ticket.assignees = holders.filter((id) => id !== me);
   await ticket.save();
 
   await HandoverRequest.updateMany(
@@ -331,7 +328,7 @@ export async function releaseTicket(req, res) {
     ticket,
     actor: req.user,
     event: 'assignment',
-    body: names ? `released this back to ${names}` : 'released this',
+    body: names ? `released this back to ${names}` : 'released this back to the department',
   });
 
   const populated = await Ticket.findById(ticket._id).populate('department', 'name');
@@ -341,6 +338,16 @@ export async function releaseTicket(req, res) {
     action: 'ticket.updated',
     summary: `updated ${populated.number}: ${names ? `assigned to ${names}` : 'released'}`,
     ticketNumber: populated.number,
+  });
+
+  // Work has just landed back on somebody's list without their asking for it.
+  // With nobody holding it that somebody is the head, which is exactly who the
+  // bell reaches for an unheld ticket.
+  await notifyTicketUpdated({
+    ticket: populated,
+    actor: req.user,
+    summary: names ? `released back to ${names}` : 'released back to the department',
+    event: 'assigned',
   });
 
   res.json({

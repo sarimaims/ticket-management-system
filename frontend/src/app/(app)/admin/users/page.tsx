@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -18,7 +19,9 @@ export default function AdminUsersPage() {
           { label: "Users" },
         ]}
       />
-      <PeopleWorkspace scope="all" />
+      <Suspense>
+        <PeopleWorkspace scope="all" />
+      </Suspense>
     </>
   );
 }

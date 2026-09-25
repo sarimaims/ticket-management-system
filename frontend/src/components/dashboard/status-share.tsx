@@ -10,6 +10,7 @@ const SEGMENT_COLOR: Record<TicketStatus, string> = {
   New: "var(--color-status-new-fg)",
   "In Progress": "var(--color-status-progress-fg)",
   Completed: "var(--color-status-completed-fg)",
+  Cancelled: "var(--color-ink-400)",
   Overdue: "var(--color-status-overdue-fg)",
 };
 

@@ -31,6 +31,7 @@ import {
   type MessageRecord,
 } from "@/lib/messages";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
+import { UserLink } from "@/components/users/user-profile";
 
 /** Roughly how tall the panel is, used to decide which way it opens. */
 const PANEL_HEIGHT = 220;
@@ -506,9 +507,11 @@ export function ChatMessage({
   // Never on your own lines: you know what you asked for.
   const header = showHeader && !mine && !gone && (
     <p className={cn("mb-1 flex flex-wrap items-center gap-1.5", image && "px-1 pt-0.5")}>
-      <span className={cn("text-[11px] leading-none font-bold", nameColour(message.author.id))}>
-        {message.author.name}
-      </span>
+      <UserLink
+        id={message.author.id}
+        name={message.author.name}
+        className={cn("text-[11px] leading-none font-bold", nameColour(message.author.id))}
+      />
       {raiser && (
         <span
           className="inline-flex items-center gap-0.5 rounded bg-chat-accent/15 px-1 py-px text-[9px] leading-none font-semibold text-chat-accent-strong"

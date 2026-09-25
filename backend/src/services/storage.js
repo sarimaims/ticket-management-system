@@ -240,14 +240,28 @@ export async function createUploadUrl({ key, contentType, size }) {
  * for a photo attached to an internal ticket. Set S3_PUBLIC_BASE_URL when the
  * bucket is behind a CDN and genuinely public.
  */
-export async function createDownloadUrl(key) {
+export async function createDownloadUrl(key, { saveAs } = {}) {
   if (env.s3.publicBaseUrl) {
     return `${env.s3.publicBaseUrl.replace(/\/+$/, '')}/${key}`;
   }
 
-  return getSignedUrl(s3(), new GetObjectCommand({ Bucket: env.s3.bucket, Key: key }), {
-    expiresIn: DOWNLOAD_URL_TTL,
-  });
+  // `saveAs` makes S3 answer with Content-Disposition: attachment, which is
+  // what turns a link into a save rather than a photo opening in a tab. The
+  // `download` attribute on an anchor cannot do it: the file comes from
+  // another origin.
+  const disposition = saveAs
+    ? `attachment; filename="${String(saveAs).replace(/[^\w.\-() ]/g, '_')}"`
+    : undefined;
+
+  return getSignedUrl(
+    s3(),
+    new GetObjectCommand({
+      Bucket: env.s3.bucket,
+      Key: key,
+      ...(disposition ? { ResponseContentDisposition: disposition } : {}),
+    }),
+    { expiresIn: DOWNLOAD_URL_TTL },
+  );
 }
 
 /**
@@ -257,6 +271,24 @@ export async function createDownloadUrl(key) {
  * upload that never finished - and so the recorded size and type are the
  * object's own, not the ones the client claimed.
  */
+/**
+ * The object's bytes, read through this API rather than handed out as a link.
+ *
+ * Only for building something out of several objects at once - a zip of a
+ * request's files. A single file still goes out as a redirect, because piping
+ * it through here would put every download on an Express worker for no gain.
+ */
+export async function readObject(key) {
+  const object = await s3()
+    .send(new GetObjectCommand({ Bucket: env.s3.bucket, Key: key }))
+    .catch((error) => {
+      if (isCredentialProblem(error)) throw new StorageUnavailable(credentialAdvice(error));
+      throw error;
+    });
+
+  return Buffer.from(await object.Body.transformToByteArray());
+}
+
 export async function describeObject(key) {
   const head = await s3()
     .send(new HeadObjectCommand({ Bucket: env.s3.bucket, Key: key }))

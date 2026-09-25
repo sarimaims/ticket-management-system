@@ -1,9 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { HandHelping, MessageSquare, PencilLine, RefreshCw, TicketPlus } from "lucide-react";
+import {
+  Building2,
+  CalendarClock,
+  CircleCheckBig,
+  CircleSlash,
+  HandHelping,
+  MessageSquare,
+  PencilLine,
+  RefreshCw,
+  TicketPlus,
+  Trash2,
+  UserRoundPlus,
+} from "lucide-react";
 
-import type { NotificationRecord, NotificationType } from "@/lib/notifications";
+import type {
+  NotificationEvent,
+  NotificationRecord,
+  NotificationType,
+} from "@/lib/notifications";
+import { useAuth } from "@/components/auth/auth-provider";
+import { canSeeAllTickets } from "@/lib/auth";
 import { chime } from "@/lib/chime";
 import { cn } from "@/lib/utils";
 
@@ -61,7 +79,7 @@ export function shortTime(iso: string) {
  * have hidden it, scrolls it into view and flashes it - so the click ends on
  * the row it was about rather than at the top of a list.
  */
-export const destination = (item: NotificationRecord) => {
+export const destination = (item: NotificationRecord, overseer = true) => {
   // The raiser reads a ticket on My Requests, the department on its own queue,
   // and a message goes to both - so the copy itself says which side it was
   // written for. Rows from before that flag fall back to the old rule: "new"
@@ -70,7 +88,11 @@ export const destination = (item: NotificationRecord) => {
   // All Tickets rather than Assigned to Me for the department's side: the
   // latter now lists only what is on you by name, and a notification must land
   // on a page that actually holds the row it is about.
-  const page = forRaiser ? "/my-requests" : "/all-tickets";
+  // A plain user has no All Tickets, so their side of it is Assigned to Me.
+  const page = forRaiser ? "/my-requests" : overseer ? "/all-tickets" : "/assigned-to-me";
+
+  // A deleted ticket has no row left to find, so it just opens the list.
+  if (item.type === "ticket.deleted") return page;
 
   // The id is exact; the number still finds the row if the id is missing.
   const key = item.ticket ?? item.ticketNumber;
@@ -79,9 +101,9 @@ export const destination = (item: NotificationRecord) => {
 
 type Meta = {
   icon: React.ComponentType<{ className?: string }>;
-  /** The filled circle behind the icon. */
+  /** The circle behind the icon: tinted, not filled. */
   badge: string;
-  /** The same colour as a bar down the edge of an unread row. */
+  /** The solid bar an unread row wears, in the same hue as the circle. */
   rail: string;
   label: string;
 };
@@ -89,53 +111,110 @@ type Meta = {
 /**
  * One look per kind of event, shared by the bell, the sheet and the toasts.
  *
- * Filled circles, not tints: the icon is the only thing in a row that can
- * carry colour, and washed out it left a feed of four different events reading
- * as one grey column. Each kind keeps the colour it already wears elsewhere in
- * the app - a request in the brand red, work in progress indigo, an edit
- * amber, and a message in the thread's own teal rather than the brand, so a
- * page of chat does not read as a page of alerts.
+ * Keyed on what happened rather than on which page it belongs to, because a
+ * reader scanning the feed is asking "what became of it", and four different
+ * answers all wearing the same update blue is four answers nobody can tell
+ * apart. The colours are the ones those states already wear on a ticket -
+ * green for finished, red for called off, amber for a date - so the feed and
+ * the table agree without anybody learning a second scheme.
  */
-export const TYPE_META: Record<NotificationType, Meta> = {
-  "ticket.new": {
+export const EVENT_META: Record<NotificationEvent, Meta> = {
+  raised: {
     icon: TicketPlus,
-    badge: "bg-brand-600 text-white",
+    badge: "bg-brand-50 text-brand-600",
     rail: "bg-brand-600",
     label: "New request",
   },
-  "ticket.updated": {
-    icon: RefreshCw,
-    badge: "bg-status-progress-fg text-white",
-    rail: "bg-status-progress-fg",
-    label: "Update",
+  completed: {
+    icon: CircleCheckBig,
+    badge: "bg-status-completed-bg text-status-completed-fg",
+    rail: "bg-status-completed-fg",
+    label: "Completed",
   },
-  "ticket.edited": {
-    icon: PencilLine,
-    badge: "bg-status-waiting-fg text-white",
+  cancelled: {
+    icon: CircleSlash,
+    badge: "bg-status-overdue-bg text-status-overdue-fg",
+    rail: "bg-status-overdue-fg",
+    label: "Cancelled",
+  },
+  status: {
+    icon: RefreshCw,
+    badge: "bg-status-progress-bg text-status-progress-fg",
+    rail: "bg-status-progress-fg",
+    label: "Status",
+  },
+  promise: {
+    icon: CalendarClock,
+    badge: "bg-status-waiting-bg text-status-waiting-fg",
     rail: "bg-status-waiting-fg",
+    label: "Deadline",
+  },
+  assigned: {
+    icon: UserRoundPlus,
+    badge: "bg-tile-admin-bg text-tile-admin-fg",
+    rail: "bg-tile-admin-fg",
+    label: "Assigned",
+  },
+  moved: {
+    icon: Building2,
+    badge: "bg-tile-admin-bg text-tile-admin-fg",
+    rail: "bg-tile-admin-fg",
+    label: "Moved",
+  },
+  edited: {
+    icon: PencilLine,
+    badge: "bg-status-accepted-bg text-status-accepted-fg",
+    rail: "bg-status-accepted-fg",
     label: "Edited",
   },
-  "ticket.message": {
+  message: {
     icon: MessageSquare,
-    badge: "bg-chat-accent text-white",
-    rail: "bg-chat-accent",
+    badge: "bg-ink-100 text-ink-600",
+    rail: "bg-ink-400",
     label: "Message",
   },
-  // An ask is the only notification that wants something back, so it wears
-  // the brand colour that everything actionable in this app wears.
-  "ticket.handover": {
+  handover: {
     icon: HandHelping,
-    badge: "bg-brand-600 text-white",
-    rail: "bg-brand-600",
-    label: "Asked of you",
+    badge: "bg-tile-admin-bg text-tile-admin-fg",
+    rail: "bg-tile-admin-fg",
+    label: "Handover",
   },
-  "ticket.handover.answered": {
+  "handover.answered": {
     icon: HandHelping,
-    badge: "bg-status-completed-fg text-white",
-    rail: "bg-status-completed-fg",
-    label: "Answered",
+    badge: "bg-tile-admin-bg text-tile-admin-fg",
+    rail: "bg-tile-admin-fg",
+    label: "Handover",
+  },
+  deleted: {
+    icon: Trash2,
+    badge: "bg-status-overdue-bg text-status-overdue-fg",
+    rail: "bg-status-overdue-fg",
+    label: "Deleted",
   },
 };
+
+/** What each broad type meant before the finer action was recorded. */
+const TYPE_FALLBACK: Record<NotificationType, NotificationEvent> = {
+  "ticket.new": "raised",
+  "ticket.updated": "status",
+  "ticket.edited": "edited",
+  "ticket.message": "message",
+  "ticket.handover": "handover",
+  "ticket.handover.answered": "handover.answered",
+  "ticket.deleted": "deleted",
+};
+
+/**
+ * Which action a row is, however old it is.
+ *
+ * Rows written before the action was recorded still have to read correctly, so
+ * a missing one falls back to what its type used to mean.
+ */
+export function eventOf(item: NotificationRecord): NotificationEvent {
+  return item.event ?? TYPE_FALLBACK[item.type] ?? "status";
+}
+
+export const metaFor = (item: NotificationRecord) => EVENT_META[eventOf(item)];
 
 /**
  * One notification, as a row rather than a card.
@@ -156,7 +235,8 @@ export function NotificationCard({
   onRead?: (id: string) => void | Promise<void>;
   compact?: boolean;
 }) {
-  const meta = TYPE_META[item.type] ?? TYPE_META["ticket.updated"];
+  const { session } = useAuth();
+  const meta = metaFor(item);
   const Icon = meta.icon;
 
   // The ticket number opens almost every headline. Pulled out, it can carry
@@ -168,7 +248,7 @@ export function NotificationCard({
 
   return (
     <Link
-      href={destination(item) as "/"}
+      href={destination(item, canSeeAllTickets(session)) as "/"}
       onClick={() => {
         if (!item.read) void onRead?.(item.id);
         onNavigate?.();

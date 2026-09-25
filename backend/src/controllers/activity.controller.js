@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import Activity from '../models/Activity.js';
+import Ticket from '../models/Ticket.js';
 import { MANAGER_ROLES } from '../models/User.js';
 
 const isManager = (user) => MANAGER_ROLES.includes(user.role);
@@ -28,9 +29,19 @@ function askedFor(department) {
 }
 
 /**
- * A department's own people see their departments' log and nothing else.
- * Managers see every department. Either may narrow with ?department=, which
- * takes several ids - "Finance and IT Support" is one question.
+ * Who reads what.
+ *
+ * A manager reads everything. A head reads the departments they run, all of
+ * it, because running a queue means knowing what is happening in it. Everyone
+ * else reads their own work: the tickets on their desk and the ones they
+ * raised, and nothing about what their colleagues are doing.
+ *
+ * Somebody can be both - a head of one department and an ordinary member of
+ * another - so the two are combined rather than chosen between.
+ *
+ * Either may narrow with ?department=, which takes several ids ("Finance and
+ * IT Support" is one question) and can only ever shrink what they could
+ * already see.
  */
 export async function listActivity(req, res) {
   const { department, limit } = req.query;
@@ -40,13 +51,30 @@ export async function listActivity(req, res) {
   if (isManager(req.user)) {
     filter = asked.length > 0 ? { department: { $in: asked } } : {};
   } else {
-    const mine = (req.user.memberships ?? []).map((membership) => String(membership.department));
-    if (mine.length === 0) return res.json({ success: true, activity: [] });
+    const runs = (req.user.memberships ?? [])
+      .filter((membership) => membership.role === 'head')
+      .map((membership) => membership.department);
 
-    // Narrowing can only ever shrink what they were already allowed to see:
-    // anything asked for outside their own departments is dropped.
-    const allowed = asked.filter((id) => mine.includes(id));
-    filter = { department: { $in: allowed.length > 0 ? allowed : mine } };
+    /*
+     * Matched by ticket number rather than by id: a log line is written for
+     * people to read and carries the number they would recognise, and adding
+     * a reference to every historical row would be a migration for a join
+     * that this answers without one.
+     */
+    const mine = await Ticket.find({
+      $or: [{ assignees: req.user._id }, { raisedBy: req.user._id }],
+    }).distinct('number');
+
+    const reach = [];
+    if (runs.length > 0) reach.push({ department: { $in: runs } });
+    if (mine.length > 0) reach.push({ ticketNumber: { $in: mine } });
+
+    // Neither a head of anything nor on any ticket: there is nothing of
+    // theirs to read.
+    if (reach.length === 0) return res.json({ success: true, activity: [] });
+
+    filter = reach.length === 1 ? reach[0] : { $or: reach };
+    if (asked.length > 0) filter = { $and: [filter, { department: { $in: asked } }] };
   }
 
   const entries = await Activity.find(filter)

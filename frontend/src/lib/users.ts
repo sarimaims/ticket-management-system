@@ -43,9 +43,23 @@ export function listMyTeam(
   });
 }
 
+/**
+ * One person's card, opened from their name anywhere in the app.
+ *
+ * Not the directory call with a filter on it: this one is open to everybody
+ * signed in, because looking up the number of whoever raised a ticket is not
+ * an admin's privilege.
+ */
+export function getUserProfile(id: string, signal?: AbortSignal) {
+  return api<{ user: DirectoryUser }>(`/users/${id}/profile`, { signal }).then(
+    (data) => data.user,
+  );
+}
+
 export function createUser(input: {
   name: string;
   email: string;
+  phone: string;
   password: string;
   role?: Extract<Role, "admin" | "user">;
   /** Where they sit from day one. Ignored for an admin, who belongs nowhere. */
@@ -61,6 +75,8 @@ export function updateUser(
   input: {
     name?: string;
     email?: string;
+    phone?: string;
+    password?: string;
     status?: DirectoryUser["status"];
     role?: Extract<Role, "admin" | "user">;
     memberships?: MembershipInput[];

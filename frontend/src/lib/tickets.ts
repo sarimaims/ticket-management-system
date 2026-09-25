@@ -1,5 +1,5 @@
 import { api, apiRevalidate, BASE } from "./api";
-import type { TicketPriority, TicketStatus } from "./types";
+import { isClosed, type TicketPriority, type TicketStatus } from "./types";
 
 /** The unit a department sits under, as the ticket carries it. */
 export type TicketUnit = { id: string; name?: string; code?: string } | null;
@@ -16,6 +16,32 @@ export type TicketAttachment = {
   size: number;
   uploadedAt: string | null;
 };
+
+const startOfToday = () => new Date(new Date().toDateString()).getTime();
+
+const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
+
+/** Past its date and not finished - whatever the status column happens to say. */
+export function isOverdue(ticket: TicketRecord) {
+  if (isClosed(ticket.status)) return false;
+  if (ticket.status === "Overdue") return true;
+
+  const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
+  return due !== null && due < startOfToday();
+}
+
+/** Open and due today, by the promised date where there is one. */
+export function isDueToday(ticket: TicketRecord) {
+  if (isClosed(ticket.status)) return false;
+  return dayOf(ticket.committedDeadline ?? ticket.deadline) === startOfToday();
+}
+
+/** Due today and not already counted as late: what "Due today" means on a card. */
+export const isDueTodayOnly = (ticket: TicketRecord) => isDueToday(ticket) && !isOverdue(ticket);
+
+/** Open with nobody on it. */
+export const isUnassigned = (ticket: TicketRecord) =>
+  !isClosed(ticket.status) && ticket.assignees.length === 0;
 
 export type TicketRecord = {
   id: string;
@@ -34,6 +60,10 @@ export type TicketRecord = {
   committedAt: string | null;
   /** Why the current promise is that date. Empty when nothing is promised. */
   committedReason: string;
+  /** Why it was called off, by whom and when. Empty unless it is Cancelled. */
+  cancelReason?: string;
+  cancelledByName?: string;
+  cancelledAt?: string | null;
   /** The unit rides along, so a list can be scoped without a second request. */
   department: { id: string; name?: string; code?: string; unit?: TicketUnit };
   fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
@@ -84,8 +114,22 @@ export type TicketScope = "mine" | "assigned" | "all";
  * Where one attachment is read from. The API answers with a redirect to a
  * freshly signed link, so this can be the href of an ordinary anchor.
  */
-export function attachmentHref(ticketId: string, index: number) {
-  return `${BASE}/tickets/${ticketId}/attachments/${index}`;
+export function attachmentHref(ticketId: string, index: number, save?: boolean) {
+  // `save` asks the API for a link that arrives as a download rather than
+  // opening in a tab. Left off for thumbnails and the lightbox, which have to
+  // stay viewable.
+  return `${BASE}/tickets/${ticketId}/attachments/${index}${save ? "?save=1" : ""}`;
+}
+
+/**
+ * Every file on the request, zipped by the API.
+ *
+ * The response carries `Content-Disposition: attachment`, which is what makes
+ * it save rather than open - the `download` attribute on an anchor is ignored
+ * when the API sits on another origin, as it does behind a tunnel.
+ */
+export function attachmentsArchiveHref(ticketId: string) {
+  return `${BASE}/tickets/${ticketId}/attachments.zip`;
 }
 
 /** `mine` = raised by me, `assigned` = my departments' queue, omitted = both. */
@@ -123,10 +167,10 @@ export function revalidateTickets(scope: TicketScope, etag: string | null, signa
  * conversation, the assignment trail, the bell entries. Managers only, which
  * the API enforces.
  */
-export function deleteTickets(ids: string[]) {
+export function deleteTickets(ids: string[], reason: string) {
   return api<{ deleted: number; numbers: string[] }>("/tickets", {
     method: "DELETE",
-    body: { ids },
+    body: { ids, reason },
   });
 }
 
@@ -164,6 +208,7 @@ export function updateTicket(
     committedDeadline?: string | null;
     /** Required by the API whenever the promised date actually moves. */
     committedReason?: string;
+    cancelReason?: string;
     assignees?: string[];
   },
 ) {

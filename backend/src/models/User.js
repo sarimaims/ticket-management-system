@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 
+import { PHONE_PATTERN } from '../utils/phoneNumber.js';
+
 /**
  * What a user can do across the whole workspace.
  *  superadmin - the single seeded owner. Cannot be created, demoted or deleted.
@@ -49,6 +51,22 @@ const userSchema = new mongoose.Schema(
       unique: true,
       match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Enter a valid email address'],
     },
+    /**
+     * How to reach this person away from the app. Required on every account:
+     * a ticket that has to be chased at five o'clock is chased by phone, and
+     * an account with no number on it is a dead end for whoever is holding
+     * the ticket.
+     *
+     * Stored as digits with an optional leading "+", so the same number typed
+     * two different ways is one value here. Accounts made before this field
+     * existed have none, and are asked for one the next time they are edited.
+     */
+    phone: {
+      type: String,
+      required: [true, 'Phone number is required'],
+      trim: true,
+      match: [PHONE_PATTERN, 'Enter a valid phone number'],
+    },
     // Never returned by a query unless explicitly selected.
     password: {
       type: String,
@@ -87,6 +105,7 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ 'memberships.department': 1 });
+userSchema.index({ phone: 1 });
 
 /**
  * Super admins and admins sit above the org chart: their rights are workspace

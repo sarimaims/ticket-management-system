@@ -8,11 +8,34 @@ export type NotificationType =
   /** Somebody is asking you to take a ticket on. */
   | "ticket.handover"
   /** They answered the one you sent. */
-  | "ticket.handover.answered";
+  | "ticket.handover.answered"
+  | "ticket.deleted";
+
+/**
+ * What actually happened, under the broad type.
+ *
+ * `ticket.updated` covers finishing, calling off, re-promising and handing on;
+ * this is what tells them apart, and what the feed colours by. Null on rows
+ * written before it existed, which fall back to the type.
+ */
+export type NotificationEvent =
+  | "raised"
+  | "completed"
+  | "cancelled"
+  | "status"
+  | "promise"
+  | "assigned"
+  | "moved"
+  | "edited"
+  | "message"
+  | "handover"
+  | "handover.answered"
+  | "deleted";
 
 export type NotificationRecord = {
   id: string;
   type: NotificationType;
+  event: NotificationEvent | null;
   ticket: string | null;
   ticketNumber: string;
   title: string;

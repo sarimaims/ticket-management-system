@@ -12,12 +12,44 @@ async function departmentMemberIds(departmentId) {
   return members.map((member) => member._id);
 }
 
+/** Whoever runs a department - the people an unassigned ticket is waiting on. */
+async function departmentHeadIds(departmentId) {
+  const heads = await User.find({
+    status: { $ne: 'suspended' },
+    memberships: { $elemMatch: { department: departmentId, role: 'head' } },
+  }).select('_id');
+  return heads.map((head) => head._id);
+}
+
+/**
+ * Who hears about something that happened on a ticket.
+ *
+ * Not the whole department. Somebody working in one is told about the tickets
+ * on their own desk; the head, who runs the queue, is told about all of it. A
+ * colleague's ticket is on the department's own list either way, and a bell
+ * for every one of them is a row of bells nobody reads.
+ *
+ * Whoever raised it is added by the callers where it belongs - they are
+ * waiting on an answer rather than working the ticket.
+ */
+async function audienceFor(ticket) {
+  const departmentId = ticket.department?._id ?? ticket.department;
+  const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person);
+  const heads = await departmentHeadIds(departmentId);
+
+  // A department with no head yet and nothing assigned would hear nothing at
+  // all, so it falls back to everyone in it.
+  if (holders.length === 0 && heads.length === 0) return departmentMemberIds(departmentId);
+
+  return [...holders, ...heads];
+}
+
 /**
  * Writes one notification per recipient. Like the activity log, this must
  * never break the action that triggered it: a failure here is logged and
  * swallowed, because a ticket being raised matters more than the bell.
  */
-async function deliver({ recipients, exclude, type, ticket, title, body, actorName }) {
+async function deliver({ recipients, exclude, type, event, ticket, title, body, actorName }) {
   const excluded = String(exclude ?? '');
   const unique = [...new Set(recipients.map(String))].filter((id) => id !== excluded);
   if (unique.length === 0) return 0;
@@ -27,6 +59,7 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
   const rows = unique.map((user) => ({
     user,
     type,
+    event: event ?? null,
     ticket: ticket._id,
     ticketNumber: ticket.number,
     title,
@@ -51,24 +84,22 @@ async function deliver({ recipients, exclude, type, ticket, title, body, actorNa
 /**
  * A ticket just landed in a department: tell whoever it landed on.
  *
- * Which is whoever was named, or - when nobody was - that department's head,
- * because an unaddressed request is assigned to the head on the way in. The
- * rest of the department is not rung: the ticket is on their queue either
- * way, and a bell for every request a colleague was asked for is noise.
+ * Which is whoever was named, or - when nobody was - that department's head.
+ * An unnamed ticket is left unassigned in All Tickets, and handing it out is
+ * the head's call, so the head is the one rung. The rest of the department is
+ * not: the ticket is on their queue either way, and a bell for every request
+ * a colleague was asked for is noise.
  *
- * A ticket that landed on nobody at all, which means a department with no
- * head yet, still tells everyone. Better an unnecessary bell than a request
- * raised into silence.
+ * A department with no head yet still tells everyone. Better an unnecessary
+ * bell than a request raised into silence.
  */
 export async function notifyNewTicket({ ticket, actor }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
-    const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person);
-
     return await deliver({
-      recipients: holders.length > 0 ? holders : await departmentMemberIds(departmentId),
+      recipients: await audienceFor(ticket),
       exclude: actor._id,
       type: 'ticket.new',
+      event: 'raised',
       ticket,
       title: `${ticket.number} · new request`,
       body: ticket.subject,
@@ -85,13 +116,13 @@ export async function notifyNewTicket({ ticket, actor }) {
  * it, because what they were asked for is no longer what they read yesterday.
  * Only the receiving side is notified - the raiser made the change.
  */
-export async function notifyTicketEdited({ ticket, actor, summary }) {
+export async function notifyTicketEdited({ ticket, actor, summary, event = 'edited' }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
     return await deliver({
-      recipients: await departmentMemberIds(departmentId),
+      recipients: await audienceFor(ticket),
       exclude: actor._id,
       type: 'ticket.edited',
+      event,
       ticket,
       title: `${ticket.number} · request updated`,
       body: summary,
@@ -107,15 +138,15 @@ export async function notifyTicketEdited({ ticket, actor, summary }) {
  * A ticket moved: tell the person who raised it and the department working it.
  * `summary` is the same human line the activity log records.
  */
-export async function notifyTicketUpdated({ ticket, actor, summary }) {
+export async function notifyTicketUpdated({ ticket, actor, summary, event = 'status' }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
     return await deliver({
-      recipients: [...(await departmentMemberIds(departmentId)), raiser],
+      recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.updated',
+      event,
       ticket,
       title: `${ticket.number} · updated`,
       body: summary,
@@ -136,13 +167,13 @@ export async function notifyTicketUpdated({ ticket, actor, summary }) {
  */
 export async function notifyNewMessage({ ticket, actor, preview }) {
   try {
-    const departmentId = ticket.department?._id ?? ticket.department;
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
     return await deliver({
-      recipients: [...(await departmentMemberIds(departmentId)), raiser],
+      recipients: [...(await audienceFor(ticket)), raiser],
       exclude: actor._id,
       type: 'ticket.message',
+      event: 'message',
       ticket,
       title: `${ticket.number} · ${actor.name}`,
       body: preview,
@@ -166,6 +197,7 @@ export async function notifyHandoverAsked({ ticket, actor, recipients }) {
       recipients,
       exclude: actor._id,
       type: 'ticket.handover',
+      event: 'handover',
       ticket,
       title: `${ticket.number} · ${actor.name} asks you to take this on`,
       body: ticket.subject,
@@ -177,6 +209,38 @@ export async function notifyHandoverAsked({ ticket, actor, recipients }) {
   }
 }
 
+/**
+ * A ticket was deleted: tell whoever it was on, the head of the department it
+ * was sent to, and the person who raised it if somebody else removed it.
+ *
+ * The ticket is already gone, so the bell points at nothing - it carries the
+ * number, the subject and the reason, which is everything left to know.
+ */
+export async function notifyTicketDeleted({ ticket, actor, reason }) {
+  try {
+    const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+
+    return await deliver({
+      recipients: [...(await audienceFor(ticket)), raiser],
+      exclude: actor._id,
+      type: 'ticket.deleted',
+      event: 'deleted',
+      ticket: {
+        _id: null,
+        number: ticket.number,
+        department: ticket.department,
+        raisedBy: ticket.raisedBy,
+      },
+      title: `${ticket.number} · deleted by ${actor.name}`,
+      body: `"${ticket.subject}" · ${reason}`,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.deleted):', error.message);
+    return 0;
+  }
+}
+
 /** And the answer, back to whoever asked. */
 export async function notifyHandoverAnswered({ ticket, actor, recipient, accepted }) {
   try {
@@ -184,6 +248,7 @@ export async function notifyHandoverAnswered({ ticket, actor, recipient, accepte
       recipients: [recipient],
       exclude: actor._id,
       type: 'ticket.handover.answered',
+      event: 'handover.answered',
       ticket,
       title: `${ticket.number} · ${actor.name} ${accepted ? 'took it on' : 'turned it down'}`,
       body: ticket.subject,
