@@ -110,6 +110,18 @@ export const isAwaitingApproval = (ticket: TicketRecord) => ticket.status === "R
 export const isUnassigned = (ticket: TicketRecord) =>
   !isSettled(ticket.status) && ticket.assignees.length === 0;
 
+/**
+ * Asks a ticket list already on screen to open one ticket's sheet.
+ *
+ * A link to the page you are already on changes nothing React can see when it
+ * names the same ticket twice, so a banner or a notification on that page
+ * says it this way instead. `detail` is the ticket's id.
+ */
+export const OPEN_TICKET = "flowdesk:open-ticket";
+
+export const openTicketHere = (id: string) =>
+  window.dispatchEvent(new CustomEvent<string>(OPEN_TICKET, { detail: id }));
+
 export type TicketRecord = {
   id: string;
   number: string;
