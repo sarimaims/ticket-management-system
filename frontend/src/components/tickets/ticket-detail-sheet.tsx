@@ -22,6 +22,8 @@ import { DateField, todayISO } from "@/components/tickets/date-field";
 import { TicketChat } from "@/components/tickets/ticket-chat";
 import { TicketHistory } from "@/components/tickets/ticket-history";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { ApprovalCard } from "@/components/tickets/approval-card";
+import { EscalationCard } from "@/components/tickets/escalation-card";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
@@ -916,10 +918,18 @@ function SheetBody({
           title: `#${ticket.number} has no changes to save`,
           tone: "info",
         });
+      } else if (saved.status === "Resolved" && ticket.status !== "Resolved") {
+        // Asked for Completed, got Resolved: the requester signs it off.
+        toast.show({
+          tone: "approval",
+          title: `#${ticket.number} sent for approval`,
+          description: `${ticket.raisedBy.name ?? "The requester"} has 48 hours to approve it or send it back. It completes on its own after that.`,
+          duration: 8000,
+        });
       } else {
         toast.success(
           nextStatus === "Completed" && ticket.status !== "Completed"
-            ? `#${ticket.number} marked as resolved`
+            ? `#${ticket.number} completed`
             : nextStatus === "Cancelled" && ticket.status !== "Cancelled"
               ? `#${ticket.number} cancelled`
               : `#${ticket.number} updated`,
@@ -1011,6 +1021,13 @@ function SheetBody({
               </p>
             </section>
           )}
+
+          {/* The sign-off: the requester's decision while it is Resolved, and
+              how it ended afterwards. */}
+          <ApprovalCard ticket={ticket} meId={meId} onAnswered={onSaved} />
+
+          {/* Putting it in front of the super admin, and how that went. */}
+          <EscalationCard ticket={ticket} session={session} onChanged={onSaved} />
         </div>
 
         {/* Grouped rather than gridded: "where it goes", "who", "when" are the
@@ -1133,6 +1150,7 @@ function SheetBody({
                         : setStatus(next)
                     }
                     label={`Status for #${ticket.number}`}
+                    needsApproval={ticket.raisedBy.id !== meId}
                     className="h-8 w-full justify-between px-2.5 text-[13px]"
                   />
                 </div>
@@ -1457,10 +1475,16 @@ function SheetBody({
               setStatus("Completed");
               save("Completed");
             }}
-            disabled={pending || ticket.status === "Completed"}
+            disabled={pending || ticket.status === "Completed" || ticket.status === "Resolved"}
           >
             <CheckCircle2 className="size-3.5" />
-            {ticket.status === "Completed" ? "Resolved" : "Mark resolved"}
+            {ticket.status === "Completed"
+              ? "Completed"
+              : ticket.status === "Resolved"
+                ? "Awaiting approval"
+                : ticket.raisedBy.id !== meId
+                  ? "Mark resolved"
+                  : "Mark completed"}
           </Button>
         </div>
       )}

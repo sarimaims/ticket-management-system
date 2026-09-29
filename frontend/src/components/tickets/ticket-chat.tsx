@@ -1,11 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertCircle,
   ChevronDown,
   CornerUpLeft,
   Download,
+  FileText,
+  Image as ImageIcon,
+  Library,
   Mic,
   MessagesSquare,
   Paperclip,
@@ -33,14 +43,25 @@ import {
 } from "@/lib/messages";
 import { ChatMessage } from "@/components/tickets/chat-message";
 import { useUserProfile } from "@/components/users/user-profile";
-import { ATTACHMENT_LIMITS, formatBytes, formatDuration, uploadAttachment } from "@/lib/uploads";
+import {
+  ATTACHMENT_LIMITS,
+  chatKindOf,
+  formatBytes,
+  formatDuration,
+  uploadAttachment,
+} from "@/lib/uploads";
+import { ChatMediaLibrary } from "@/components/tickets/chat-media-library";
 import {
   DraftPreview,
   PhotoLightbox,
   useVoiceRecorder,
   type Draft,
 } from "@/components/tickets/chat-attachments";
-import { attachmentHref, attachmentsArchiveHref, type TicketRecord } from "@/lib/tickets";
+import {
+  attachmentHref,
+  attachmentsArchiveHref,
+  type TicketRecord,
+} from "@/lib/tickets";
 import { cn, formatTime } from "@/lib/utils";
 
 /** How often an open thread asks whether anything has been said. */
@@ -79,7 +100,9 @@ function merge(previous: MessageRecord[], incoming: MessageRecord[]) {
   const byId = new Map(previous.map((message) => [message.id, message]));
   for (const message of incoming) byId.set(message.id, message);
 
-  return [...byId.values()].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  return [...byId.values()].sort(
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
 }
 
 /** Today / Yesterday / a date, above each run of messages from one day. */
@@ -117,7 +140,10 @@ function groupByDay(messages: MessageRecord[]) {
  */
 type Standing = "requester" | "holding" | "head" | "team";
 
-const STANDING: Record<Standing, { label: string; detail: string; chip: string }> = {
+const STANDING: Record<
+  Standing,
+  { label: string; detail: string; chip: string }
+> = {
   requester: {
     label: "Raised by",
     detail: "Raised this ticket",
@@ -128,8 +154,16 @@ const STANDING: Record<Standing, { label: string; detail: string; chip: string }
     detail: "Handling this ticket",
     chip: "bg-status-completed-bg text-status-completed-fg",
   },
-  head: { label: "Head", detail: "Head of the department", chip: "bg-role-head-bg text-role-head-fg" },
-  team: { label: "Member", detail: "Member of the department", chip: "bg-ink-100 text-ink-600" },
+  head: {
+    label: "Head",
+    detail: "Head of the department",
+    chip: "bg-role-head-bg text-role-head-fg",
+  },
+  team: {
+    label: "Member",
+    detail: "Member of the department",
+    chip: "bg-ink-100 text-ink-600",
+  },
 };
 
 type Participant = {
@@ -141,6 +175,24 @@ type Participant = {
   /** Only known for the raiser; the member list is names and roles only. */
   email?: string;
 };
+
+/** What the paperclip offers: each opens the picker filtered for it. */
+const ATTACH_OPTIONS = [
+  {
+    picker: "media",
+    label: "Photos & videos",
+    hint: "From your gallery",
+    icon: ImageIcon,
+    tone: "bg-status-progress-bg text-status-progress-fg",
+  },
+  {
+    picker: "document",
+    label: "Document",
+    hint: "PDF, Word, Excel…",
+    icon: FileText,
+    tone: "bg-tile-admin-bg text-tile-admin-fg",
+  },
+] as const;
 
 /** How many faces the collapsed header stacks. */
 const FACES = 2;
@@ -160,56 +212,72 @@ function People({
   open,
   onToggle,
   onPick,
+  action,
 }: {
   people: Participant[];
   meId?: string;
   open: boolean;
   onToggle: () => void;
   onPick: (person: Participant) => void;
+  /** Something that belongs to the conversation as a whole, at the right. */
+  action?: React.ReactNode;
 }) {
-  if (people.length === 0) return null;
+  if (people.length === 0) {
+    return action ? (
+      <div className="flex shrink-0 justify-end border-b border-line px-3 py-1.5">
+        {action}
+      </div>
+    ) : null;
+  }
 
   // The raiser and whoever holds it lead; the rest of the room is the "+N".
   const key = people.filter(
-    (person) => person.standing === "requester" || person.standing === "holding",
+    (person) =>
+      person.standing === "requester" || person.standing === "holding",
   );
   const shown = key.length > 0 ? key : people.slice(0, FACES);
   const more = people.length - shown.length;
 
   return (
     <div className="shrink-0 border-b border-line px-3 py-2">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-label={`${people.length} people in this conversation`}
-        className="flex w-full items-center gap-2 text-left"
-      >
-        <span className="flex shrink-0 -space-x-2">
-          {shown.slice(0, FACES).map((person) => (
-            <Avatar
-              key={person.id}
-              initials={initials(person.name)}
-              tone={person.standing === "requester" ? "head" : "team"}
-              className="size-7 text-[10px] ring-2 ring-surface"
-            />
-          ))}
-        </span>
-
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-800">
-          {shown.map((person) => person.name).join(", ")}
-        </span>
-
-        {more > 0 && (
-          <span className="shrink-0 rounded-full bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">
-            +{more}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-label={`${people.length} people in this conversation`}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span className="flex shrink-0 -space-x-2">
+            {shown.slice(0, FACES).map((person) => (
+              <Avatar
+                key={person.id}
+                initials={initials(person.name)}
+                tone={person.standing === "requester" ? "head" : "team"}
+                className="size-7 text-[10px] ring-2 ring-surface"
+              />
+            ))}
           </span>
-        )}
 
-        <ChevronDown
-          className={cn("size-4 shrink-0 text-ink-400 transition-transform", open && "rotate-180")}
-        />
-      </button>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-800">
+            {shown.map((person) => person.name).join(", ")}
+          </span>
+
+          {more > 0 && (
+            <span className="shrink-0 rounded-full bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">
+              +{more}
+            </span>
+          )}
+
+          <ChevronDown
+            className={cn(
+              "size-4 shrink-0 text-ink-400 transition-transform",
+              open && "rotate-180",
+            )}
+          />
+        </button>
+        {action}
+      </div>
 
       {open && (
         <ul className="mt-2 max-h-48 space-y-0.5 overflow-y-auto">
@@ -226,12 +294,18 @@ function People({
                   className="size-6 text-[9px]"
                 />
                 <span className="min-w-0 flex-1 truncate">
-                  <span className="text-[13px] font-medium text-ink-800">{person.name}</span>
-                  {person.id === meId && <span className="ml-1 text-[13px] text-ink-400">(you)</span>}
+                  <span className="text-[13px] font-medium text-ink-800">
+                    {person.name}
+                  </span>
+                  {person.id === meId && (
+                    <span className="ml-1 text-[13px] text-ink-400">(you)</span>
+                  )}
                   {/* Where they sit. A thread can span units now, so "who is
                       this" is half the question and "from where" is the other. */}
                   {person.where && (
-                    <span className="ml-1.5 text-[11px] text-ink-400">{person.where}</span>
+                    <span className="ml-1.5 text-[11px] text-ink-400">
+                      {person.where}
+                    </span>
                   )}
                 </span>
                 <span
@@ -282,7 +356,10 @@ function ChatSkeleton() {
       </p>
 
       {rows.map((row, index) => (
-        <div key={index} className={cn("flex", row.mine ? "justify-end" : "justify-start")}>
+        <div
+          key={index}
+          className={cn("flex", row.mine ? "justify-end" : "justify-start")}
+        >
           <span
             // Staggered, so the column ripples instead of blinking as one.
             style={{ animationDelay: `${index * 120}ms` }}
@@ -290,7 +367,9 @@ function ChatSkeleton() {
               "block animate-pulse rounded-lg",
               row.width,
               row.height,
-              row.mine ? "rounded-tr-none bg-chat-mine-bg" : "rounded-tl-none bg-ink-100",
+              row.mine
+                ? "rounded-tr-none bg-chat-mine-bg"
+                : "rounded-tl-none bg-ink-100",
             )}
           />
         </div>
@@ -299,15 +378,46 @@ function ChatSkeleton() {
   );
 }
 
+/**
+ * The sign-off lines, in the colours they wear everywhere else - so "marked
+ * resolved", "approved" and "sent back" stand out from the amber of ordinary
+ * edits while scrolling a long thread.
+ */
+const SIGN_OFF_TONE: Partial<
+  Record<NonNullable<MessageRecord["event"]>, string>
+> = {
+  resolved:
+    "bg-status-resolved-bg text-status-resolved-fg ring-1 ring-status-resolved-fg/20",
+  approved:
+    "bg-status-completed-bg text-status-completed-fg ring-1 ring-status-completed-fg/20",
+  "auto-approved":
+    "bg-status-completed-bg text-status-completed-fg ring-1 ring-status-completed-fg/20",
+  rejected:
+    "bg-status-rejected-bg text-status-rejected-fg ring-1 ring-status-rejected-fg/20",
+  escalated:
+    "bg-status-escalated-bg text-status-escalated-fg ring-1 ring-status-escalated-fg/20",
+  "escalation.handled":
+    "bg-status-escalated-bg text-status-escalated-fg ring-1 ring-status-escalated-fg/20",
+};
+
 function SystemLine({ message }: { message: MessageRecord }) {
+  const tone = message.event ? SIGN_OFF_TONE[message.event] : undefined;
   return (
     <p className="px-6 text-center text-[11px] leading-relaxed">
       {/* Amber rather than grey: what happened to the request is not another
           grey message, and a thread of both should say which is which at a
           glance. */}
-      <span className="rounded-full bg-chat-system-bg px-2.5 py-1 text-chat-system-fg">
-        <span className="font-semibold">{message.author.name}</span> {message.body}
-        <span className="ml-1.5 opacity-70">{formatTime(message.createdAt)}</span>
+      <span
+        className={cn(
+          "inline-block rounded-full px-2.5 py-1",
+          tone ?? "bg-chat-system-bg text-chat-system-fg",
+        )}
+      >
+        <span className="font-semibold">{message.author.name}</span>{" "}
+        {message.body}
+        <span className="ml-1.5 opacity-70">
+          {formatTime(message.createdAt)}
+        </span>
       </span>
     </p>
   );
@@ -380,7 +490,9 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
         )}
       </div>
 
-      <p className="mt-0.5 text-[12.5px] leading-snug font-bold text-ink-900">{ticket.subject}</p>
+      <p className="mt-0.5 text-[12.5px] leading-snug font-bold text-ink-900">
+        {ticket.subject}
+      </p>
 
       {ticket.description && (
         <>
@@ -416,7 +528,9 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
                 key={file.index}
                 type="button"
                 onClick={() => setViewing(index)}
-                aria-label={last ? `Open photos, ${hidden} more` : `Open ${file.filename}`}
+                aria-label={
+                  last ? `Open photos, ${hidden} more` : `Open ${file.filename}`
+                }
                 className="relative block size-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-line bg-surface"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- the API
@@ -425,7 +539,9 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
                   src={attachmentHref(ticket.id, file.index)}
                   alt={file.filename}
                   loading="lazy"
-                  onError={() => setBroken((current) => [...current, file.index])}
+                  onError={() =>
+                    setBroken((current) => [...current, file.index])
+                  }
                   className="size-full object-cover"
                 />
                 {last && (
@@ -449,7 +565,9 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
               <Paperclip className="size-3 shrink-0 text-ink-400" />
               <span className="min-w-0">
                 <span className="block truncate">{file.filename}</span>
-                <span className="block text-[9.5px] text-ink-400">{formatBytes(file.size)}</span>
+                <span className="block text-[9.5px] text-ink-400">
+                  {formatBytes(file.size)}
+                </span>
               </span>
             </a>
           ))}
@@ -462,8 +580,14 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
           alt={images[viewing].filename}
           onClose={() => setViewing(null)}
           onPrev={viewing > 0 ? () => setViewing(viewing - 1) : undefined}
-          onNext={viewing < images.length - 1 ? () => setViewing(viewing + 1) : undefined}
-          position={images.length > 1 ? `${viewing + 1} / ${images.length}` : undefined}
+          onNext={
+            viewing < images.length - 1
+              ? () => setViewing(viewing + 1)
+              : undefined
+          }
+          position={
+            images.length > 1 ? `${viewing + 1} / ${images.length}` : undefined
+          }
         />
       )}
     </div>
@@ -514,7 +638,11 @@ export function TicketChat({
     inFlight.current = controller;
 
     try {
-      const result = await revalidateMessages(ticketId, etag.current, controller.signal);
+      const result = await revalidateMessages(
+        ticketId,
+        etag.current,
+        controller.signal,
+      );
       if (!alive.current) return;
 
       etag.current = result.etag;
@@ -523,10 +651,12 @@ export function TicketChat({
 
       // A 304 means nobody has written, so nothing here is called and the
       // thread does not re-render.
-      if (result.changed) setMessages((current) => merge(current, result.data.messages));
+      if (result.changed)
+        setMessages((current) => merge(current, result.data.messages));
       setError((current) => (current ? "" : current));
     } catch (caught) {
-      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      if (caught instanceof DOMException && caught.name === "AbortError")
+        return;
       if (!alive.current) return;
 
       failures.current += 1;
@@ -553,7 +683,8 @@ export function TicketChat({
     const step = async (force = false) => {
       if (stopped) return;
 
-      const idle = document.visibilityState === "hidden" || navigator.onLine === false;
+      const idle =
+        document.visibilityState === "hidden" || navigator.onLine === false;
       if (force || !idle) await fetchNow();
       if (stopped) return;
 
@@ -606,13 +737,22 @@ export function TicketChat({
 
     // Everyone on the receiving side sits in the one department being asked;
     // the raiser sits wherever they raised it from.
-    const receiving = place(ticket.department.unit?.name, ticket.department.name);
+    const receiving = place(
+      ticket.department.unit?.name,
+      ticket.department.name,
+    );
     const asking = ticket.fromDepartments
       .map((item) => place(item.unit?.name, item.name))
       .filter(Boolean)
       .join(", ");
 
-    const add = (id: string, name: string, standing: Standing, where: string, email?: string) => {
+    const add = (
+      id: string,
+      name: string,
+      standing: Standing,
+      where: string,
+      email?: string,
+    ) => {
       if (!id || seen.has(id)) return;
       seen.add(id);
       out.push({ id, name, standing, where, email });
@@ -627,7 +767,8 @@ export function TicketChat({
     );
 
     for (const member of team ?? []) {
-      if (holders.has(member.id)) add(member.id, member.name, "holding", receiving);
+      if (holders.has(member.id))
+        add(member.id, member.name, "holding", receiving);
     }
     // A manager can hold a ticket without being in the department, so anyone
     // still unaccounted for is taken from the ticket itself - and sits above
@@ -638,11 +779,18 @@ export function TicketChat({
     // Of the rest of the department, only whoever runs it: the head oversees
     // every ticket there. Colleagues not on this one are not part of it.
     for (const member of team ?? []) {
-      if (member.departmentRole === "head") add(member.id, member.name, "head", receiving);
+      if (member.departmentRole === "head")
+        add(member.id, member.name, "head", receiving);
     }
 
     return out;
-  }, [ticket.raisedBy, ticket.assignees, ticket.department, ticket.fromDepartments, team]);
+  }, [
+    ticket.raisedBy,
+    ticket.assignees,
+    ticket.department,
+    ticket.fromDepartments,
+    team,
+  ]);
 
   /**
    * Reading the thread is what marks its bell entries read. The feed is the
@@ -651,7 +799,10 @@ export function TicketChat({
    */
   useEffect(() => {
     const unread = items.filter(
-      (item) => item.type === "ticket.message" && !item.read && item.ticket === ticketId,
+      (item) =>
+        item.type === "ticket.message" &&
+        !item.read &&
+        item.ticket === ticketId,
     );
     for (const item of unread) void markOneRead(item.id);
   }, [items, ticketId, markOneRead]);
@@ -671,7 +822,9 @@ export function TicketChat({
   // The line being corrected, if any, and the one waiting to be withdrawn.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const [pendingDelete, setPendingDelete] = useState<MessageRecord | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<MessageRecord | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const manager = isAdmin(session);
 
@@ -729,21 +882,48 @@ export function TicketChat({
     setPercent(null);
   }, []);
 
-  const chooseImage = (file: File | undefined) => {
+  /**
+   * One file from either picker, sorted into what it is.
+   *
+   * The name travels with it unchanged: "aims-digital-salary-list.xlsx" is
+   * what the API keeps, and what anyone searching the thread will type.
+   */
+  const chooseFile = (file: File | undefined, picker: "media" | "document") => {
     if (!file) return;
-    if (file.size > ATTACHMENT_LIMITS.image.maxBytes) {
-      setError(`That photo is ${formatBytes(file.size)}; the limit is 10 MB.`);
+
+    const kind = chatKindOf(file, picker);
+    if (!kind) {
+      setError(
+        picker === "media"
+          ? "That is not a photo or a video this chat can take."
+          : "That is not a document this chat can take. Try PDF, Word, Excel, PowerPoint, text or zip.",
+      );
       return;
     }
+
+    const limit = ATTACHMENT_LIMITS[kind].maxBytes;
+    if (file.size > limit) {
+      setError(
+        `That file is ${formatBytes(file.size)}; the limit is ${formatBytes(limit)}.`,
+      );
+      return;
+    }
+
     setError("");
     dropDraftFile();
     setDraftFile({
-      kind: "image",
+      kind,
       file,
       filename: file.name,
       previewUrl: URL.createObjectURL(file),
     });
   };
+
+  /** The menu the paperclip opens: photos and videos, or a document. */
+  const [attachMenu, setAttachMenu] = useState(false);
+  /** The "media, docs and links" page, laid over the thread. */
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const documentPicker = useRef<HTMLInputElement>(null);
 
   const finishRecording = async () => {
     const recorded = await recorder.stop();
@@ -767,7 +947,8 @@ export function TicketChat({
   const onScroll = () => {
     const box = scroller.current;
     if (!box) return;
-    following.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    following.current =
+      box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   };
 
   useLayoutEffect(() => {
@@ -837,7 +1018,14 @@ export function TicketChat({
 
     try {
       // The file goes straight to storage; only its key passes through the API.
-      let stored: { kind: Draft["kind"]; key: string; durationMs?: number; filename?: string } | undefined;
+      let stored:
+        | {
+            kind: Draft["kind"];
+            key: string;
+            durationMs?: number;
+            filename?: string;
+          }
+        | undefined;
       if (file) {
         setPercent(0);
         const key = await uploadAttachment(ticketId, file.file, {
@@ -853,16 +1041,25 @@ export function TicketChat({
         };
       }
 
-      const saved = await sendMessage(ticketId, body, stored, answering?.id ?? null);
+      const saved = await sendMessage(
+        ticketId,
+        body,
+        stored,
+        answering?.id ?? null,
+      );
       if (!alive.current) return;
       setMessages((current) => merge(current, [saved]));
-      setPending((current) => current.filter((item) => item.id !== placeholder.id));
+      setPending((current) =>
+        current.filter((item) => item.id !== placeholder.id),
+      );
       dropDraftFile();
     } catch (caught) {
       if (!alive.current) return;
       // Nothing was said, so nothing is left on screen pretending it was: the
       // text goes back in the box to be sent again.
-      setPending((current) => current.filter((item) => item.id !== placeholder.id));
+      setPending((current) =>
+        current.filter((item) => item.id !== placeholder.id),
+      );
       setDraft((current) => current || body);
       setReplyTo((current) => current ?? answering);
       setError(errorMessage(caught));
@@ -891,7 +1088,10 @@ export function TicketChat({
     node.scrollIntoView({ block: "center", behavior: "smooth" });
     following.current = false;
     setHighlight(id);
-    window.setTimeout(() => setHighlight((current) => (current === id ? null : current)), 1800);
+    window.setTimeout(
+      () => setHighlight((current) => (current === id ? null : current)),
+      1800,
+    );
   };
 
   const remaining = MAX_BODY - draft.length;
@@ -901,16 +1101,42 @@ export function TicketChat({
   const canSend = Boolean(draft.trim() || draftFile) && !recorder.recording;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Laid over the thread rather than replacing it, so closing the
+          library lands back exactly where the conversation was left. */}
+      {libraryOpen && (
+        <div className="absolute inset-0 z-30 flex flex-col">
+          <ChatMediaLibrary
+            ticketId={ticketId}
+            onClose={() => setLibraryOpen(false)}
+          />
+        </div>
+      )}
+
       <People
         people={people}
         meId={meId}
         open={peopleOpen}
         onToggle={() => setPeopleOpen((current) => !current)}
         onPick={(person) => openProfile(person.id, person.name)}
+        action={
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            title="Media, docs and links"
+            aria-label="Open media, docs and links"
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+          >
+            <Library className="size-4" />
+          </button>
+        }
       />
 
-      <div ref={scroller} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5">
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5"
+      >
         <RequestCard ticket={ticket} />
 
         {loading && thread.length === 0 && <ChatSkeleton />}
@@ -918,10 +1144,12 @@ export function TicketChat({
         {!loading && thread.length === 0 && (
           <div className="py-10 text-center">
             <MessagesSquare className="mx-auto size-6 text-ink-300" />
-            <p className="mt-2 text-sm font-semibold text-ink-700">No messages yet</p>
+            <p className="mt-2 text-sm font-semibold text-ink-700">
+              No messages yet
+            </p>
             <p className="mt-0.5 text-sm text-ink-400">
-              Ask a question or give an update here. {ticket.raisedBy.name} and {departmentName} both
-              see this thread.
+              Ask a question or give an update here. {ticket.raisedBy.name} and{" "}
+              {departmentName} both see this thread.
             </p>
           </div>
         )}
@@ -937,35 +1165,35 @@ export function TicketChat({
               message.kind === "system" ? (
                 <SystemLine key={message.id} message={message} />
               ) : (
-              <ChatMessage
-                key={message.id}
-                // One name per run of messages, the way a chat app does it. A
-                // system line between two breaks the run, which is right: the
-                // thread moved on to something else in between.
-                showHeader={
-                  group.items[index - 1]?.kind === "system" ||
-                  group.items[index - 1]?.author.id !== message.author.id
-                }
-                message={message}
-                mine={message.author.id === meId}
-                pending={message.id.startsWith(PENDING)}
-                departmentName={departmentName}
-                manager={manager}
-                editing={editingId === message.id}
-                editDraft={editDraft}
-                busy={busy}
-                highlighted={highlight === message.id}
-                onEditDraft={setEditDraft}
-                onStartEdit={() => {
-                  setEditingId(message.id);
-                  setEditDraft(message.body);
-                }}
-                onCancelEdit={() => setEditingId(null)}
-                onSaveEdit={() => void saveEdit(message)}
-                onDelete={() => setPendingDelete(message)}
-                onReply={() => startReply(message)}
-                onJump={jumpTo}
-              />
+                <ChatMessage
+                  key={message.id}
+                  // One name per run of messages, the way a chat app does it. A
+                  // system line between two breaks the run, which is right: the
+                  // thread moved on to something else in between.
+                  showHeader={
+                    group.items[index - 1]?.kind === "system" ||
+                    group.items[index - 1]?.author.id !== message.author.id
+                  }
+                  message={message}
+                  mine={message.author.id === meId}
+                  pending={message.id.startsWith(PENDING)}
+                  departmentName={departmentName}
+                  manager={manager}
+                  editing={editingId === message.id}
+                  editDraft={editDraft}
+                  busy={busy}
+                  highlighted={highlight === message.id}
+                  onEditDraft={setEditDraft}
+                  onStartEdit={() => {
+                    setEditingId(message.id);
+                    setEditDraft(message.body);
+                  }}
+                  onCancelEdit={() => setEditingId(null)}
+                  onSaveEdit={() => void saveEdit(message)}
+                  onDelete={() => setPendingDelete(message)}
+                  onReply={() => startReply(message)}
+                  onJump={jumpTo}
+                />
               ),
             )}
           </div>
@@ -995,7 +1223,8 @@ export function TicketChat({
             <CornerUpLeft className="mt-0.5 size-3.5 shrink-0 text-ink-400" />
             <span className="min-w-0 flex-1">
               <span className="block text-[11px] font-bold text-chat-accent-strong">
-                Replying to {replyTo.author.id === meId ? "yourself" : replyTo.author.name}
+                Replying to{" "}
+                {replyTo.author.id === meId ? "yourself" : replyTo.author.name}
               </span>
               <span className="block truncate text-[11px] text-ink-500 italic">
                 {replyTo.body ||
@@ -1018,7 +1247,11 @@ export function TicketChat({
         )}
 
         {draftFile && (
-          <DraftPreview draft={draftFile} percent={percent} onRemove={dropDraftFile} />
+          <DraftPreview
+            draft={draftFile}
+            percent={percent}
+            onRemove={dropDraftFile}
+          />
         )}
 
         {recorder.recording && (
@@ -1046,13 +1279,26 @@ export function TicketChat({
         )}
 
         <div className="flex items-end gap-2">
+          {/* Two pickers, because the operating system's dialog is filtered by
+              what it is asked for: a camera roll for one, a file browser for
+              the other. */}
           <input
             ref={filePicker}
             type="file"
-            accept={ATTACHMENT_LIMITS.image.accept}
+            accept={`${ATTACHMENT_LIMITS.image.accept},${ATTACHMENT_LIMITS.video.accept}`}
             className="hidden"
             onChange={(event) => {
-              chooseImage(event.target.files?.[0]);
+              chooseFile(event.target.files?.[0], "media");
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={documentPicker}
+            type="file"
+            accept={ATTACHMENT_LIMITS.file.accept}
+            className="hidden"
+            onChange={(event) => {
+              chooseFile(event.target.files?.[0], "document");
               event.target.value = "";
             }}
           />
@@ -1094,19 +1340,79 @@ export function TicketChat({
               </span>
             )}
 
-            <button
-              type="button"
-              onClick={() => filePicker.current?.click()}
-              disabled={!attachmentsAllowed || sending || recorder.recording}
-              title={attachmentsAllowed ? "Attach a photo" : "File storage is not configured yet"}
-              aria-label="Attach a photo"
-              className={cn(
-                "grid size-7 shrink-0 place-items-center rounded-full text-ink-500 transition-colors",
-                "hover:bg-ink-100 hover:text-ink-700 disabled:pointer-events-none disabled:opacity-40",
+            {/* The paperclip opens a choice, the way a phone does: what is
+                being shared decides which picker is the right one. */}
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setAttachMenu((current) => !current)}
+                disabled={!attachmentsAllowed || sending || recorder.recording}
+                aria-haspopup="menu"
+                aria-expanded={attachMenu}
+                title={
+                  attachmentsAllowed
+                    ? "Attach"
+                    : "File storage is not configured yet"
+                }
+                aria-label="Attach a photo, video or document"
+                className={cn(
+                  "grid size-7 place-items-center rounded-full text-ink-500 transition-colors",
+                  "hover:bg-ink-100 hover:text-ink-700 disabled:pointer-events-none disabled:opacity-40",
+                  attachMenu && "bg-ink-100 text-ink-800",
+                )}
+              >
+                <Paperclip className="size-4" />
+              </button>
+
+              {attachMenu && (
+                <>
+                  {/* A click anywhere else closes it. */}
+                  <button
+                    type="button"
+                    aria-hidden
+                    tabIndex={-1}
+                    onClick={() => setAttachMenu(false)}
+                    className="fixed inset-0 z-40 cursor-default"
+                  />
+                  <div
+                    role="menu"
+                    className="absolute right-0 bottom-9 z-50 w-48 overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
+                  >
+                    {ATTACH_OPTIONS.map((option) => (
+                      <button
+                        key={option.picker}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setAttachMenu(false);
+                          // Read at the moment of the click, where a ref is
+                          // meant to be read - not while the menu is drawn.
+                          (option.picker === "media" ? filePicker : documentPicker).current?.click();
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-ink-50"
+                      >
+                        <span
+                          className={cn(
+                            "grid size-8 shrink-0 place-items-center rounded-full",
+                            option.tone,
+                          )}
+                        >
+                          <option.icon className="size-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-semibold text-ink-800">
+                            {option.label}
+                          </span>
+                          <span className="block text-[11px] text-ink-400">
+                            {option.hint}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
-            >
-              <Paperclip className="size-4" />
-            </button>
+            </div>
           </div>
 
           {/* The round one: a microphone until there is something to send, and
@@ -1117,7 +1423,10 @@ export function TicketChat({
             onClick={
               canSend
                 ? undefined
-                : () => (recorder.recording ? void finishRecording() : void recorder.start())
+                : () =>
+                    recorder.recording
+                      ? void finishRecording()
+                      : void recorder.start()
             }
             disabled={
               canSend
@@ -1134,7 +1443,11 @@ export function TicketChat({
                     : "This browser cannot record audio"
             }
             aria-label={
-              canSend ? "Send message" : recorder.recording ? "Stop recording" : "Record a voice note"
+              canSend
+                ? "Send message"
+                : recorder.recording
+                  ? "Stop recording"
+                  : "Record a voice note"
             }
             className={cn(
               "grid size-9 shrink-0 place-items-center rounded-full text-white shadow-sm transition-colors",
@@ -1163,15 +1476,21 @@ export function TicketChat({
         className="max-w-md"
       >
         <p className="rounded-field bg-ink-50 px-3.5 py-2.5 text-sm text-ink-600 italic">
-          {pendingDelete?.body || (pendingDelete?.attachment ? "(attachment)" : "")}
+          {pendingDelete?.body ||
+            (pendingDelete?.attachment ? "(attachment)" : "")}
         </p>
         <p className="mt-3 text-sm text-ink-500">
-          {departmentName} and {ticket.raisedBy.name} will see that a message was deleted, but not
-          what it said. An admin can still read it.
+          {departmentName} and {ticket.raisedBy.name} will see that a message
+          was deleted, but not what it said. An admin can still read it.
         </p>
 
         <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
-          <Button type="button" variant="outline" size="sm" onClick={() => setPendingDelete(null)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setPendingDelete(null)}
+          >
             Keep it
           </Button>
           <Button

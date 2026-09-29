@@ -25,7 +25,14 @@ import { isDueToday, isDueTodayOnly, isOverdue, type TicketRecord } from "@/lib/
 import { isClosed, type TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STATUS_ORDER: TicketStatus[] = ["New", "In Progress", "Overdue", "Completed", "Cancelled"];
+const STATUS_ORDER: TicketStatus[] = [
+  "New",
+  "In Progress",
+  "Resolved",
+  "Overdue",
+  "Completed",
+  "Cancelled",
+];
 
 const DAY = 86_400_000;
 

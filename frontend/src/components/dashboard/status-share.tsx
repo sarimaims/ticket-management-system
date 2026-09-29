@@ -1,4 +1,4 @@
-import type { TicketStatus } from "@/lib/types";
+import { STATUS_LABEL, type TicketStatus } from "@/lib/types";
 
 export type StatusPoint = { status: TicketStatus; count: number };
 
@@ -9,6 +9,7 @@ export type StatusPoint = { status: TicketStatus; count: number };
 const SEGMENT_COLOR: Record<TicketStatus, string> = {
   New: "var(--color-status-new-fg)",
   "In Progress": "var(--color-status-progress-fg)",
+  Resolved: "var(--color-status-resolved-fg)",
   Completed: "var(--color-status-completed-fg)",
   Cancelled: "var(--color-ink-400)",
   Overdue: "var(--color-status-overdue-fg)",
@@ -39,7 +40,7 @@ export function StatusShare({ data }: { data: StatusPoint[] }) {
               width: `${(slice.count / total) * 100}%`,
               backgroundColor: SEGMENT_COLOR[slice.status],
             }}
-            title={`${slice.status}: ${slice.count}`}
+            title={`${STATUS_LABEL[slice.status]}: ${slice.count}`}
           />
         ))}
       </div>
@@ -52,7 +53,7 @@ export function StatusShare({ data }: { data: StatusPoint[] }) {
               style={{ backgroundColor: SEGMENT_COLOR[slice.status] }}
               aria-hidden="true"
             />
-            <span className="text-ink-600">{slice.status}</span>
+            <span className="text-ink-600">{STATUS_LABEL[slice.status]}</span>
             <span className="ml-auto font-semibold text-ink-900">{slice.count}</span>
             <span className="w-11 text-right text-ink-400">
               {Math.round((slice.count / total) * 100)}%

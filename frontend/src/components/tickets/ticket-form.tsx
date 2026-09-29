@@ -23,7 +23,12 @@ import { createTicket, type TicketRecord } from "@/lib/tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { isAdmin, ROLE_LABEL } from "@/lib/auth";
 import { errorMessage } from "@/lib/api";
-import { formatBytes, TICKET_FILE_LIMITS, uploadTicketFile } from "@/lib/uploads";
+import {
+  formatBytes,
+  ticketFileFamily,
+  TICKET_FILE_LIMITS,
+  uploadTicketFile,
+} from "@/lib/uploads";
 import { PriorityBadge, RoleTag } from "@/components/ui/badge";
 import { cn, formatDate } from "@/lib/utils";
 import type { TicketPriority } from "@/lib/types";
@@ -41,6 +46,7 @@ const REQUIRED = [
   { key: "subject", label: "Subject", id: "subject" },
   { key: "description", label: "Description", id: "description" },
   { key: "completionDate", label: "Deadline", id: "completion-date" },
+  { key: "people", label: "People", id: "target-people" },
 ] as const;
 
 type RequiredKey = (typeof REQUIRED)[number]["key"];
@@ -303,10 +309,18 @@ export function TicketForm() {
     const accepted: File[] = [];
 
     for (const file of Array.from(list)) {
-      if (file.size > TICKET_FILE_LIMITS.maxBytes) {
-        rejected.push(`${file.name} is ${formatBytes(file.size)}`);
-      } else if (file.type && !TICKET_FILE_LIMITS.types.includes(file.type)) {
-        rejected.push(`${file.name} is not a PDF, DOC, JPG or PNG`);
+      // A browser sometimes hands over an empty type for an unusual format;
+      // that one is left to the API, which has the same rules.
+      const family = file.type ? ticketFileFamily(file.type) : null;
+
+      if (file.type && !family) {
+        rejected.push(`${file.name} is not an image, a video or a document`);
+      } else if (file.size > (family?.maxBytes ?? TICKET_FILE_LIMITS.maxBytes)) {
+        rejected.push(
+          `${file.name} is ${formatBytes(file.size)}, over the ${formatBytes(
+            family?.maxBytes ?? TICKET_FILE_LIMITS.maxBytes,
+          )} limit`,
+        );
       } else {
         accepted.push(file);
       }
@@ -529,22 +543,45 @@ export function TicketForm() {
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
 
+    /*
+     * Not merely "somebody was named": somebody in *each* department being
+     * asked. One name against three departments leaves two of them with a
+     * request addressed to nobody, which is the thing this rule exists to
+     * prevent.
+     */
+    const unaddressed = targetDepts.filter(
+      (id) => !picked.some((person) => person.departmentId === id),
+    );
+
     const filled: Record<RequiredKey, boolean> = {
       target: targetDepts.length > 0,
       subject: Boolean(subject.trim()),
       description: Boolean(description.trim()),
       completionDate: Boolean(completionDate),
+      people: targetDepts.length > 0 && unaddressed.length === 0,
     };
     const gaps = REQUIRED.filter((field) => !filled[field.key]);
 
     if (gaps.length > 0) {
       setMissing(gaps.map((field) => field.key));
+      // Naming the departments still unaddressed beats naming the field: the
+      // reader knows what "People" is, not which of their three picks is short.
+      const short = unaddressed
+        .map((id) => departments.find((item) => item.id === id)?.name)
+        .filter(Boolean)
+        .join(", ");
+
       toast.error(
         gaps.length === 1
-          ? `${gaps[0].label} is required`
+          ? gaps[0].key === "people"
+            ? "Name somebody to ask"
+            : `${gaps[0].label} is required`
           : `${gaps.length} required fields are missing`,
-        // Naming them only helps when there is more than one.
-        gaps.length === 1 ? undefined : gaps.map((field) => field.label).join(", "),
+        gaps.length === 1
+          ? gaps[0].key === "people" && short
+            ? `Nobody is named for ${short}.`
+            : undefined
+          : gaps.map((field) => field.label).join(", "),
       );
       // Put the reader in front of the first empty box.
       const first = document.getElementById(gaps[0].id);
@@ -746,9 +783,10 @@ export function TicketForm() {
           )}
         </FormRow>
 
-        {/* Naming somebody is a shortcut, not a gate: the department sees it
-            either way, and this only decides whose desk it starts on. */}
-        <FormRow label="People" hint="optional">
+        {/* Somebody's name against every department asked: a request addressed
+            to a queue rather than a person is one everybody assumes somebody
+            else has picked up. */}
+        <FormRow label="People" required>
           <MultiSelect
             id="target-people"
             ariaLabel="People to ask"
@@ -756,9 +794,13 @@ export function TicketForm() {
             icon={<UserPlus className="text-ink-500" />}
             options={peopleOptions}
             value={picked.map((person) => pickKey(person.id, person.departmentId))}
-            onChange={choosePeople}
+            onChange={(next) => {
+              choosePeople(next);
+              if (next.length > 0) clear("people");
+            }}
             searchable
-            placeholder="Leave it empty and it goes to All Tickets, unassigned"
+            invalid={missing.includes("people")}
+            placeholder="Choose who should pick this up"
             emptyMessage={
               targetDepts.length === 0
                 ? "Choose a department first"
@@ -865,7 +907,7 @@ export function TicketForm() {
           </Field>
 
           <div>
-            <Label hint="PDF, DOC, JPG, PNG · max 10MB">Attachments</Label>
+            <Label hint="Images, video or documents · up to 25MB, video 200MB">Attachments</Label>
 
             <div
               onDragOver={(event) => {
@@ -1055,13 +1097,7 @@ function ReviewModal({
           </span>
         </ReviewRow>
 
-        <ReviewRow label="Addressed to">
-          {people.length === 0 ? (
-            <span className="font-normal text-ink-400">Nobody yet · the head assigns it</span>
-          ) : (
-            people.map((person) => person.name).join(", ")
-          )}
-        </ReviewRow>
+        <ReviewRow label="Addressed to">{people.map((person) => person.name).join(", ")}</ReviewRow>
 
         <ReviewRow label="Priority">
           <PriorityBadge priority={priority} />

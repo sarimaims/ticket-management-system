@@ -89,8 +89,41 @@ const PROMISE_META: Record<
  * different things, and a trail that called both "Edited" would make the
  * second look like the first.
  */
-const EVENT_META: Record<string, { label: string; chip: string }> = {
+const EVENT_META: Record<string, { label: string; chip: string; dot?: string }> = {
   raised: { label: "Raised", chip: "bg-brand-50 text-brand-700" },
+  // The sign-off wears its own colours - sky while it waits, green once
+  // approved, rose when sent back - so the approval story reads as one thread
+  // through the trail rather than as more edits.
+  resolved: {
+    label: "Resolved",
+    chip: "bg-status-resolved-bg text-status-resolved-fg",
+    dot: "bg-status-resolved-strong ring-4 ring-status-resolved-bg",
+  },
+  approved: {
+    label: "Approved",
+    chip: "bg-status-completed-bg text-status-completed-fg",
+    dot: "bg-status-completed-fg ring-4 ring-status-completed-bg",
+  },
+  "auto-approved": {
+    label: "Auto-approved",
+    chip: "bg-status-completed-bg text-status-completed-fg",
+    dot: "bg-status-completed-fg ring-4 ring-status-completed-bg",
+  },
+  rejected: {
+    label: "Sent back",
+    chip: "bg-status-rejected-bg text-status-rejected-fg",
+    dot: "bg-status-rejected-fg ring-4 ring-status-rejected-bg",
+  },
+  escalated: {
+    label: "Escalated",
+    chip: "bg-status-escalated-bg text-status-escalated-fg",
+    dot: "bg-status-escalated-strong ring-4 ring-status-escalated-bg",
+  },
+  "escalation.handled": {
+    label: "Escalation handled",
+    chip: "bg-status-escalated-bg text-status-escalated-fg",
+    dot: "bg-status-escalated-fg ring-4 ring-status-escalated-bg",
+  },
   edited: {
     label: "Edited",
     chip: "bg-status-waiting-bg text-status-waiting-fg",
@@ -245,7 +278,9 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
                         ? PROMISE_META[moment.entry.kind].dot
                         : opening
                           ? "bg-brand-600"
-                          : "bg-ink-300",
+                          : moment.type === "event" && EVENT_META[moment.entry.event ?? ""]?.dot
+                            ? EVENT_META[moment.entry.event ?? ""].dot
+                            : "bg-ink-300",
                     )}
                   />
                   {!last && <span className="w-px flex-1 bg-line" />}

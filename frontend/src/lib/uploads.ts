@@ -1,12 +1,36 @@
 import { api, ApiError } from "./api";
 
 /** What a chat can carry. Mirrors the rules the API enforces. */
-export type AttachmentKind = "image" | "voice";
+export type AttachmentKind = "image" | "video" | "file" | "voice";
+
+/** The document formats a chat takes: the same list a request carries. */
+const DOCUMENT_ACCEPT =
+  ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.csv,.md,.zip,.7z,.rar";
 
 export const ATTACHMENT_LIMITS: Record<AttachmentKind, { maxBytes: number; accept: string }> = {
-  image: { maxBytes: 10 * 1024 * 1024, accept: "image/jpeg,image/png,image/gif,image/webp" },
+  image: { maxBytes: 25 * 1024 * 1024, accept: "image/*" },
+  video: { maxBytes: 100 * 1024 * 1024, accept: "video/*" },
+  file: { maxBytes: 25 * 1024 * 1024, accept: DOCUMENT_ACCEPT },
   voice: { maxBytes: 15 * 1024 * 1024, accept: "audio/webm,audio/ogg,audio/mpeg,audio/mp4" },
 };
+
+/**
+ * Which chat kind a picked file is, from what the browser says it is.
+ *
+ * The photo-and-video picker hands back either; the document picker only
+ * documents. SVG is refused as a photo for the same reason the API refuses it:
+ * it is an image format that can carry script.
+ */
+export function chatKindOf(file: File, picker: "media" | "document"): AttachmentKind | null {
+  const type = file.type.toLowerCase();
+  if (picker === "media") {
+    if (type === "image/svg+xml") return null;
+    if (type.startsWith("image/")) return "image";
+    if (type.startsWith("video/")) return "video";
+    return null;
+  }
+  return ticketFileFamily(type)?.label === "document" || !type ? "file" : null;
+}
 
 type UploadTarget = {
   key: string;
@@ -93,18 +117,69 @@ export async function uploadAttachment(
   return target.key;
 }
 
-/** What a ticket itself can carry, mirroring the rules the API enforces. */
+const MB = 1024 * 1024;
+
+/**
+ * What a ticket itself can carry, mirroring the rules the API enforces.
+ *
+ * Three families with their own ceilings: one number cannot serve a screen
+ * recording and a spreadsheet at once. Pictures and video are matched by
+ * their prefix - there are dozens of image formats and any list of them is a
+ * list that is missing one - while documents are named, because
+ * "application/*" is where executables live too.
+ */
+export const TICKET_FILE_FAMILIES = {
+  image: { prefix: "image/", maxBytes: 25 * MB, label: "image" },
+  video: { prefix: "video/", maxBytes: 200 * MB, label: "video" },
+  document: {
+    maxBytes: 25 * MB,
+    label: "document",
+    types: [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.oasis.opendocument.text",
+      "application/vnd.oasis.opendocument.spreadsheet",
+      "application/vnd.oasis.opendocument.presentation",
+      "application/rtf",
+      "application/zip",
+      "application/x-zip-compressed",
+      "application/x-7z-compressed",
+      "application/vnd.rar",
+      "text/plain",
+      "text/csv",
+      "text/markdown",
+    ] as string[],
+  },
+} satisfies Record<string, { prefix?: string; types?: string[]; maxBytes: number; label: string }>;
+
+/** Which family a file belongs to, or null when it belongs to none. */
+export function ticketFileFamily(contentType: string) {
+  const type = (contentType ?? "").split(";")[0].trim().toLowerCase();
+  if (!type) return null;
+
+  for (const family of Object.values(TICKET_FILE_FAMILIES)) {
+    if ("prefix" in family && type.startsWith(family.prefix)) return family;
+    if ("types" in family && family.types.includes(type)) return family;
+  }
+  return null;
+}
+
 export const TICKET_FILE_LIMITS = {
-  maxBytes: 10 * 1024 * 1024,
   maxCount: 5,
-  accept: ".pdf,.doc,.docx,.jpg,.jpeg,.png",
-  types: [
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "image/jpeg",
-    "image/png",
-  ],
+  /** The loosest ceiling, for a check that has no file type to go on. */
+  maxBytes: Math.max(...Object.values(TICKET_FILE_FAMILIES).map((family) => family.maxBytes)),
+  /**
+   * What the file picker offers. The wildcards are what let a phone hand over
+   * a HEIC photo or a .mov straight from the camera roll; the extensions are
+   * for the desktop browsers that ignore wildcards for anything else.
+   */
+  accept:
+    "image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.csv,.md,.zip,.7z,.rar",
 };
 
 /**

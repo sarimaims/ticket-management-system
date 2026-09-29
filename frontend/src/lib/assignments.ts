@@ -25,7 +25,21 @@ export type AssignmentRecord = {
  */
 export type TicketEvent = {
   id: string;
-  event: "raised" | "edited" | "assignment" | "message.edited" | "message.deleted" | null;
+  event:
+    | "raised"
+    | "edited"
+    | "assignment"
+    | "message.edited"
+    | "message.deleted"
+    /** The sign-off: marked done, then approved, sent back, or approved by the clock. */
+    | "resolved"
+    | "approved"
+    | "rejected"
+    | "auto-approved"
+    /** Put in front of the super admin, and dealt with. */
+    | "escalated"
+    | "escalation.handled"
+    | null;
   body: string;
   by: { name: string; role: Role };
   createdAt: string;

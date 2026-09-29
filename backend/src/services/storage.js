@@ -18,42 +18,124 @@ import env from '../config/env.js';
  * the rest of the app can be built and tested without credentials.
  */
 
-/** What a chat may hold, and how big each kind is allowed to be. */
-export const ATTACHMENT_KINDS = {
-  image: {
-    folder: 'images',
-    types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'],
-    maxBytes: 10 * 1024 * 1024,
-    label: 'Photo',
-  },
-  voice: {
-    folder: 'voices',
-    types: ['audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/aac'],
-    maxBytes: 15 * 1024 * 1024,
-    label: 'Voice note',
-  },
-};
+
+
+const MB = 1024 * 1024;
 
 /**
  * What a ticket itself may carry, as opposed to what its chat may.
  *
  * A different folder and a different rule set: a chat holds photos and voice
- * notes, a request holds the paperwork that came with it.
+ * notes, a request holds whatever the request needs - a photo of the broken
+ * thing, a scan of the invoice, a screen recording of the bug.
+ *
+ * Three families, each with its own ceiling, because one number cannot serve
+ * all three: a cap loose enough for a screen recording would let somebody put
+ * a 200 MB Word document in the bucket, and one tight enough for a document
+ * makes video useless. Pictures and video are matched by their prefix - there
+ * are dozens of image formats and a list of them is a list that is always
+ * missing one - while documents are named, since "application/*" is where
+ * executables live too.
  */
+export const TICKET_FILE_FAMILIES = {
+  image: { prefix: 'image/', maxBytes: 25 * MB, label: 'image' },
+  video: { prefix: 'video/', maxBytes: 200 * MB, label: 'video' },
+  document: {
+    maxBytes: 25 * MB,
+    label: 'document',
+    types: [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/vnd.oasis.opendocument.text',
+      'application/vnd.oasis.opendocument.spreadsheet',
+      'application/vnd.oasis.opendocument.presentation',
+      'application/rtf',
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/x-7z-compressed',
+      'application/vnd.rar',
+      'text/plain',
+      'text/csv',
+      'text/markdown',
+    ],
+  },
+};
+
 export const TICKET_FILE = {
   folder: 'files',
-  types: [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'image/jpeg',
-    'image/png',
-  ],
-  maxBytes: 10 * 1024 * 1024,
   label: 'File',
+  /** The loosest of the three, for anything that only needs one number. */
+  maxBytes: Math.max(...Object.values(TICKET_FILE_FAMILIES).map((family) => family.maxBytes)),
   /** No more than this on one request; the form stops before the API has to. */
   maxCount: 5,
 };
+
+/**
+ * What a chat may hold, and how big each kind is allowed to be.
+ *
+ * Photos and video match by their prefix - a phone's camera roll is HEIC,
+ * AVIF and MOV as often as JPG and MP4, and a list of formats is a list that
+ * is always missing one. SVG is the exception: it is an image format that is
+ * also a script host, and a chat is not the place to find out.
+ *
+ * A document is the same list a request carries, so a PDF that can be raised
+ * with can also be sent in the conversation about it.
+ */
+export const ATTACHMENT_KINDS = {
+  image: {
+    folder: 'images',
+    prefix: 'image/',
+    exclude: ['image/svg+xml'],
+    maxBytes: 25 * MB,
+    label: 'Photo',
+    refusal: 'That is not an image this chat can take.',
+  },
+  video: {
+    folder: 'videos',
+    prefix: 'video/',
+    maxBytes: 100 * MB,
+    label: 'Video',
+    refusal: 'That is not a video this chat can take.',
+  },
+  file: {
+    folder: 'documents',
+    types: TICKET_FILE_FAMILIES.document.types,
+    maxBytes: 25 * MB,
+    label: 'Document',
+    refusal: 'A document must be a PDF, Word, Excel, PowerPoint, text or zip file.',
+  },
+  voice: {
+    folder: 'voices',
+    types: ['audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/aac'],
+    maxBytes: 15 * MB,
+    label: 'Voice note',
+    refusal: 'A voice note must be a recording in a format this chat can play.',
+  },
+};
+
+/** Whether one kind of chat attachment will take a given content type. */
+function kindAccepts(rules, type) {
+  if (rules.exclude?.includes(type)) return false;
+  if (rules.prefix) return type.startsWith(rules.prefix);
+  return rules.types.includes(type);
+}
+
+/** Which family a content type belongs to, or null when it belongs to none. */
+export function ticketFileFamily(contentType) {
+  const type = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  if (!type) return null;
+
+  for (const family of Object.values(TICKET_FILE_FAMILIES)) {
+    if (family.prefix && type.startsWith(family.prefix)) return family;
+    if (family.types?.includes(type)) return family;
+  }
+  return null;
+}
 
 /** How long a browser has to finish a PUT, and to load what it reads back. */
 const UPLOAD_URL_TTL = 5 * 60;
@@ -170,15 +252,17 @@ export function ticketKeyPrefixFor(ownerId) {
 
 /** Checks a proposed ticket attachment against what a request may carry. */
 export function validateTicketUpload({ contentType, size }) {
-  const type = (contentType ?? '').split(';')[0].trim().toLowerCase();
-  if (!TICKET_FILE.types.includes(type)) {
-    return 'Attachments must be a PDF, a Word document, a JPG or a PNG.';
+  const family = ticketFileFamily(contentType);
+  if (!family) {
+    return 'Attachments must be an image, a video, or a document such as a PDF, Word, Excel or text file.';
   }
 
   const bytes = Number(size);
   if (!Number.isFinite(bytes) || bytes <= 0) return 'The file size is missing.';
-  if (bytes > TICKET_FILE.maxBytes) {
-    return `A file cannot be larger than ${Math.round(TICKET_FILE.maxBytes / (1024 * 1024))} MB.`;
+  if (bytes > family.maxBytes) {
+    // Named by family, because "10 MB" on a video is a different answer from
+    // "10 MB" on a spreadsheet and the reader needs to know which they hit.
+    return `A ${family.label} cannot be larger than ${Math.round(family.maxBytes / MB)} MB.`;
   }
 
   return null;
@@ -190,9 +274,7 @@ export function validateUpload({ kind, contentType, size }) {
   if (!rules) return `Attachment kind must be one of: ${Object.keys(ATTACHMENT_KINDS).join(', ')}.`;
 
   const type = (contentType ?? '').split(';')[0].trim().toLowerCase();
-  if (!rules.types.includes(type)) {
-    return `A ${rules.label.toLowerCase()} must be one of: ${rules.types.join(', ')}.`;
-  }
+  if (!kindAccepts(rules, type)) return rules.refusal;
 
   const bytes = Number(size);
   if (!Number.isFinite(bytes) || bytes <= 0) return 'The file size is missing.';

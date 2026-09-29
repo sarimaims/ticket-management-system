@@ -39,6 +39,47 @@ const ACTION_DOTS: Record<string, string> = {
   "unit.deleted": "bg-status-overdue-fg",
   "message.edited": "bg-chat-accent",
   "message.deleted": "bg-ink-400",
+  // The sign-off, in the colours it wears everywhere else.
+  "ticket.resolved": "bg-status-resolved-strong",
+  "ticket.approved": "bg-status-completed-fg",
+  "ticket.auto_approved": "bg-status-completed-fg",
+  "ticket.rejected": "bg-status-rejected-fg",
+  "ticket.escalated": "bg-status-escalated-strong",
+  "ticket.escalation_handled": "bg-status-escalated-fg",
+};
+
+/**
+ * The sign-off rows, washed in their own colour and edged down the left.
+ *
+ * Everything else in the log is a dot, but these are the moments somebody
+ * agreed the work was done or sent it back - the ones a person scans the log
+ * for - so they are the only rows that stand out from the list.
+ */
+const ACTION_ROWS: Record<string, { row: string; label: string }> = {
+  "ticket.resolved": {
+    row: "bg-status-resolved-bg/60 shadow-[inset_2px_0_0_var(--color-status-resolved-strong)]",
+    label: "text-status-resolved-fg",
+  },
+  "ticket.approved": {
+    row: "bg-status-completed-bg/50 shadow-[inset_2px_0_0_var(--color-status-completed-fg)]",
+    label: "text-status-completed-fg",
+  },
+  "ticket.auto_approved": {
+    row: "bg-status-completed-bg/50 shadow-[inset_2px_0_0_var(--color-status-completed-fg)]",
+    label: "text-status-completed-fg",
+  },
+  "ticket.rejected": {
+    row: "bg-status-rejected-bg/60 shadow-[inset_2px_0_0_var(--color-status-rejected-fg)]",
+    label: "text-status-rejected-fg",
+  },
+  "ticket.escalated": {
+    row: "bg-status-escalated-bg/60 shadow-[inset_2px_0_0_var(--color-status-escalated-strong)]",
+    label: "text-status-escalated-fg",
+  },
+  "ticket.escalation_handled": {
+    row: "bg-status-escalated-bg/40 shadow-[inset_2px_0_0_var(--color-status-escalated-fg)]",
+    label: "text-status-escalated-fg",
+  },
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -55,6 +96,12 @@ const ACTION_LABELS: Record<string, string> = {
   "unit.deleted": "Unit deleted",
   "message.edited": "Message edited",
   "message.deleted": "Message withdrawn",
+  "ticket.resolved": "Resolved · awaiting approval",
+  "ticket.approved": "Approved",
+  "ticket.auto_approved": "Auto-approved",
+  "ticket.rejected": "Sent back",
+  "ticket.escalated": "Escalated to super admin",
+  "ticket.escalation_handled": "Escalation handled",
 };
 
 /** "3 hours ago" reads better than a timestamp for a feed this recent. */
@@ -249,7 +296,13 @@ export function ActivityLog() {
 
               <ul className="divide-y divide-line">
                 {day.items.map((entry) => (
-                  <li key={entry.id} className="flex items-start gap-2.5 px-3 py-2">
+                  <li
+                    key={entry.id}
+                    className={cn(
+                      "flex items-start gap-2.5 px-3 py-2",
+                      ACTION_ROWS[entry.action]?.row,
+                    )}
+                  >
                     <Avatar
                       initials={initials(entry.actor.name)}
                       tone={entry.actor.role === "user" ? "team" : "head"}
@@ -263,7 +316,13 @@ export function ActivityLog() {
                       </p>
 
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-400">
-                        <span className="inline-flex items-center gap-1 font-medium text-ink-500">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 font-medium text-ink-500",
+                            ACTION_ROWS[entry.action] && "font-bold",
+                            ACTION_ROWS[entry.action]?.label,
+                          )}
+                        >
                           <span
                             className={cn(
                               "size-1.5 shrink-0 rounded-full",

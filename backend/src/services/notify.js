@@ -259,3 +259,134 @@ export async function notifyHandoverAnswered({ ticket, actor, recipient, accepte
     return 0;
   }
 }
+
+/**
+ * The department says it is done; the person who asked has to agree.
+ *
+ * Addressed to the raiser alone, and typed apart from every other update so
+ * the app can make it impossible to miss - it is a question waiting on them,
+ * with a clock on it, not news they can skim past.
+ */
+export async function notifyApprovalRequested({ ticket, actor, hours }) {
+  try {
+    const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+
+    return await deliver({
+      recipients: [raiser],
+      exclude: actor._id,
+      type: 'ticket.approval',
+      event: 'resolved',
+      ticket,
+      title: `${ticket.number} · resolved - please approve`,
+      body: `${actor.name} marked "${ticket.subject}" done. Approve it or send it back within ${hours} hours, or it completes on its own.`,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.approval):', error.message);
+    return 0;
+  }
+}
+
+/**
+ * The raiser answered: the department hears whether the work was accepted or
+ * sent back, and the person who resolved it hears either way.
+ */
+export async function notifyApprovalAnswered({ ticket, actor, approved, reason, resolvedBy }) {
+  try {
+    return await deliver({
+      recipients: [...(await audienceFor(ticket)), ...(resolvedBy ? [resolvedBy] : [])],
+      exclude: actor._id,
+      type: 'ticket.updated',
+      event: approved ? 'approved' : 'rejected',
+      ticket,
+      title: approved
+        ? `${ticket.number} · approved by ${actor.name}`
+        : `${ticket.number} · sent back by ${actor.name}`,
+      body: approved ? `"${ticket.subject}" is completed.` : `Not done yet: ${reason}`,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (approval answered):', error.message);
+    return 0;
+  }
+}
+
+/**
+ * Nobody answered within the window, so the ticket completed itself. Both
+ * sides hear: the raiser so the silence is not mistaken for nothing having
+ * happened, the department so it knows the work was accepted.
+ */
+export async function notifyAutoApproved({ ticket, hours }) {
+  try {
+    const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+
+    return await deliver({
+      recipients: [...(await audienceFor(ticket)), raiser],
+      exclude: null,
+      type: 'ticket.updated',
+      event: 'approved',
+      ticket,
+      title: `${ticket.number} · completed automatically`,
+      body: `No answer within ${hours} hours, so "${ticket.subject}" was approved on its own.`,
+      actorName: 'FlowDesk',
+    });
+  } catch (error) {
+    console.error('Notification failed (auto-approved):', error.message);
+    return 0;
+  }
+}
+
+/** Everyone holding the super admin role: in practice one person. */
+async function superAdminIds() {
+  const owners = await User.find({ role: 'superadmin', status: { $ne: 'suspended' } }).select('_id');
+  return owners.map((owner) => owner._id);
+}
+
+/**
+ * Somebody put a ticket in front of the super admin.
+ *
+ * Addressed to them alone and typed apart from every other update, so it can
+ * be loud: an escalation means the usual route has not worked, and it is the
+ * one bell the person at the top is there to answer.
+ */
+export async function notifyEscalated({ ticket, actor, reason }) {
+  try {
+    return await deliver({
+      recipients: await superAdminIds(),
+      exclude: actor._id,
+      type: 'ticket.escalated',
+      event: 'escalated',
+      ticket,
+      title: `${ticket.number} · escalated by ${actor.name}`,
+      body: `"${ticket.subject}" · ${reason}`,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.escalated):', error.message);
+    return 0;
+  }
+}
+
+/**
+ * The super admin dealt with it: whoever escalated hears, and so does the
+ * person who raised the ticket if that was somebody else.
+ */
+export async function notifyEscalationHandled({ ticket, actor, escalatedBy, note }) {
+  try {
+    const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+
+    return await deliver({
+      recipients: [escalatedBy, raiser].filter(Boolean),
+      exclude: actor._id,
+      type: 'ticket.updated',
+      event: 'escalation.handled',
+      ticket,
+      title: `${ticket.number} · escalation handled by ${actor.name}`,
+      body: note || `"${ticket.subject}" has been looked at by the super admin.`,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (escalation handled):', error.message);
+    return 0;
+  }
+}

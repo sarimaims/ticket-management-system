@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/auth/auth-provider";
-import type { Role, Session } from "@/lib/auth";
+import { homeFor, type Role, type Session } from "@/lib/auth";
 
 function Splash() {
   return (
@@ -52,7 +52,7 @@ export function RequireAuth({
   useEffect(() => {
     if (!ready) return;
     if (!session) router.replace("/login");
-    else if (!permitted) router.replace("/dashboard");
+    else if (!permitted) router.replace(homeFor(session));
   }, [ready, session, permitted, router]);
 
   if (!ready || !allowed) return <>{fallback ?? <Splash />}</>;

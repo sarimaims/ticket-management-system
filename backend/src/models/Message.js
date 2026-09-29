@@ -26,7 +26,12 @@ const messageSchema = new mongoose.Schema(
     author: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      // Somebody wrote every message, and every line about the ticket but
+      // one kind: the workspace completing an unanswered sign-off itself.
+      required: function requiredUnlessSystem() {
+        return this.kind !== 'system';
+      },
+      default: null,
     },
     authorName: {
       type: String,
@@ -56,7 +61,18 @@ const messageSchema = new mongoose.Schema(
      */
     event: {
       type: String,
-      enum: ['raised', 'edited', 'assignment', null],
+      enum: [
+        'raised',
+        'edited',
+        'assignment',
+        'resolved',
+        'approved',
+        'rejected',
+        'auto-approved',
+        'escalated',
+        'escalation.handled',
+        null,
+      ],
       default: null,
     },
     /** Which end of the ticket this was written from. */
@@ -117,19 +133,23 @@ const messageSchema = new mongoose.Schema(
       default: null,
     },
     /**
-     * A photo or a voice note living in S3. Only the key is stored: the URL is
-     * signed fresh on every read, so the bucket can stay private and a link
-     * copied out of the page stops working before long.
+     * A photo, a video, a document or a voice note living in S3. Only the key
+     * is stored: the URL is signed fresh on every read, so the bucket can stay
+     * private and a link copied out of the page stops working before long.
      */
     attachment: {
       type: {
-        kind: { type: String, enum: ['image', 'voice'], required: true },
+        kind: { type: String, enum: ['image', 'video', 'file', 'voice'], required: true },
         key: { type: String, required: true },
         mimeType: { type: String, required: true },
         size: { type: Number, required: true },
         /** Voice notes only, in milliseconds. */
         durationMs: { type: Number, default: null },
-        /** What the sender called it, kept for the download filename. */
+        /**
+         * What the sender called it: "aims-digital-salary-list.xlsx", not the
+         * random key it is stored under. Kept for the download, and because it
+         * is the only thing a person searching for a file will remember.
+         */
         filename: { type: String, default: '' },
       },
       default: null,
@@ -142,6 +162,12 @@ const messageSchema = new mongoose.Schema(
 // The thread is always "this ticket, oldest first", and the poll below asks
 // for its newest line - one index covers both.
 messageSchema.index({ ticket: 1, createdAt: 1 });
+
+// The media library: one thread's attachments, newest first.
+messageSchema.index({ ticket: 1, 'attachment.kind': 1, createdAt: -1 });
+
+// Finding a file by the name it was sent with, across every thread.
+messageSchema.index({ 'attachment.filename': 1 });
 
 const Message = mongoose.model('Message', messageSchema);
 

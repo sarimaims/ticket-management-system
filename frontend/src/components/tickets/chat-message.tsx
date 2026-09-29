@@ -32,6 +32,7 @@ import {
 } from "@/lib/messages";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
 import { UserLink } from "@/components/users/user-profile";
+import { Linkified } from "@/components/tickets/linkified";
 
 /** Roughly how tall the panel is, used to decide which way it opens. */
 const PANEL_HEIGHT = 220;
@@ -497,7 +498,8 @@ export function ChatMessage({
   const settled = !pending;
   const canEdit = mine && settled && !message.deleted;
   const gone = message.deleted && !manager;
-  const image = message.attachment?.kind === "image";
+  // Anything that fills the bubble edge to edge: a photo or a video.
+  const image = message.attachment?.kind === "image" || message.attachment?.kind === "video";
 
   // The person who raised the ticket is worth marking on every line they
   // write: in a thread between two departments, "who wants this" is the thing
@@ -649,7 +651,7 @@ export function ChatMessage({
             {/* The clock sits on the last line of the text when there is room
                 for it, and drops to its own line when there is not. */}
             <div className={cn(image && "px-1.5 pt-1 pb-0.5")}>
-              {message.body && <span className="whitespace-pre-wrap">{message.body}</span>}
+              {message.body && <Linkified text={message.body} className="whitespace-pre-wrap" />}
               <span className="float-right mt-0.5 translate-y-0.5">{meta}</span>
               <span className="clear-both block" />
             </div>

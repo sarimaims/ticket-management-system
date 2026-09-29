@@ -1,4 +1,4 @@
-import { CLOSED_STATUSES, OVERDUE } from '../models/Ticket.js';
+import { NOT_LATE_STATUSES, OVERDUE } from '../models/Ticket.js';
 
 /**
  * Overdue is a fact about the calendar, not a decision somebody makes.
@@ -28,7 +28,9 @@ export function startOfToday() {
 
 /** Past its date and not finished. */
 export function isOverdue(ticket, today = dayOf(Date.now())) {
-  if (!ticket || CLOSED_STATUSES.includes(ticket.status)) return false;
+  // Resolved counts as not late: the department has done its part and the
+  // ticket is waiting on the requester's sign-off, not on the work.
+  if (!ticket || NOT_LATE_STATUSES.includes(ticket.status)) return false;
 
   const due = dueDate(ticket);
   return Boolean(due) && dayOf(due) < today;

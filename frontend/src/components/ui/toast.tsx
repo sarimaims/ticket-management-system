@@ -8,13 +8,23 @@ import {
   Info,
   MessageSquare,
   RefreshCw,
+  ShieldCheck,
+  Siren,
   TicketPlus,
   X,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export type ToastTone = "error" | "success" | "info" | "ticket" | "update" | "message";
+export type ToastTone =
+  | "error"
+  | "success"
+  | "info"
+  | "ticket"
+  | "update"
+  | "message"
+  | "approval"
+  | "escalation";
 
 type ToastInput = {
   title: string;
@@ -22,6 +32,8 @@ type ToastInput = {
   tone?: ToastTone;
   /** Where clicking the toast takes the reader, if anywhere. */
   href?: string;
+  /** How long it stays, when the default five seconds is too easy to miss. */
+  duration?: number;
 };
 type Toast = ToastInput & { id: number; tone: ToastTone };
 
@@ -45,6 +57,17 @@ const TONES: Record<ToastTone, { box: string; icon: React.ComponentType<{ classN
   // Somebody talking on a ticket: the brand voice, but unfilled, so it is not
   // mistaken for a ticket arriving.
   message: { box: "border-brand-200 bg-surface text-brand-700", icon: MessageSquare },
+  // A request waiting on the reader's sign-off: solid, not tinted, and it
+  // stays up long enough that walking back to the desk still finds it.
+  approval: {
+    box: "border-status-resolved-strong bg-status-resolved-strong text-white shadow-status-resolved-strong/30",
+    icon: ShieldCheck,
+  },
+  // Somebody escalated a ticket to the super admin: the loudest bell there is.
+  escalation: {
+    box: "border-status-escalated-strong bg-status-escalated-strong text-white shadow-status-escalated-strong/30",
+    icon: Siren,
+  },
 };
 
 type ToastApi = {
@@ -73,14 +96,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const show = useCallback(
-    ({ title, description, tone = "error", href }: ToastInput) => {
+    ({ title, description, tone = "error", href, duration = DURATION }: ToastInput) => {
       nextId.current += 1;
       const id = nextId.current;
       // Three is as many as anyone reads at once; older ones make room.
       setToasts((current) => [...current.slice(-2), { id, title, description, tone, href }]);
       timers.current.set(
         id,
-        setTimeout(() => dismiss(id), DURATION),
+        setTimeout(() => dismiss(id), duration),
       );
     },
     [dismiss],

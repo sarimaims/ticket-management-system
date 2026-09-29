@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { DEPARTMENT_ROLE_LABEL } from "@/lib/auth";
-import type { TicketPriority, TicketStatus } from "@/lib/types";
+import { STATUS_LABEL, type TicketPriority, type TicketStatus } from "@/lib/types";
 
 /* Status + priority colours come straight from the global colour system in
    globals.css, so a badge here and a donut slice on the dashboard are the
@@ -9,6 +9,7 @@ import type { TicketPriority, TicketStatus } from "@/lib/types";
 const STATUS_STYLES: Record<TicketStatus, string> = {
   New: "bg-status-new-bg text-status-new-fg",
   "In Progress": "bg-status-progress-bg text-status-progress-fg",
+  Resolved: "bg-status-resolved-bg text-status-resolved-fg",
   Completed: "bg-status-completed-bg text-status-completed-fg",
   // Called off rather than done: quiet grey, so it reads as closed but not won.
   Cancelled: "bg-ink-100 text-ink-500",
@@ -36,7 +37,7 @@ export function StatusBadge({ status, className }: { status: TicketStatus; class
         className,
       )}
     >
-      {status}
+      {STATUS_LABEL[status]}
     </span>
   );
 }

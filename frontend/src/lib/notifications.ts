@@ -9,7 +9,11 @@ export type NotificationType =
   | "ticket.handover"
   /** They answered the one you sent. */
   | "ticket.handover.answered"
-  | "ticket.deleted";
+  | "ticket.deleted"
+  /** Your request was resolved and is waiting for you to approve it. */
+  | "ticket.approval"
+  /** Somebody put a ticket in front of the super admin. */
+  | "ticket.escalated";
 
 /**
  * What actually happened, under the broad type.
@@ -30,7 +34,17 @@ export type NotificationEvent =
   | "message"
   | "handover"
   | "handover.answered"
-  | "deleted";
+  | "deleted"
+  /** The department says it is done; the requester's sign-off is wanted. */
+  | "resolved"
+  /** The requester agreed it is done (or 48 hours passed without an answer). */
+  | "approved"
+  /** The requester sent it back. */
+  | "rejected"
+  /** Put in front of the super admin. */
+  | "escalated"
+  /** The super admin dealt with it. */
+  | "escalation.handled";
 
 export type NotificationRecord = {
   id: string;
