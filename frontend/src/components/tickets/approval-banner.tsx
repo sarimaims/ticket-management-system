@@ -6,7 +6,7 @@ import { ArrowRight, ShieldCheck, X } from "lucide-react";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { useNotifications } from "@/components/notifications/notification-provider";
-import { listApprovals, type TicketRecord } from "@/lib/tickets";
+import { listApprovals, openTicketHere, type TicketRecord } from "@/lib/tickets";
 
 /** Fired after an approval is answered here, so the banner updates at once. */
 export const APPROVALS_CHANGED = "flowdesk:approvals-changed";
@@ -102,6 +102,14 @@ export function ApprovalBanner() {
     >
       <Link
         href={href as "/"}
+        // Already on My Requests: the page is not navigated again, so it is
+        // asked to open the sheet directly rather than left to read a URL it
+        // has already read.
+        onClick={(event) => {
+          if (!one || window.location.pathname !== "/my-requests") return;
+          event.preventDefault();
+          openTicketHere(one.id);
+        }}
         className="group flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-3 sm:pl-4"
       >
         {/* A beacon rather than a badge: the strip is meant to be seen from

@@ -70,6 +70,7 @@ import {
   isQuiet,
   isUnassigned,
   isUrgent,
+  OPEN_TICKET,
   reassignTickets,
   updateTicket,
   type TicketRecord,
@@ -1531,7 +1532,13 @@ export function TicketsWorkspace({
    * the array every time something moves, and the row must not jump again.
    */
   useEffect(() => {
-    if (!focusKey || focused.current === focusKey) return;
+    // Once the link has been dealt with and the URL is clean, forget it, so
+    // the same link followed again later is treated as new rather than done.
+    if (!focusKey) {
+      focused.current = null;
+      return;
+    }
+    if (focused.current === focusKey) return;
 
     const target = tickets.find(
       (ticket) => ticket.id === focusKey || ticket.number === focusKey,
@@ -1574,6 +1581,34 @@ export function TicketsWorkspace({
 
     return () => cancelAnimationFrame(frame);
   }, [focusKey, tickets, params]);
+
+  /**
+   * Asked to open a ticket by something on this same page - the approval
+   * banner's Review, when My Requests is already open. The newest list is read
+   * through a ref so the listener is not torn down on every poll.
+   */
+  const latestTickets = useRef(tickets);
+  useEffect(() => {
+    latestTickets.current = tickets;
+  }, [tickets]);
+
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      const target = latestTickets.current.find((ticket) => ticket.id === id);
+      if (!target) return;
+      setTab("details");
+      setViewing(target);
+      setFlashed(target.id);
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`ticket-row-${target.id}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    };
+    window.addEventListener(OPEN_TICKET, onOpen);
+    return () => window.removeEventListener(OPEN_TICKET, onOpen);
+  }, []);
 
   /** The outline is a pointer, not a state: it lets go on its own. */
   useEffect(() => {
