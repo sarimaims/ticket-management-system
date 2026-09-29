@@ -3,13 +3,18 @@ import { Router } from 'express';
 import asyncHandler from '../utils/asyncHandler.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
+  answerApproval,
+  countEscalations,
   createTicket,
   createTicketUploadTarget,
   deleteTicket,
   deleteTickets,
   downloadAttachment,
   downloadAttachmentsArchive,
+  escalateTicket,
   getTicket,
+  handleEscalation,
+  listApprovals,
   listAssignments,
   listTickets,
   reassignTickets,
@@ -25,6 +30,8 @@ import {
   createMessage,
   createUploadTarget,
   deleteMessage,
+  listLibrary,
+  listMedia,
   listMessages,
   messageInfo,
   updateMessage,
@@ -47,7 +54,22 @@ router.get('/:id/attachments/:index', asyncHandler(downloadAttachment));
 // several objects does not exist in the bucket to be signed.
 router.get('/:id/attachments.zip', asyncHandler(downloadAttachmentsArchive));
 
+// My requests waiting on my sign-off. Before '/:id', so the word is never
+// read as a ticket id.
+router.get('/approvals', asyncHandler(listApprovals));
+// Every file, photo, video and link across the tickets this person can see.
+router.get('/media', asyncHandler(listLibrary));
+// How many escalations are open, for the super admin's sidebar.
+router.get('/escalations/count', asyncHandler(countEscalations));
+
 router.get('/:id', asyncHandler(getTicket));
+
+// The requester's answer to a resolved ticket: approve it, or send it back.
+router.post('/:id/approval', asyncHandler(answerApproval));
+
+// Put a ticket in front of the super admin, and - theirs alone - close it.
+router.post('/:id/escalate', asyncHandler(escalateTicket));
+router.post('/:id/escalation/handle', asyncHandler(handleEscalation));
 
 // A batch handed over in one go. Same right as working one ticket, applied to
 // each of them, and each gets its own line in its own trail.
@@ -63,8 +85,13 @@ router.delete('/:id', asyncHandler(deleteTicket));
 // The conversation on one ticket. Reading it is the right to read the ticket.
 router.get('/:id/messages', asyncHandler(listMessages));
 router.post('/:id/messages', asyncHandler(createMessage));
-// A URL the browser PUTs a photo or a voice note to, before saying anything.
+// A URL the browser PUTs a photo, video, document or voice note to, before
+// saying anything.
 router.post('/:id/messages/upload-url', asyncHandler(createUploadTarget));
+
+// Everything the thread has shared, grouped the way a phone does it - media,
+// documents and links - and searchable by the name each file was sent with.
+router.get('/:id/media', asyncHandler(listMedia));
 
 // When a line was said, and who has had the thread open since.
 router.get('/:id/messages/:messageId/info', asyncHandler(messageInfo));

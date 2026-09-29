@@ -16,6 +16,8 @@ const TILE_TONES: Record<Stat["tone"], string> = {
   overdue: "bg-status-overdue-bg text-status-overdue-fg",
   due: "bg-status-accepted-bg text-status-accepted-fg",
   admin: "bg-tile-admin-bg text-tile-admin-fg",
+  // Waiting on somebody's sign-off: the one tile meant to be impossible to miss.
+  approval: "bg-status-resolved-bg text-status-resolved-fg",
 };
 
 /** Tailwind needs whole class names, so the column counts are spelled out. */
@@ -37,8 +39,15 @@ export function StatTiles({
   className,
   active,
   onSelect,
+  row,
 }: {
   stats: Stat[];
+  /**
+   * Every tile on one line, however many there are. They share the width on
+   * a desktop and scroll sideways on a phone, rather than wrapping into a
+   * second row that reads as a second, separate set of numbers.
+   */
+  row?: boolean;
   /** Counts of nothing are indistinguishable from real zeros, so say so. */
   loading?: boolean;
   className?: string;
@@ -53,14 +62,21 @@ export function StatTiles({
 }) {
   return (
     <div
-      className={cn("grid grid-cols-2 gap-2", COLUMNS[stats.length] ?? "lg:grid-cols-4", className)}
+      className={cn(
+        row
+          ? "flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          : cn("grid grid-cols-2 gap-2", COLUMNS[stats.length] ?? "lg:grid-cols-4"),
+        className,
+      )}
     >
       {stats.map((stat) => {
         const key = statKey(stat);
         const lit = active === key;
         const body = (
           <>
-            <p className="text-[10px] font-semibold opacity-80">{stat.label}</p>
+            <p className="truncate text-[10px] font-semibold whitespace-nowrap opacity-80">
+              {stat.label}
+            </p>
             {loading ? (
               <span className="mt-1 block h-4 w-8 animate-pulse rounded bg-current opacity-20" />
             ) : (
@@ -68,7 +84,12 @@ export function StatTiles({
             )}
           </>
         );
-        const tile = cn("rounded-lg px-2.5 py-1.5", TILE_TONES[stat.tone]);
+        const tile = cn(
+          "rounded-lg px-2.5 py-1.5",
+          // Shared out evenly, but never so narrow a label cannot be read.
+          row && "min-w-[92px] flex-1 shrink-0 basis-0",
+          TILE_TONES[stat.tone],
+        );
 
         return onSelect ? (
           <button
@@ -83,13 +104,18 @@ export function StatTiles({
             // own hue in either theme.
             className={cn(
               tile,
-              "relative isolate text-left focus-visible:outline-none",
+              "relative isolate cursor-pointer text-left focus-visible:outline-none",
               "before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-current",
               "before:opacity-0 before:transition-opacity before:duration-150",
               "hover:before:opacity-[0.08] focus-visible:before:opacity-[0.1]",
               "active:before:opacity-[0.16]",
               // On: the one tile the list below is answering.
               lit && "before:opacity-[0.14] hover:before:opacity-[0.18]",
+              // And a bar along its foot in its own colour, the way a chosen
+              // tab is marked: the tint alone was too quiet to notice.
+              "after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-current",
+              "after:opacity-0 after:transition-opacity",
+              lit && "after:opacity-70",
             )}
           >
             {body}

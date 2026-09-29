@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
 import { statusToneClasses } from "@/components/ui/badge";
-import { SETTABLE_STATUSES } from "@/lib/types";
+import { SETTABLE_STATUSES, STATUS_LABEL } from "@/lib/types";
 import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,7 @@ const LIST_HEIGHT = 232;
 const DOTS: Record<TicketStatus, string> = {
   New: "bg-status-new-fg",
   "In Progress": "bg-status-progress-fg",
+  Resolved: "bg-status-resolved-fg",
   Completed: "bg-status-completed-fg",
   Cancelled: "bg-ink-400",
   Overdue: "bg-status-overdue-fg",
@@ -35,8 +36,14 @@ export function StatusPicker({
   disabled,
   label,
   className,
+  needsApproval,
 }: {
   value: TicketStatus;
+  /**
+   * Somebody else asked for this, so "Completed" is a request for their
+   * sign-off rather than the end of it. The option says so before it is picked.
+   */
+  needsApproval?: boolean;
   onChange: (next: TicketStatus) => void;
   disabled?: boolean;
   /** For screen readers: which ticket this belongs to. */
@@ -121,7 +128,7 @@ export function StatusPicker({
         )}
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", DOTS[value])} />
-        <span className="min-w-0 flex-1 truncate text-left">{value}</span>
+        <span className="min-w-0 flex-1 truncate text-left">{STATUS_LABEL[value]}</span>
         <ChevronDown className={cn("size-3 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -133,7 +140,7 @@ export function StatusPicker({
           aria-label={label}
           data-status-list
           style={{ right: at.right, top: at.top, bottom: at.bottom }}
-          className="fixed z-50 w-36 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
+          className="fixed z-50 w-44 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
         >
           {SETTABLE_STATUSES.map((status) => {
             const current = status === value;
@@ -153,7 +160,14 @@ export function StatusPicker({
                   )}
                 >
                   <span className={cn("size-1.5 shrink-0 rounded-full", DOTS[status])} />
-                  <span className="flex-1">{status}</span>
+                  <span className="flex-1">
+                    {status}
+                    {status === "Completed" && needsApproval && value !== "Resolved" && (
+                      <span className="block text-[9.5px] font-medium text-ink-400">
+                        Sends it for approval
+                      </span>
+                    )}
+                  </span>
                   {current && <Check className="size-3 shrink-0" strokeWidth={3} />}
                 </button>
               </li>
@@ -162,6 +176,12 @@ export function StatusPicker({
 
           {/* Nothing in the list is current, which would otherwise look like a
               ticket with no status at all. It has one - the deadline gave it. */}
+          {value === "Resolved" && (
+            <li className="mt-1 border-t border-line px-1.5 pt-1 text-[10px] leading-tight text-ink-400">
+              Waiting for the requester to approve. It completes on its own after 48 hours.
+            </li>
+          )}
+
           {value === "Overdue" && (
             <li className="mt-1 border-t border-line px-1.5 pt-1 text-[10px] leading-tight text-ink-400">
               Overdue comes from the deadline. Finish it, or move the date.

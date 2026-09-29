@@ -8,6 +8,8 @@ import { isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { notifyNewMessage } from '../services/notify.js';
 import { record } from '../services/activity.js';
+import { cleanFilename, filenameWords } from '../utils/fileName.js';
+import { statusOf } from '../services/overdue.js';
 import {
   ATTACHMENT_KINDS,
   buildKey,
@@ -473,7 +475,15 @@ export async function createMessage(req, res) {
     ticket,
     actor: req.user,
     // A bell that says "Photo" is more use than one that says nothing.
-    preview: trimmed || (attachment ? ATTACHMENT_KINDS[attachment.kind].label : ''),
+    // A file's own name says more than its kind: "Document" tells nobody
+    // whether it is the invoice they were waiting for.
+    preview:
+      trimmed ||
+      (attachment
+        ? attachment.kind !== 'voice' && attachment.filename
+          ? `${ATTACHMENT_KINDS[attachment.kind].label}: ${attachment.filename}`
+          : ATTACHMENT_KINDS[attachment.kind].label
+        : ''),
   });
 
   res.status(201).json({ success: true, message: await presentOne(message, req.user, ticket) });
@@ -620,6 +630,332 @@ async function resolveAttachment(req, ticket) {
     mimeType: object.contentType,
     size: object.size,
     durationMs: Number.isFinite(Number(durationMs)) ? Math.round(Number(durationMs)) : null,
-    filename: typeof filename === 'string' ? filename.slice(0, 120) : '',
+    // The sender's own name for it, which is what a search for it will use. A
+    // voice note has none, so it is given one worth finding by date.
+    filename: cleanFilename(
+      filename,
+      kind === 'voice' ? `Voice note ${new Date().toISOString().slice(0, 16).replace('T', ' ')}` : '',
+    ),
   };
+}
+
+/** A web address inside a message, as people type them. */
+const LINK = /\bhttps?:\/\/[^\s<>"']+/gi;
+
+/** The same pattern, in the form a Mongo query takes. */
+const LINK_SOURCE = /https?:\/\//i;
+
+/** Trailing punctuation belongs to the sentence, not the address. */
+const trimLink = (url) => url.replace(/[.,;:!?)\]]+$/, '');
+
+/**
+ * Everything this thread has shared, the way a phone groups it: media, the
+ * documents, and the links - with the request's own attachments included,
+ * because the paperwork a ticket was raised with is part of what was shared.
+ *
+ * `q` narrows all three by the words in it, matched one word at a time against
+ * the name each file was sent with. "digital salary" then finds
+ * "aims-digital-salary-list.xlsx", which a plain substring search would not.
+ *
+ * A withdrawn message is gone from here for everyone but an admin, exactly as
+ * it is gone from the thread.
+ */
+export async function listMedia(req, res) {
+  const ticket = await readableTicket(req);
+  const manager = MANAGER_ROLES.includes(req.user.role);
+
+  const words = filenameWords(typeof req.query.q === 'string' ? req.query.q : '');
+
+  const filter = {
+    ticket: ticket._id,
+    ...(manager ? {} : { deletedAt: null }),
+    $or: [{ 'attachment.kind': { $in: ['image', 'video', 'file'] } }, { body: LINK_SOURCE }],
+  };
+
+  const messages = await Message.find(filter)
+    .sort({ createdAt: -1 })
+    .select('author authorName body attachment createdAt deletedAt')
+    .limit(500)
+    .lean();
+
+  const matchesName = (name) => {
+    if (words.length === 0) return true;
+    const own = filenameWords(name).join(' ');
+    return words.every((word) => own.includes(word));
+  };
+
+  const matchesText = (text) => {
+    if (words.length === 0) return true;
+    const lower = String(text ?? '').toLowerCase();
+    return words.every((word) => lower.includes(word));
+  };
+
+  const media = [];
+  const documents = [];
+  const links = [];
+
+  for (const message of messages) {
+    const by = { id: String(message.author), name: message.authorName };
+    const attachment = message.attachment;
+
+    if (attachment && ['image', 'video', 'file'].includes(attachment.kind)) {
+      if (!matchesName(attachment.filename)) continue;
+
+      const entry = {
+        id: String(message._id),
+        from: 'chat',
+        kind: attachment.kind,
+        filename: attachment.filename || '',
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        url: await createDownloadUrl(attachment.key),
+        by,
+        createdAt: message.createdAt,
+      };
+      (attachment.kind === 'file' ? documents : media).push(entry);
+    }
+
+    const found = [...new Set((message.body ?? '').match(LINK) ?? [])].map(trimLink);
+    for (const url of found) {
+      if (!matchesText(`${url} ${message.body}`)) continue;
+      links.push({
+        id: `${message._id}-${links.length}`,
+        messageId: String(message._id),
+        url,
+        // The line it was said in: "the invoice is here" is what makes a
+        // link findable a week later.
+        context: message.body.slice(0, 160),
+        by,
+        createdAt: message.createdAt,
+      });
+    }
+  }
+
+  // The request's own attachments, which the raiser sent before there was a
+  // conversation to send them in.
+  for (const [index, file] of (ticket.attachments ?? []).entries()) {
+    if (!matchesName(file.filename)) continue;
+    const family = file.mimeType?.startsWith('image/')
+      ? 'image'
+      : file.mimeType?.startsWith('video/')
+        ? 'video'
+        : 'file';
+
+    const entry = {
+      id: `request-${index}`,
+      from: 'request',
+      kind: family,
+      filename: file.filename || '',
+      mimeType: file.mimeType,
+      size: file.size,
+      url: await createDownloadUrl(file.key),
+      by: { id: String(ticket.raisedBy?._id ?? ticket.raisedBy), name: ticket.raisedBy?.name ?? '' },
+      createdAt: file.uploadedAt ?? ticket.createdAt,
+    };
+    (family === 'file' ? documents : media).push(entry);
+  }
+
+  const newest = (a, b) => new Date(b.createdAt) - new Date(a.createdAt);
+
+  res.json({
+    success: true,
+    media: media.sort(newest),
+    documents: documents.sort(newest),
+    links: links.sort(newest),
+  });
+}
+
+/** How many of each kind the library hands back at once, newest first. */
+const LIBRARY_LIMIT = 400;
+
+/** How many messages are read to build it: attachments and links only. */
+const LIBRARY_SCAN = 3000;
+
+/** Which shelf a file belongs on, by what it is rather than how it was sent. */
+const shelfOf = (kind, mimeType) =>
+  kind === 'image' || mimeType?.startsWith('image/')
+    ? 'image'
+    : kind === 'video' || mimeType?.startsWith('video/')
+      ? 'video'
+      : 'document';
+
+/**
+ * Every photo, video, document and link across all the tickets this person
+ * can see - the place to go when you remember the file but not the ticket.
+ *
+ * Drawn from three places: what was attached when each request was raised,
+ * what was sent in each conversation, and the links in both the requests and
+ * the messages. Voice notes are left out: nobody searches for one by name.
+ *
+ * `q` is matched a word at a time against everything a person might remember
+ * about a file - its name, the ticket's number and subject, who sent it and
+ * which department it went to - so "salary digital" finds
+ * "aims-digital-salary-list.xlsx", and "0058" finds everything on TK-0058.
+ *
+ * Visibility is the tickets' own: nothing here is readable that the ticket it
+ * came from is not, and a withdrawn message is gone for everyone but an admin.
+ */
+export async function listLibrary(req, res) {
+  const manager = MANAGER_ROLES.includes(req.user.role);
+  const words = filenameWords(typeof req.query.q === 'string' ? req.query.q : '');
+
+  const tickets = await Ticket.find(visibilityFilter(req.user))
+    .select('number subject status deadline committedDeadline department raisedBy attachments description createdAt')
+    .populate('department', 'name')
+    .populate('raisedBy', 'name')
+    .lean();
+
+  const byId = new Map(tickets.map((ticket) => [String(ticket._id), ticket]));
+
+  const messages = await Message.find({
+    ticket: { $in: tickets.map((ticket) => ticket._id) },
+    ...(manager ? {} : { deletedAt: null }),
+    $or: [{ 'attachment.kind': { $in: ['image', 'video', 'file'] } }, { body: LINK_SOURCE }],
+  })
+    .sort({ createdAt: -1 })
+    .select('ticket author authorName body attachment createdAt')
+    .limit(LIBRARY_SCAN)
+    .lean();
+
+  /** What the row says about where it came from, so it can be opened. */
+  const ticketOf = (ticket) => ({
+    id: String(ticket._id),
+    number: ticket.number,
+    subject: ticket.subject,
+    status: statusOf(ticket),
+    department: ticket.department?.name ?? '',
+    raisedById: String(ticket.raisedBy?._id ?? ticket.raisedBy ?? ''),
+  });
+
+  /** Every word of the search, somewhere in what is known about the item. */
+  const matches = (...parts) => {
+    if (words.length === 0) return true;
+    const known = filenameWords(parts.filter(Boolean).join(' ')).join(' ');
+    return words.every((word) => known.includes(word));
+  };
+
+  const items = [];
+
+  const addFile = async ({ id, from, kind, key, filename, mimeType, size, by, createdAt, ticket }) => {
+    const name = filename || '';
+    if (!matches(name, ticket.number, ticket.subject, by.name, ticket.department?.name)) return;
+    items.push({
+      id,
+      type: shelfOf(kind, mimeType),
+      from,
+      filename: name,
+      mimeType,
+      size,
+      // One link to look at it, one that arrives as a download.
+      url: await createDownloadUrl(key),
+      downloadUrl: await createDownloadUrl(key, { saveAs: name || 'attachment' }),
+      by,
+      createdAt,
+      ticket: ticketOf(ticket),
+    });
+  };
+
+  const addLinks = ({ idPrefix, from, text, by, createdAt, ticket, messageId = null }) => {
+    const found = [...new Set(String(text ?? '').match(LINK) ?? [])].map(trimLink);
+    for (const [index, url] of found.entries()) {
+      if (!matches(url, text, ticket.number, ticket.subject, by.name)) continue;
+      items.push({
+        id: `${idPrefix}-link-${index}`,
+        type: 'link',
+        from,
+        url,
+        messageId,
+        // The sentence it was posted in is what makes a link findable later.
+        context: String(text).slice(0, 200),
+        by,
+        createdAt,
+        ticket: ticketOf(ticket),
+      });
+    }
+  };
+
+  /* eslint-disable no-await-in-loop -- signing is local work, not a round trip */
+  for (const message of messages) {
+    const ticket = byId.get(String(message.ticket));
+    if (!ticket) continue;
+    const by = { id: String(message.author), name: message.authorName };
+    const attachment = message.attachment;
+
+    if (attachment && ['image', 'video', 'file'].includes(attachment.kind)) {
+      await addFile({
+        id: String(message._id),
+        from: 'chat',
+        kind: attachment.kind,
+        key: attachment.key,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        by,
+        createdAt: message.createdAt,
+        ticket,
+      });
+    }
+
+    if (message.body) {
+      addLinks({
+        idPrefix: String(message._id),
+        from: 'chat',
+        text: message.body,
+        by,
+        createdAt: message.createdAt,
+        ticket,
+        messageId: String(message._id),
+      });
+    }
+  }
+
+  // The paperwork each request was raised with, and any links in the ask.
+  for (const ticket of tickets) {
+    const raiser = {
+      id: String(ticket.raisedBy?._id ?? ticket.raisedBy ?? ''),
+      name: ticket.raisedBy?.name ?? '',
+    };
+
+    for (const [index, file] of (ticket.attachments ?? []).entries()) {
+      await addFile({
+        id: `${ticket._id}-request-${index}`,
+        from: 'request',
+        kind: null,
+        key: file.key,
+        filename: file.filename,
+        mimeType: file.mimeType,
+        size: file.size,
+        by: raiser,
+        createdAt: file.uploadedAt ?? ticket.createdAt,
+        ticket,
+      });
+    }
+
+    addLinks({
+      idPrefix: `${ticket._id}-request`,
+      from: 'request',
+      text: ticket.description,
+      by: raiser,
+      createdAt: ticket.createdAt,
+      ticket,
+    });
+  }
+  /* eslint-enable no-await-in-loop */
+
+  items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const counts = { image: 0, video: 0, document: 0, link: 0 };
+  const kept = [];
+  for (const item of items) {
+    counts[item.type] += 1;
+    if (counts[item.type] <= LIBRARY_LIMIT) kept.push(item);
+  }
+
+  res.json({
+    success: true,
+    counts,
+    /** How many tickets the answer was drawn from. */
+    tickets: new Set(items.map((item) => item.ticket.id)).size,
+    items: kept,
+  });
 }

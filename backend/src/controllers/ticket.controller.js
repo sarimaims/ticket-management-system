@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { cleanFilename } from '../utils/fileName.js';
 import { timings } from '../utils/timings.js';
 import {
   buildTicketKey,
@@ -19,8 +20,11 @@ import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 import Ticket, {
+  APPROVAL_WINDOW_MS,
   CLOSED_STATUSES,
+  NOT_LATE_STATUSES,
   OVERDUE,
+  RESOLVED,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
 } from '../models/Ticket.js';
@@ -36,6 +40,10 @@ import { postSystemMessage } from '../services/chat.js';
 import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
 import {
+  notifyApprovalAnswered,
+  notifyApprovalRequested,
+  notifyEscalated,
+  notifyEscalationHandled,
   notifyNewTicket,
   notifyTicketDeleted,
   notifyTicketEdited,
@@ -161,6 +169,32 @@ function present(ticket, { awaiting } = {}) {
     cancelReason: ticket.cancelReason ?? '',
     cancelledByName: ticket.cancelledByName ?? '',
     cancelledAt: ticket.cancelledAt ?? null,
+    /**
+     * The sign-off, when there is one. `approvalDueAt` is set only while the
+     * ticket is Resolved and says when it completes itself unanswered.
+     */
+    resolvedAt: ticket.resolvedAt ?? null,
+    resolvedByName: ticket.resolvedByName ?? '',
+    approvalDueAt: ticket.approvalDueAt ?? null,
+    approvedByName: ticket.approvedByName ?? '',
+    completedAt: ticket.completedAt ?? null,
+    rejectedReason: ticket.rejectedReason ?? '',
+    rejectedByName: ticket.rejectedByName ?? '',
+    rejectedAt: ticket.rejectedAt ?? null,
+    /** Put in front of the super admin: null when it never has been. */
+    escalation: ticket.escalationStatus
+      ? {
+          status: ticket.escalationStatus,
+          reason: ticket.escalationReason ?? '',
+          byId: ticket.escalatedBy ? String(ticket.escalatedBy?._id ?? ticket.escalatedBy) : null,
+          byName: ticket.escalatedByName ?? '',
+          at: ticket.escalatedAt ?? null,
+          handledAt: ticket.escalationHandledAt ?? null,
+          handledByName: ticket.escalationHandledByName ?? '',
+          note: ticket.escalationNote ?? '',
+          count: ticket.escalationCount ?? 1,
+        }
+      : null,
     department: populated(department)
       ? {
           id: String(department._id),
@@ -290,7 +324,9 @@ async function resolveAttachments(req) {
 
     return {
       key: entry.key,
-      filename: typeof entry.filename === 'string' ? entry.filename.slice(0, 160) : '',
+      // The name it was uploaded with, not the random key it is stored under:
+      // it is what the raiser will type when they come looking for it.
+      filename: cleanFilename(entry.filename),
       mimeType: object.contentType,
       size: object.size,
       uploadedBy: req.user._id,
@@ -502,10 +538,20 @@ export async function createTicket(req, res) {
   }
 
   /*
-   * A department nobody was named for is left unassigned. It sits in that
-   * department's All Tickets for the head to hand out; Assigned to Me only
-   * ever holds what has been put on somebody by name.
+   * Every department being asked has to be asked of somebody.
+   *
+   * A request addressed to a queue rather than a person is one everybody
+   * assumes a colleague has picked up, and one submit can reach several
+   * departments - so it is checked per department, not once for the batch. A
+   * single name against three of them still leaves two unaddressed.
    */
+  const unaddressed = targets.filter((target) => !assignedTo.has(String(target._id)));
+  if (unaddressed.length > 0) {
+    throw ApiError.badRequest(
+      `Name somebody to pick this up in ${unaddressed.map((target) => target.name).join(', ')}.`,
+    );
+  }
+
   // You may only raise on behalf of a department you actually belong to.
   const fromIds = [...new Set((fromDepartments ?? []).filter(Boolean).map(String))];
   const mine = new Set((req.user.memberships ?? []).map((m) => String(m.department)));
@@ -657,7 +703,14 @@ export async function listTickets(req, res) {
 
   let filter;
 
-  if (scope === 'all') {
+  if (scope === 'escalated') {
+    // The super admin's own page: every ticket that has ever been put in front
+    // of them, open or dealt with. Nobody else has one.
+    if (req.user.role !== 'superadmin') {
+      throw ApiError.forbidden('Only the super admin sees escalations.');
+    }
+    filter = { escalationStatus: { $in: ['open', 'handled'] } };
+  } else if (scope === 'all') {
     if (MANAGER_ROLES.includes(req.user.role)) {
       // Nothing to narrow by: a manager already sees every department.
       filter = {};
@@ -711,8 +764,8 @@ export async function listTickets(req, res) {
      * the date has taken away from it.
      */
     if (status === OVERDUE) {
-      filter.$and = [...(filter.$and ?? []), { status: { $nin: CLOSED_STATUSES } }, pastDue()];
-    } else if (CLOSED_STATUSES.includes(status)) {
+      filter.$and = [...(filter.$and ?? []), { status: { $nin: NOT_LATE_STATUSES } }, pastDue()];
+    } else if (NOT_LATE_STATUSES.includes(status)) {
       filter.status = status;
     } else {
       filter.$and = [...(filter.$and ?? []), { status }, pastDue(false)];
@@ -756,6 +809,280 @@ export async function listTickets(req, res) {
   });
 }
 
+/**
+ * Requests of mine that are resolved and waiting for my sign-off.
+ *
+ * Asked for by the banner every page carries, so it is its own small query
+ * rather than a filter over everything the person can see: it has to be cheap
+ * enough to ask often, and it only ever concerns their own requests.
+ */
+export async function listApprovals(req, res) {
+  const tickets = await Ticket.find({ raisedBy: req.user._id, status: RESOLVED })
+    .sort({ approvalDueAt: 1 })
+    .limit(50)
+    .lean();
+
+  res.json({
+    success: true,
+    tickets: (await hydrate(tickets)).map((ticket) => present(ticket)),
+  });
+}
+
+/** Long enough to say what is missing, short enough for a bell. */
+const MAX_REJECT_REASON = 400;
+
+/**
+ * The requester's answer to a resolved ticket: done, or not yet.
+ *
+ * Theirs alone - they asked for the work, so they are the one who says it was
+ * delivered. Approving completes it; sending it back returns it to In Progress
+ * with the reason, so whoever is doing it knows what is still missing.
+ *
+ * The change is made only if the ticket is still Resolved at that moment, so
+ * an answer racing the 48-hour sweep cannot complete a ticket twice or reopen
+ * one that has just completed.
+ */
+export async function answerApproval(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) })
+    .select('raisedBy status resolvedBy');
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  if (!isRaiser(req.user, ticket)) {
+    throw ApiError.forbidden('Only the person who raised this request can approve it.');
+  }
+
+  const { decision, reason } = req.body ?? {};
+  if (decision !== 'approve' && decision !== 'reject') {
+    throw ApiError.badRequest('Answer with approve or reject.');
+  }
+
+  const approved = decision === 'approve';
+  const why = typeof reason === 'string' ? reason.trim() : '';
+  if (!approved) {
+    if (why.length < 3) {
+      throw ApiError.badRequest('Say what is still missing, so they know what to fix.');
+    }
+    if (why.length > MAX_REJECT_REASON) {
+      throw ApiError.badRequest(`Keep the reason under ${MAX_REJECT_REASON} characters.`);
+    }
+  }
+
+  const now = new Date();
+  const changes = approved
+    ? {
+        status: 'Completed',
+        completedAt: now,
+        approvedByName: req.user.name,
+        approvalDueAt: null,
+      }
+    : {
+        status: 'In Progress',
+        rejectedReason: why,
+        rejectedByName: req.user.name,
+        rejectedAt: now,
+        approvalDueAt: null,
+      };
+
+  const answered = await Ticket.findOneAndUpdate(
+    { _id: ticket._id, status: RESOLVED },
+    { $set: changes },
+    { returnDocument: 'after' },
+  ).lean();
+
+  if (!answered) {
+    const current = await Ticket.findById(ticket._id).select('status').lean();
+    throw ApiError.conflict(
+      current?.status === 'Completed'
+        ? 'This request has already been completed.'
+        : 'This request is no longer waiting for your approval.',
+    );
+  }
+
+  const populated = await hydrateOne(answered);
+
+  await postSystemMessage({
+    ticket: populated,
+    actor: req.user,
+    event: approved ? 'approved' : 'rejected',
+    side: 'raiser',
+    body: approved ? 'approved the work - request completed' : `sent it back - ${why}`,
+  });
+  await record({
+    actor: req.user,
+    department: populated.department,
+    action: approved ? 'ticket.approved' : 'ticket.rejected',
+    summary: approved
+      ? `approved ${populated.number} "${populated.subject}" - completed`
+      : `sent ${populated.number} "${populated.subject}" back to In Progress - ${why}`,
+    ticketNumber: populated.number,
+  });
+  await notifyApprovalAnswered({
+    ticket: populated,
+    actor: req.user,
+    approved,
+    reason: why,
+    resolvedBy: ticket.resolvedBy,
+  });
+
+  res.json({ success: true, ticket: present(populated) });
+}
+
+/** Long enough to explain, short enough to read at a glance on the list. */
+const MAX_ESCALATION_TEXT = 400;
+
+/**
+ * Puts a ticket in front of the super admin.
+ *
+ * Open to anybody who can see the ticket - the person who asked, or anyone in
+ * the department working it - because the reason to escalate is that the
+ * usual route has stopped working, and that can happen on either side. A
+ * reason is required: the super admin opens this cold, and "escalated" on its
+ * own tells them nothing about what is wrong.
+ *
+ * One open escalation at a time. Once the super admin marks it handled, it can
+ * be raised again if the problem comes back.
+ */
+export async function escalateTicket(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  if (req.user.role === 'superadmin') {
+    throw ApiError.badRequest('You are the super admin - escalations already come to you.');
+  }
+
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) })
+    .select('status escalationStatus escalatedByName raisedBy')
+    .lean();
+  if (!ticket) throw ApiError.notFound('Ticket not found.');
+
+  if (CLOSED_STATUSES.includes(ticket.status)) {
+    throw ApiError.badRequest('This ticket is already closed, so there is nothing to escalate.');
+  }
+  if (ticket.escalationStatus === 'open') {
+    throw ApiError.conflict(
+      `Already escalated${ticket.escalatedByName ? ` by ${ticket.escalatedByName}` : ''}. The super admin has it.`,
+    );
+  }
+
+  const why = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (why.length < 3) throw ApiError.badRequest('Say why this needs the super admin.');
+  if (why.length > MAX_ESCALATION_TEXT) {
+    throw ApiError.badRequest(`Keep the reason under ${MAX_ESCALATION_TEXT} characters.`);
+  }
+
+  // Only if nobody escalated it in the meantime: two people escalating at
+  // once make one escalation, not two with one quietly overwritten.
+  const escalated = await Ticket.findOneAndUpdate(
+    { _id: ticket._id, escalationStatus: { $ne: 'open' } },
+    {
+      $set: {
+        escalationStatus: 'open',
+        escalatedAt: new Date(),
+        escalatedBy: req.user._id,
+        escalatedByName: req.user.name,
+        escalationReason: why,
+        escalationHandledAt: null,
+        escalationHandledByName: '',
+        escalationNote: '',
+      },
+      $inc: { escalationCount: 1 },
+    },
+    { returnDocument: 'after' },
+  ).lean();
+
+  if (!escalated) throw ApiError.conflict('Somebody has just escalated this. The super admin has it.');
+
+  const populated = await hydrateOne(escalated);
+
+  await postSystemMessage({
+    ticket: populated,
+    actor: req.user,
+    event: 'escalated',
+    side: isRaiser(req.user, ticket) ? 'raiser' : 'department',
+    body: `escalated this to the super admin - ${why}`,
+  });
+  await record({
+    actor: req.user,
+    department: populated.department,
+    action: 'ticket.escalated',
+    summary: `escalated ${populated.number} "${populated.subject}" to the super admin - ${why}`,
+    ticketNumber: populated.number,
+  });
+  await notifyEscalated({ ticket: populated, actor: req.user, reason: why });
+
+  res.json({ success: true, ticket: present(populated) });
+}
+
+/**
+ * The super admin closes an escalation, with an optional note saying what was
+ * done. The ticket itself is left as it is - dealing with an escalation may
+ * mean reassigning it, moving a date or a word with somebody, and those are
+ * all done through the ticket as usual.
+ */
+export async function handleEscalation(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
+
+  if (req.user.role !== 'superadmin') {
+    throw ApiError.forbidden('Only the super admin can close an escalation.');
+  }
+
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+  if (note.length > MAX_ESCALATION_TEXT) {
+    throw ApiError.badRequest(`Keep the note under ${MAX_ESCALATION_TEXT} characters.`);
+  }
+
+  const before = await Ticket.findById(req.params.id).select('escalatedBy').lean();
+  if (!before) throw ApiError.notFound('Ticket not found.');
+
+  const handled = await Ticket.findOneAndUpdate(
+    { _id: req.params.id, escalationStatus: 'open' },
+    {
+      $set: {
+        escalationStatus: 'handled',
+        escalationHandledAt: new Date(),
+        escalationHandledByName: req.user.name,
+        escalationNote: note,
+      },
+    },
+    { returnDocument: 'after' },
+  ).lean();
+
+  if (!handled) throw ApiError.conflict('This escalation is not open any more.');
+
+  const populated = await hydrateOne(handled);
+
+  await postSystemMessage({
+    ticket: populated,
+    actor: req.user,
+    event: 'escalation.handled',
+    body: note ? `handled the escalation - ${note}` : 'handled the escalation',
+  });
+  await record({
+    actor: req.user,
+    department: populated.department,
+    action: 'ticket.escalation_handled',
+    summary: `handled the escalation on ${populated.number} "${populated.subject}"${note ? ` - ${note}` : ''}`,
+    ticketNumber: populated.number,
+  });
+  await notifyEscalationHandled({
+    ticket: populated,
+    actor: req.user,
+    escalatedBy: before.escalatedBy,
+    note,
+  });
+
+  res.json({ success: true, ticket: present(populated) });
+}
+
+/** How many escalations are open: the number on the super admin's sidebar. */
+export async function countEscalations(req, res) {
+  if (req.user.role !== 'superadmin') {
+    throw ApiError.forbidden('Only the super admin sees escalations.');
+  }
+  res.json({ success: true, open: await Ticket.countDocuments({ escalationStatus: 'open' }) });
+}
+
 export async function getTicket(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
@@ -796,7 +1123,21 @@ export async function listAssignments(req, res) {
     // and with the names on them, so the lines describing those are left out
     // rather than told twice. What is left is what the trail cannot show: the
     // request itself being changed.
-    Message.find({ ticket: ticket._id, kind: 'system', event: 'edited' })
+    Message.find({
+      ticket: ticket._id,
+      kind: 'system',
+      event: {
+        $in: [
+          'edited',
+          'resolved',
+          'approved',
+          'rejected',
+          'auto-approved',
+          'escalated',
+          'escalation.handled',
+        ],
+      },
+    })
       .select('event body authorName authorRole createdAt')
       .sort({ createdAt: 1 }),
     // What happened to the conversation itself. Read off the messages rather
@@ -1331,7 +1672,49 @@ export async function updateTicket(req, res) {
       ticket.cancelledByName = '';
       ticket.cancelledAt = null;
     }
-    ticket.status = status;
+
+    /*
+     * Finishing somebody else's request is a claim, not a verdict. The work is
+     * marked Resolved and the person who asked decides whether it is done:
+     * they approve it into Completed, or send it back to In Progress. Nobody
+     * answering for 48 hours counts as yes - see services/approval.js.
+     *
+     * Finishing your own request needs nobody's say-so, and asking again for
+     * one that is already resolved or completed changes nothing.
+     */
+    let next = status === RESOLVED ? 'Completed' : status;
+    if (next === 'Completed') {
+      if (ticket.status === RESOLVED || ticket.status === 'Completed') next = ticket.status;
+      else if (!raisedByMe) next = RESOLVED;
+    }
+
+    if (next === RESOLVED && ticket.status !== RESOLVED) {
+      const at = new Date();
+      ticket.resolvedAt = at;
+      ticket.resolvedBy = req.user._id;
+      ticket.resolvedByName = req.user.name;
+      ticket.approvalDueAt = new Date(at.getTime() + APPROVAL_WINDOW_MS);
+      // A fresh claim: the last refusal has been answered by doing the work.
+      ticket.rejectedReason = '';
+      ticket.rejectedByName = '';
+      ticket.rejectedAt = null;
+      ticket.approvedByName = '';
+    } else if (next !== RESOLVED && ticket.status === RESOLVED) {
+      // Taken back, or called off, before anybody answered: nothing is waiting.
+      ticket.approvalDueAt = null;
+    }
+
+    if (next === 'Completed' && ticket.status !== 'Completed') {
+      ticket.completedAt = new Date();
+      ticket.approvedByName = req.user.name;
+      ticket.approvalDueAt = null;
+    } else if (next !== 'Completed' && ticket.status === 'Completed') {
+      // Reopened: whoever signed it off signed off something else.
+      ticket.completedAt = null;
+      ticket.approvedByName = '';
+    }
+
+    ticket.status = next;
   }
 
   if (priority !== undefined) {
@@ -1508,7 +1891,9 @@ export async function updateTicket(req, res) {
     .populate('committedBy', 'name email');
 
   const changes = [];
-  if (before.status !== populated.status) {
+  /** Marked done for the first time since it was last open: a question for the raiser. */
+  const resolvedNow = before.status !== RESOLVED && populated.status === RESOLVED;
+  if (before.status !== populated.status && !resolvedNow) {
     changes.push(
       populated.status === 'Cancelled'
         ? `cancelled the ticket - ${populated.cancelReason}`
@@ -1554,6 +1939,33 @@ export async function updateTicket(req, res) {
     );
   }
 
+  /*
+   * Resolving gets its own line in the thread, the log and the bell, apart
+   * from anything else that moved in the same save: it is the one change that
+   * asks somebody to do something, and it wears its own colour everywhere.
+   */
+  if (resolvedNow) {
+    const raiser = populated.raisedBy?.name ?? 'the requester';
+    await postSystemMessage({
+      ticket: populated,
+      actor: req.user,
+      event: 'resolved',
+      body: `marked this resolved - waiting for ${raiser} to approve`,
+    });
+    await record({
+      actor: req.user,
+      department: populated.department,
+      action: 'ticket.resolved',
+      summary: `resolved ${populated.number} "${populated.subject}" - waiting for ${raiser} to approve`,
+      ticketNumber: populated.number,
+    });
+    await notifyApprovalRequested({
+      ticket: populated,
+      actor: req.user,
+      hours: APPROVAL_WINDOW_MS / 3_600_000,
+    });
+  }
+
   if (changes.length > 0) {
     const summary = changes.join(', ');
 
@@ -1596,7 +2008,7 @@ export async function updateTicket(req, res) {
         ? 'cancelled'
         : populated.status === 'Completed' && before.status !== 'Completed'
           ? 'completed'
-          : before.status !== populated.status
+          : before.status !== populated.status && !resolvedNow
             ? 'status'
             : before.committedDeadline !== nowCommitted
               ? 'promise'

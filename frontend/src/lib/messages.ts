@@ -6,8 +6,9 @@ import type { AttachmentKind } from "./uploads";
 export const MAX_BODY = 2000;
 
 /**
- * A photo or a voice note hanging off a message. `url` is signed by the API on
- * every read and expires within the hour, so it is never stored or shared.
+ * A photo, video, document or voice note hanging off a message. `url` is
+ * signed by the API on every read and expires within the hour, so it is never
+ * stored or shared.
  */
 export type MessageAttachment = {
   kind: AttachmentKind;
@@ -50,7 +51,17 @@ export type MessageRecord = {
    */
   seen: { by: number; of: number };
   /** Which kind of thing happened, on a system line. */
-  event: "raised" | "edited" | "assignment" | null;
+  event:
+    | "raised"
+    | "edited"
+    | "assignment"
+    | "resolved"
+    | "approved"
+    | "rejected"
+    | "auto-approved"
+    | "escalated"
+    | "escalation.handled"
+    | null;
   author: { id: string; name: string };
   /** Where the author sits today - named in the menu on their message. */
   authorDepartments: { id: string; name: string; role?: string }[];
@@ -147,4 +158,43 @@ export function sendMessage(
     method: "POST",
     body: { body, ...(attachment ? { attachment } : {}), ...(replyTo ? { replyTo } : {}) },
   }).then((data) => data.message);
+}
+
+/** One thing the thread has shared: a photo, a video or a document. */
+export type SharedFile = {
+  id: string;
+  /** Sent in the conversation, or attached when the request was raised. */
+  from: "chat" | "request";
+  kind: "image" | "video" | "file";
+  /** The name it was sent with - what a search for it matches on. */
+  filename: string;
+  mimeType: string;
+  size: number;
+  /** Signed for the hour; never stored. */
+  url: string;
+  by: { id: string; name: string };
+  createdAt: string;
+};
+
+/** One web address somebody posted, with the line it was said in. */
+export type SharedLink = {
+  id: string;
+  messageId: string;
+  url: string;
+  context: string;
+  by: { id: string; name: string };
+  createdAt: string;
+};
+
+/**
+ * Everything a ticket's thread has shared, grouped the way a phone groups it.
+ * `q` narrows by the words of a file's name, so "digital salary" finds
+ * "aims-digital-salary-list.xlsx".
+ */
+export function listMedia(ticketId: string, q = "", signal?: AbortSignal) {
+  const query = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+  return api<{ media: SharedFile[]; documents: SharedFile[]; links: SharedLink[] }>(
+    `/tickets/${ticketId}/media${query}`,
+    { signal },
+  );
 }

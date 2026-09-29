@@ -44,7 +44,10 @@ enum TicketStatus {
   Accepted
   InProgress @map("In Progress")
   Waiting
+  /// Done by the department, waiting for the requester to sign it off.
+  Resolved
   Completed
+  Cancelled
   Overdue
 }
 
@@ -182,6 +185,31 @@ model Ticket {
   committedAt       DateTime?
 
   project   String    @default("")
+
+  /// The sign-off: a department marks another person's request Resolved,
+  /// and that person approves it (Completed) or sends it back (In Progress).
+  /// Unanswered, it completes itself at `approvalDueAt`.
+  resolvedAt     DateTime?
+  resolvedById   String?   @map("resolvedBy") @db.ObjectId
+  resolvedByName String    @default("")
+  approvalDueAt  DateTime?
+  approvedByName String    @default("")
+  completedAt    DateTime?
+  rejectedReason String    @default("")
+  rejectedByName String    @default("")
+  rejectedAt     DateTime?
+
+  /// Escalation to the super admin: open until marked handled.
+  escalationStatus        String?
+  escalatedAt             DateTime?
+  escalatedById           String?   @map("escalatedBy") @db.ObjectId
+  escalatedByName         String    @default("")
+  escalationReason        String    @default("")
+  escalationHandledAt     DateTime?
+  escalationHandledByName String    @default("")
+  escalationNote          String    @default("")
+  escalationCount         Int       @default(0)
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -190,6 +218,8 @@ model Ticket {
 
   @@index([departmentId])
   @@index([raisedById])
+  @@index([status, approvalDueAt])
+  @@index([escalationStatus, escalatedAt(sort: Desc)])
   @@map("tickets")
 }
 

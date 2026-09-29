@@ -16,6 +16,10 @@ export const NOTIFICATION_TYPES = [
   'ticket.handover.answered',
   /** A ticket you were part of was taken back, with the reason why. */
   'ticket.deleted',
+  /** Your request was marked resolved and is waiting for you to sign it off. */
+  'ticket.approval',
+  /** Somebody put a ticket in front of the super admin. */
+  'ticket.escalated',
 ];
 
 /**
@@ -39,6 +43,16 @@ export const NOTIFICATION_EVENTS = [
   'handover',
   'handover.answered',
   'deleted',
+  /** Marked done by the department; the requester's sign-off is wanted. */
+  'resolved',
+  /** The requester agreed it is done. */
+  'approved',
+  /** The requester sent it back. */
+  'rejected',
+  /** Put in front of the super admin. */
+  'escalated',
+  /** The super admin dealt with it. */
+  'escalation.handled',
 ];
 
 const notificationSchema = new mongoose.Schema(

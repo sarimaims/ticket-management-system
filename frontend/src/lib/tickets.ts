@@ -1,5 +1,5 @@
 import { api, apiRevalidate, BASE } from "./api";
-import { isClosed, type TicketPriority, type TicketStatus } from "./types";
+import { isSettled, type TicketPriority, type TicketStatus } from "./types";
 
 /** The unit a department sits under, as the ticket carries it. */
 export type TicketUnit = { id: string; name?: string; code?: string } | null;
@@ -19,11 +19,23 @@ export type TicketAttachment = {
 
 const startOfToday = () => new Date(new Date().toDateString()).getTime();
 
-const dayOf = (value: string | null) => (value ? new Date(value.slice(0, 10)).getTime() : null);
+/**
+ * A stored date as the reader's own midnight.
+ *
+ * `new Date("2026-09-26")` is midnight UTC, while today's midnight is local -
+ * so east of Greenwich the two never met and "due today" counted nothing at
+ * all. Built from the parts instead, which is local by definition.
+ */
+const dayOf = (value: string | null) => {
+  if (!value) return null;
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day).getTime();
+};
 
 /** Past its date and not finished - whatever the status column happens to say. */
 export function isOverdue(ticket: TicketRecord) {
-  if (isClosed(ticket.status)) return false;
+  if (isSettled(ticket.status)) return false;
   if (ticket.status === "Overdue") return true;
 
   const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
@@ -32,16 +44,71 @@ export function isOverdue(ticket: TicketRecord) {
 
 /** Open and due today, by the promised date where there is one. */
 export function isDueToday(ticket: TicketRecord) {
-  if (isClosed(ticket.status)) return false;
+  if (isSettled(ticket.status)) return false;
   return dayOf(ticket.committedDeadline ?? ticket.deadline) === startOfToday();
 }
 
 /** Due today and not already counted as late: what "Due today" means on a card. */
 export const isDueTodayOnly = (ticket: TicketRecord) => isDueToday(ticket) && !isOverdue(ticket);
 
+/**
+ * Open and due inside the coming week, today excluded.
+ *
+ * Today has a tile of its own, so leaving it out here keeps the two counts
+ * from claiming the same ticket - "due today" and "due this week" adding up
+ * to more tickets than exist reads as a bug in the numbers.
+ */
+export function isDueThisWeek(ticket: TicketRecord) {
+  if (isSettled(ticket.status) || isOverdue(ticket)) return false;
+
+  const due = dayOf(ticket.committedDeadline ?? ticket.deadline);
+  if (due === null) return false;
+
+  const start = startOfToday();
+  return due > start && due <= start + 7 * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Open and marked High or Critical: what to chase before anything else.
+ *
+ * The questions below skip a resolved ticket: the work is in, and it is
+ * waiting on the requester's sign-off rather than on anybody's effort.
+ */
+export const isUrgent = (ticket: TicketRecord) =>
+  !isSettled(ticket.status) && (ticket.priority === "High" || ticket.priority === "Critical");
+
+/** Raised since midnight, wherever the reader is: what came in today. */
+export const isNewToday = (ticket: TicketRecord) =>
+  new Date(ticket.createdAt).getTime() >= startOfToday();
+
+/** Open, and nobody has promised a date back yet. */
+export const hasNoCommitment = (ticket: TicketRecord) =>
+  !isSettled(ticket.status) && !ticket.committedDeadline;
+
+/** How long a live ticket may sit untouched before it counts as gone quiet. */
+const QUIET_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Open with nothing happening on it for three days - no edit, no status
+ * change, no message. The ticket nobody is chasing and nobody is working,
+ * which is exactly the one a list sorted by date buries.
+ */
+export function isQuiet(ticket: TicketRecord) {
+  // A resolved ticket is waiting on a clock of its own, not gone quiet.
+  if (isSettled(ticket.status)) return false;
+  const touched = Math.max(
+    Date.parse(ticket.updatedAt) || 0,
+    ticket.lastMessageAt ? Date.parse(ticket.lastMessageAt) || 0 : 0,
+  );
+  return touched > 0 && Date.now() - touched > QUIET_MS;
+}
+
+/** Done by the department and waiting for the requester to sign it off. */
+export const isAwaitingApproval = (ticket: TicketRecord) => ticket.status === "Resolved";
+
 /** Open with nobody on it. */
 export const isUnassigned = (ticket: TicketRecord) =>
-  !isClosed(ticket.status) && ticket.assignees.length === 0;
+  !isSettled(ticket.status) && ticket.assignees.length === 0;
 
 export type TicketRecord = {
   id: string;
@@ -64,6 +131,23 @@ export type TicketRecord = {
   cancelReason?: string;
   cancelledByName?: string;
   cancelledAt?: string | null;
+  /**
+   * The sign-off. Resolved means the department says it is done; the person
+   * who asked approves it (Completed) or sends it back (In Progress), and
+   * unanswered it completes itself at `approvalDueAt`.
+   */
+  resolvedAt: string | null;
+  resolvedByName: string;
+  approvalDueAt: string | null;
+  /** A name, or "Auto-approved" when the 48 hours ran out. */
+  approvedByName: string;
+  completedAt: string | null;
+  /** The last time it was sent back, and why. Cleared when it is resolved again. */
+  rejectedReason: string;
+  rejectedByName: string;
+  rejectedAt: string | null;
+  /** Null when nobody has ever escalated it. */
+  escalation: TicketEscalation | null;
   /** The unit rides along, so a list can be scoped without a second request. */
   department: { id: string; name?: string; code?: string; unit?: TicketUnit };
   fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
@@ -85,6 +169,53 @@ export type TicketRecord = {
   createdAt: string;
   updatedAt: string;
 };
+
+/**
+ * The requester's answer to a resolved ticket. Approving completes it;
+ * rejecting sends it back to In Progress and needs a reason, so whoever is
+ * doing the work knows what is still missing.
+ */
+export function answerApproval(
+  ticketId: string,
+  decision: "approve" | "reject",
+  reason?: string,
+) {
+  return api<{ ticket: TicketRecord }>(`/tickets/${ticketId}/approval`, {
+    method: "POST",
+    body: { decision, reason },
+  }).then((data) => data.ticket);
+}
+
+/**
+ * Puts a ticket in front of the super admin. The reason is required: they open
+ * it cold, and "escalated" alone tells them nothing about what is wrong.
+ */
+export function escalateTicket(ticketId: string, reason: string) {
+  return api<{ ticket: TicketRecord }>(`/tickets/${ticketId}/escalate`, {
+    method: "POST",
+    body: { reason },
+  }).then((data) => data.ticket);
+}
+
+/** The super admin closes an escalation, saying what was done if they like. */
+export function handleEscalation(ticketId: string, note?: string) {
+  return api<{ ticket: TicketRecord }>(`/tickets/${ticketId}/escalation/handle`, {
+    method: "POST",
+    body: { note },
+  }).then((data) => data.ticket);
+}
+
+/** How many escalations are open. Super admin only. */
+export function countEscalations(signal?: AbortSignal) {
+  return api<{ open: number }>("/tickets/escalations/count", { signal }).then((data) => data.open);
+}
+
+/** My requests that are resolved and waiting on my sign-off, soonest deadline first. */
+export function listApprovals(signal?: AbortSignal) {
+  return api<{ tickets: TicketRecord[] }>("/tickets/approvals", { signal }).then(
+    (data) => data.tickets,
+  );
+}
 
 /** One submit can target several departments; each gets its own ticket. */
 export function createTicket(input: {
@@ -108,7 +239,25 @@ export function createTicket(input: {
 }
 
 /** Which slice of the workspace a list is asking for. */
-export type TicketScope = "mine" | "assigned" | "all";
+/**
+ * `escalated` is the super admin's own page: every ticket somebody has put in
+ * front of them. The API refuses it for anyone else.
+ */
+export type TicketScope = "mine" | "assigned" | "all" | "escalated";
+
+/** A ticket put in front of the super admin, and how that ended. */
+export type TicketEscalation = {
+  status: "open" | "handled";
+  reason: string;
+  byId: string | null;
+  byName: string;
+  at: string | null;
+  handledAt: string | null;
+  handledByName: string;
+  note: string;
+  /** How many times it has been escalated, all told. */
+  count: number;
+};
 
 /**
  * Where one attachment is read from. The API answers with a redirect to a

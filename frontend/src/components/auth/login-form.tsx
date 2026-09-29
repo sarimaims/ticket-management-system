@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
-import { login } from "@/lib/auth";
+import { homeFor, login } from "@/lib/auth";
 
 export function LoginForm() {
   const router = useRouter();
@@ -33,8 +33,9 @@ export function LoginForm() {
 
     setPending(true);
     try {
-      setAuth(await login(email.trim(), password));
-      router.push("/dashboard");
+      const answer = await login(email.trim(), password);
+      setAuth(answer);
+      router.push(homeFor(answer.user));
     } catch (error) {
       setErrors({ form: errorMessage(error) });
       setPending(false);

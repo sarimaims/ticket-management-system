@@ -15,13 +15,16 @@ import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Building,
+  CheckCircle2,
   CircleSlash,
   Trash2,
   Inbox,
+  ListFilter,
   MessagesSquare,
   Plus,
   RefreshCw,
   Search,
+  Siren,
   SlidersHorizontal,
   UserCheck,
   X,
@@ -43,7 +46,7 @@ import { StatusPicker } from "@/components/tickets/status-picker";
 import { PriorityPicker } from "@/components/tickets/priority-picker";
 import { DateField } from "@/components/tickets/date-field";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
-import { ScopeFilter, type ScopeOption } from "@/components/ui/scope-filter";
+import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import {
   listDepartmentMembers,
@@ -58,9 +61,15 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import {
   deleteTickets,
+  hasNoCommitment,
+  isAwaitingApproval,
+  isDueThisWeek,
   isDueTodayOnly,
+  isNewToday,
   isOverdue,
+  isQuiet,
   isUnassigned,
+  isUrgent,
   reassignTickets,
   updateTicket,
   type TicketRecord,
@@ -73,14 +82,27 @@ import { UserLink } from "@/components/users/user-profile";
 import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
 import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
-import { isClosed, type Stat, type TicketPriority, type TicketStatus } from "@/lib/types";
+import {
+  isClosed,
+  STATUS_LABEL,
+  type Stat,
+  type TicketPriority,
+  type TicketStatus,
+} from "@/lib/types";
 
 /**
  * Every status a ticket can read as, in lifecycle order - which is what the
  * filter offers and what the Status column sorts by. Overdue is in the list
  * because it is worth filtering for, even though nobody can set it.
  */
-const STATUSES: TicketStatus[] = ["New", "In Progress", "Completed", "Cancelled", "Overdue"];
+const STATUSES: TicketStatus[] = [
+  "New",
+  "In Progress",
+  "Resolved",
+  "Completed",
+  "Cancelled",
+  "Overdue",
+];
 
 const PRIORITIES = ["Low", "Medium", "High", "Critical"];
 
@@ -158,13 +180,85 @@ function inUnit(ticket: TicketRecord, unitId: string) {
  * (`?view=`). Each is the same test the number beside it was counted with,
  * so a click always shows exactly as many rows as the card said.
  */
+type ViewContext = {
+  /** Unread replies per ticket, as the bell's feed knows them. */
+  unread: Map<string, number>;
+};
+
 const VIEWS = {
-  today: isDueTodayOnly,
-  past: isOverdue,
-  unassigned: isUnassigned,
-} satisfies Record<string, (ticket: TicketRecord) => boolean>;
+  open: (ticket: TicketRecord) => !isClosed(ticket.status),
+  // Done by the department, waiting on the requester's sign-off.
+  approval: (ticket: TicketRecord) => isAwaitingApproval(ticket),
+  // In front of the super admin, and dealt with.
+  escalated: (ticket: TicketRecord) => ticket.escalation?.status === "open",
+  handled: (ticket: TicketRecord) => ticket.escalation?.status === "handled",
+  escalatedToday: (ticket: TicketRecord) =>
+    ticket.escalation?.status === "open" &&
+    Boolean(ticket.escalation.at) &&
+    new Date(ticket.escalation.at as string).toDateString() === new Date().toDateString(),
+  // Escalated before, handled, and back again: the route that keeps failing.
+  escalatedAgain: (ticket: TicketRecord) =>
+    ticket.escalation?.status === "open" && ticket.escalation.count > 1,
+  today: (ticket: TicketRecord) => isDueTodayOnly(ticket),
+  week: (ticket: TicketRecord) => isDueThisWeek(ticket),
+  past: (ticket: TicketRecord) => isOverdue(ticket),
+  unassigned: (ticket: TicketRecord) => isUnassigned(ticket),
+  urgent: (ticket: TicketRecord) => isUrgent(ticket),
+  // Somebody handed this over and is waiting for a yes or a no.
+  asked: (ticket: TicketRecord) => ticket.awaitingMe && !isClosed(ticket.status),
+  undated: (ticket: TicketRecord) => hasNoCommitment(ticket),
+  fresh: (ticket: TicketRecord) => isNewToday(ticket),
+  quiet: (ticket: TicketRecord) => isQuiet(ticket),
+  // The only one that cannot be decided from the ticket alone: what counts as
+  // unread is per person, and the bell already keeps that record.
+  unread: (ticket: TicketRecord, context: ViewContext) =>
+    (context.unread.get(ticket.id) ?? 0) > 0,
+} satisfies Record<string, (ticket: TicketRecord, context: ViewContext) => boolean>;
 
 type View = keyof typeof VIEWS;
+
+/** What each view is called in the filtered-view strip, whichever page it is on. */
+const VIEW_LABEL: Record<View, string> = {
+  open: "Open",
+  approval: "Awaiting approval",
+  escalated: "Open escalations",
+  handled: "Escalations handled",
+  escalatedToday: "Escalated today",
+  escalatedAgain: "Escalated again",
+  today: "Due today",
+  week: "Due in 7 days",
+  past: "Overdue",
+  unassigned: "Not picked up",
+  urgent: "Urgent",
+  unread: "New replies",
+  asked: "Asked of me",
+  undated: "No date promised",
+  fresh: "Raised today",
+  quiet: "Quiet 3+ days",
+};
+
+/**
+ * How long a changed filter shows the table as loading before its answer.
+ *
+ * Filtering happens in the browser and is instant, and instant was the
+ * problem: the rows swapped with no sign anything had happened, so a list of
+ * three read as "I only have three" rather than "three match". A short beat of
+ * skeleton says the list was asked a question.
+ */
+const FILTER_SETTLE_MS = 350;
+
+/** A few names, then how many more: "Digital, Finance +2". */
+function listNames(names: string[], max = 2) {
+  const shown = names.slice(0, max).join(", ");
+  return names.length > max ? `${shown} +${names.length - max}` : shown;
+}
+
+/** A pair of optional dates, said the way a person would. */
+function rangeLabel(range: { from: string; to: string }) {
+  if (range.from && range.to) return `${formatDate(range.from)} – ${formatDate(range.to)}`;
+  if (range.from) return `from ${formatDate(range.from)}`;
+  return `until ${formatDate(range.to)}`;
+}
 
 const isView = (value: string | null): value is View => value !== null && value in VIEWS;
 
@@ -172,48 +266,131 @@ const isView = (value: string | null): value is View => value !== null && value 
 const isStatus = (value: string | null): value is TicketStatus =>
   (STATUSES as readonly string[]).includes(value ?? "");
 
-function statsFor(tickets: TicketRecord[], scope: TicketScope): Stat[] {
+/**
+ * The numbers above the table, which are also its filters.
+ *
+ * Every tile is counted with the same test a click on it applies, so the list
+ * below always holds exactly as many rows as the tile said. What is worth
+ * counting depends on which side of a request you are standing on, so My
+ * Requests gets its own set: a raiser cannot work a ticket, only chase it, and
+ * the questions they actually have are "has anybody picked this up", "has
+ * anybody replied" and "what is about to be late".
+ */
+function statsFor(tickets: TicketRecord[], scope: TicketScope, context: ViewContext): Stat[] {
   const count = (predicate: (ticket: TicketRecord) => boolean) => tickets.filter(predicate).length;
+  const view = (key: View) => count((ticket) => VIEWS[key](ticket, context));
+
+  const byStatus = (label: string, status: TicketStatus, tone: Stat["tone"]): Stat => ({
+    label,
+    value: count((ticket) => ticket.status === status),
+    caption: "",
+    key: status,
+    tone,
+  });
+
+  const tile = (label: string, key: View, tone: Stat["tone"]): Stat => ({
+    label,
+    value: view(key),
+    caption: "",
+    key,
+    tone,
+  });
+
+  if (scope === "mine") {
+    return [
+      // What is still live, and what is waiting on somebody else. "Open" is
+      // everything not finished, not the New column alone - with In Progress
+      // standing beside it, the older count read as a contradiction.
+      // First, because it is the only tile that is a question for *you*:
+      // the department says it is done and is waiting for your sign-off.
+      tile("To Approve", "approval", "approval"),
+      tile("Open Requests", "open", "new"),
+      byStatus("In Progress", "In Progress", "progress"),
+      tile("New Replies", "unread", "admin"),
+      tile("Not Picked Up", "unassigned", "waiting"),
+      tile("Urgent", "urgent", "overdue"),
+      // Then the clock, then the ones that are done with.
+      tile("Due Today", "today", "due"),
+      tile("Next 7 Days", "week", "new"),
+      tile("Overdue", "past", "overdue"),
+      byStatus("Completed", "Completed", "completed"),
+      byStatus("Cancelled", "Cancelled", "cancelled"),
+    ];
+  }
+
+  if (scope === "assigned") {
+    /*
+     * The person doing the work. Their questions run in the order a morning
+     * starts: what is on me, what has not been started, what has somebody
+     * asked me to take, who is waiting for an answer - then what is late,
+     * and what I have not yet promised a date for, which is the thing the
+     * raiser is waiting to hear.
+     */
+    return [
+      tile("Open", "open", "new"),
+      byStatus("Not Started", "New", "cancelled"),
+      byStatus("In Progress", "In Progress", "progress"),
+      // Finished on my side, waiting for whoever asked to agree.
+      tile("For Approval", "approval", "approval"),
+      tile("Asked of Me", "asked", "waiting"),
+      tile("New Replies", "unread", "admin"),
+      tile("Urgent", "urgent", "overdue"),
+      tile("Due Today", "today", "due"),
+      tile("Overdue", "past", "overdue"),
+      tile("No Date Promised", "undated", "waiting"),
+      byStatus("Completed", "Completed", "completed"),
+    ];
+  }
+
+  if (scope === "escalated") {
+    /*
+     * The super admin's desk. Every row here is somebody saying the usual
+     * route has failed, so the questions are how many are waiting, which are
+     * new today, which keep coming back - then the usual ones about the
+     * ticket itself, and last what has already been dealt with.
+     */
+    return [
+      tile("Open Escalations", "escalated", "admin"),
+      tile("Escalated Today", "escalatedToday", "overdue"),
+      tile("Escalated Again", "escalatedAgain", "waiting"),
+      tile("Not Picked Up", "unassigned", "waiting"),
+      tile("Urgent", "urgent", "overdue"),
+      tile("Overdue", "past", "overdue"),
+      byStatus("In Progress", "In Progress", "progress"),
+      tile("For Approval", "approval", "approval"),
+      byStatus("Completed", "Completed", "completed"),
+      tile("Handled", "handled", "completed"),
+    ];
+  }
+
+  if (scope === "all") {
+    /*
+     * The department's whole queue, read by whoever hands work out. Their
+     * questions are about the queue rather than one person: what came in,
+     * what nobody has taken, what is urgent or late - and what has gone
+     * quiet, which a list sorted by date is worst at showing.
+     */
+    return [
+      tile("Open", "open", "new"),
+      tile("Raised Today", "fresh", "due"),
+      tile("Not Picked Up", "unassigned", "waiting"),
+      byStatus("In Progress", "In Progress", "progress"),
+      tile("New Replies", "unread", "admin"),
+      tile("Urgent", "urgent", "overdue"),
+      tile("Due Today", "today", "due"),
+      tile("Overdue", "past", "overdue"),
+      tile("Quiet 3+ Days", "quiet", "cancelled"),
+      byStatus("Completed", "Completed", "completed"),
+    ];
+  }
 
   return [
-    {
-      label: scope === "mine" ? "Open Requests" : "New",
-      value: count((ticket) => ticket.status === "New"),
-      caption: "",
-      key: "New",
-      tone: "new",
-    },
-    {
-      label: "In Progress",
-      value: count((ticket) => ticket.status === "In Progress"),
-      caption: "",
-      tone: "progress",
-    },
-    {
-      label: "Completed",
-      value: count((ticket) => ticket.status === "Completed"),
-      caption: "",
-      tone: "completed",
-    },
-    {
-      label: "Cancelled",
-      value: count((ticket) => ticket.status === "Cancelled"),
-      caption: "",
-      tone: "cancelled",
-    },
-    {
-      label: "Due Today",
-      value: count(VIEWS.today),
-      caption: "",
-      key: "today",
-      tone: "due",
-    },
-    {
-      label: "Overdue",
-      value: count((ticket) => ticket.status === "Overdue"),
-      caption: "",
-      tone: "overdue",
-    },
+    byStatus("New", "New", "new"),
+    byStatus("In Progress", "In Progress", "progress"),
+    byStatus("Completed", "Completed", "completed"),
+    byStatus("Cancelled", "Cancelled", "cancelled"),
+    { label: "Due Today", value: view("today"), caption: "", key: "today", tone: "due" },
+    { label: "Overdue", value: view("past"), caption: "", key: "past", tone: "overdue" },
   ];
 }
 
@@ -416,10 +593,39 @@ const TicketRow = memo(function TicketRow({
             Mine
           </span>
         )}
+        {/* Everyone who can see it should know it is in front of the super
+            admin, not only the super admin. */}
+        {ticket.escalation?.status === "open" && (
+          <span
+            title={`Escalated by ${ticket.escalation.byName}: ${ticket.escalation.reason}`}
+            className="mt-0.5 flex w-fit items-center gap-0.5 rounded bg-status-escalated-strong px-1 py-px text-[9px] font-bold tracking-wide text-white uppercase"
+          >
+            <Siren className="size-2.5" />
+            Escalated
+          </span>
+        )}
       </TableCell>
 
       <TableCell className={cn(CELL, "font-semibold whitespace-normal text-ink-900")}>
         {ticket.subject}
+        {/* On the escalations page the reason is the point of the row. */}
+        {scope === "escalated" && ticket.escalation && (
+          <span
+            title={ticket.escalation.reason}
+            className={cn(
+              "mt-0.5 line-clamp-2 min-w-48 text-[11px] leading-snug font-normal",
+              ticket.escalation.status === "open" ? "text-status-escalated-fg" : "text-ink-400",
+            )}
+          >
+            “{ticket.escalation.reason}”
+            <span className="text-ink-400">
+              {" "}
+              - {ticket.escalation.byName}
+              {ticket.escalation.status === "handled" &&
+                ` · handled${ticket.escalation.handledByName ? ` by ${ticket.escalation.handledByName}` : ""}`}
+            </span>
+          </span>
+        )}
         {/* The form stopped asking for this, so it rides under the subject on
             the tickets that still carry one instead of holding a column open. */}
         {ticket.requestType && (
@@ -524,12 +730,31 @@ const TicketRow = memo(function TicketRow({
       </TableCell>
 
       <TableCell className={CELL}>
-        {scope !== "mine" ? (
-          <div className="w-[104px]">
+        {ticket.status === "Resolved" && (scope === "mine" || byMe) ? (
+          // The requester's own ticket, done and waiting on them. Not a badge
+          // to read but a button to press, and it moves so it is not missed.
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen(ticket);
+            }}
+            title="The department says this is done. Approve it or send it back."
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-status-resolved-strong px-2 py-1 text-[11px] font-bold whitespace-nowrap text-white shadow-sm shadow-status-resolved-strong/30 transition-colors hover:bg-status-resolved-fg"
+          >
+            <span className="relative flex size-1.5">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-white/80" />
+              <span className="relative inline-flex size-1.5 rounded-full bg-white" />
+            </span>
+            Approve?
+          </button>
+        ) : scope !== "mine" ? (
+          <div className="w-[124px]">
             <StatusPicker
               value={ticket.status}
               onChange={(next) => onStatus(ticket, next)}
               label={`Status of ${ticket.number}`}
+              needsApproval={!byMe}
             />
           </div>
         ) : (
@@ -783,8 +1008,22 @@ export function TicketsWorkspace({
   /** Set by a tile or card that is not a status - due today, late, unowned. */
   const [view, setView] = useState<View | null>(() => {
     const named = params.get("view");
-    return isView(named) ? named : null;
+    if (isView(named)) return named;
+    // The escalations page opens on what is still waiting; the rest is a tile away.
+    return scope === "escalated" ? "escalated" : null;
   });
+
+  // A link that names a view while this page is already open - the approval
+  // banner's Review, clicked from My Requests itself - still has to apply it.
+  const namedView = params.get("view");
+  useEffect(() => {
+    if (!isView(namedView)) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- the URL is outside
+       React, and this runs only when it names a different view. */
+    setStatuses([]);
+    setView(namedView);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [namedView]);
   /** Ticked for deletion. Ids rather than rows, so a refresh cannot stale them. */
   const [picked, setPicked] = useState<Set<string>>(new Set());
   /** What the confirm box is about: the ticked set, or one row's trash button. */
@@ -954,15 +1193,6 @@ export function TicketsWorkspace({
     (created.from || created.to ? 1 : 0) +
     (due.from || due.to ? 1 : 0);
 
-  const anyFilter =
-    moreCount > 0 ||
-    query.trim() !== "" ||
-    statuses.length > 0 ||
-    priorities.length > 0 ||
-    where.units.length + where.departments.length > 0 ||
-    mineOnly ||
-    view !== null;
-
   const clearFilters = () => {
     setQuery("");
     setStatuses([]);
@@ -983,9 +1213,29 @@ export function TicketsWorkspace({
     [session, unit],
   );
 
-  const stats = useMemo(() => statsFor(inScope, scope), [inScope, scope]);
+  /** What the tiles and the non-status filters are decided against. */
+  const viewContext = useMemo<ViewContext>(() => ({ unread: unreadByTicket }), [unreadByTicket]);
+
+  const stats = useMemo(
+    () => statsFor(inScope, scope, viewContext),
+    [inScope, scope, viewContext],
+  );
 
   const mineCount = useMemo(() => inScope.filter(isMine).length, [inScope, isMine]);
+
+  /**
+   * Whether finished work is being kept out of the way.
+   *
+   * Only on the page about your own desk, and only while nothing has been
+   * asked of the status: the moment somebody names a status - by filter, by
+   * tile, or by a link carrying one - they have said what they want to see.
+   */
+  const hidesDone = scope === "assigned" && statuses.length === 0 && view === null;
+
+  const doneHidden = useMemo(
+    () => (hidesDone ? inScope.filter((ticket) => ticket.status === "Completed").length : 0),
+    [hidesDone, inScope],
+  );
 
   const rows = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
@@ -997,6 +1247,17 @@ export function TicketsWorkspace({
         return false;
       // An empty filter asks nothing of the row, so it lets everything past.
       if (statuses.length > 0 && !statuses.includes(ticket.status)) return false;
+
+      /*
+       * What is on your desk is what is still to do. A queue that opens on
+       * every ticket you have ever finished buries the handful that are still
+       * waiting, and the finished ones are never the reason this page is open.
+       *
+       * Hidden rather than dropped: the Completed tile still counts them and
+       * clicking it - or naming the status in the filter - brings them back,
+       * so nothing is unreachable.
+       */
+      if (hidesDone && ticket.status === "Completed") return false;
       if (priorities.length > 0 && !priorities.includes(ticket.priority)) return false;
       // A unit stands for everything under it, so either half of the choice
       // can match on its own.
@@ -1023,7 +1284,7 @@ export function TicketsWorkspace({
       if (!inRange(localDay(ticket.createdAt), created.from, created.to)) return false;
       if (!inRange(ticket.deadline?.slice(0, 10) ?? null, due.from, due.to)) return false;
       if (mineOnly && !isMine(ticket)) return false;
-      if (view && !VIEWS[view](ticket)) return false;
+      if (view && !VIEWS[view](ticket, viewContext)) return false;
       return true;
     });
 
@@ -1052,6 +1313,7 @@ export function TicketsWorkspace({
     inScope,
     deferredQuery,
     statuses,
+    hidesDone,
     priorities,
     where,
     fromWhere,
@@ -1062,8 +1324,132 @@ export function TicketsWorkspace({
     mineOnly,
     isMine,
     view,
+    viewContext,
     sort,
   ]);
+
+  /**
+   * Every input the list is filtered by, as one value. When it changes the
+   * table shows as loading until it has held still for a moment - so a click
+   * visibly asks, and typing in the search box does not flicker a new list on
+   * every keystroke.
+   */
+  const filterKey = JSON.stringify([
+    query.trim(),
+    statuses,
+    priorities,
+    where,
+    fromWhere,
+    raisers,
+    holders,
+    created,
+    due,
+    mineOnly,
+    view,
+  ]);
+  const [settledKey, setSettledKey] = useState(filterKey);
+  const filtering = filterKey !== settledKey;
+
+  useEffect(() => {
+    if (!filtering) return;
+    const timer = setTimeout(() => setSettledKey(filterKey), FILTER_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [filterKey, filtering]);
+
+  /** The table's own loading state: the first fetch, or a filter settling. */
+  const busy = loading || filtering;
+
+  /**
+   * Each filter in force, named, with a way to take just that one off. Shown
+   * above the table whenever there is at least one, so a short list is never
+   * mistaken for everything there is.
+   */
+  const inForce: { key: string; label: string; clear: () => void }[] = [];
+  {
+    const scopeNames = (value: ScopeValue, options: ScopeOption[]) => {
+      const units = new Map<string, string>();
+      const departments = new Map<string, string>();
+      for (const option of options) {
+        departments.set(option.id, option.name);
+        if (option.unit) units.set(option.unit.id, option.unit.name);
+      }
+      return [
+        ...value.units.map((id) => units.get(id) ?? "Unit"),
+        ...value.departments.map((id) => departments.get(id) ?? "Department"),
+      ];
+    };
+    const labelsOf = (ids: string[], options: { value: string; label: string }[]) =>
+      ids.map((id) => options.find((option) => option.value === id)?.label ?? "Someone");
+
+    if (view) {
+      inForce.push({ key: "view", label: VIEW_LABEL[view], clear: () => setView(null) });
+    }
+    if (statuses.length > 0) {
+      inForce.push({
+        key: "status",
+        label: `Status: ${listNames(statuses.map((item) => STATUS_LABEL[item as TicketStatus] ?? item))}`,
+        clear: () => setStatuses([]),
+      });
+    }
+    if (priorities.length > 0) {
+      inForce.push({
+        key: "priority",
+        label: `Priority: ${listNames(priorities)}`,
+        clear: () => setPriorities([]),
+      });
+    }
+    if (fromWhere.units.length + fromWhere.departments.length > 0) {
+      inForce.push({
+        key: "from",
+        label: `From: ${listNames(scopeNames(fromWhere, fromOptions))}`,
+        clear: () => setFromWhere(NO_SCOPE),
+      });
+    }
+    if (raisers.length > 0) {
+      inForce.push({
+        key: "raisers",
+        label: `Raised by: ${listNames(labelsOf(raisers, raiserOptions))}`,
+        clear: () => setRaisers([]),
+      });
+    }
+    if (where.units.length + where.departments.length > 0) {
+      inForce.push({
+        key: "to",
+        label: `To: ${listNames(scopeNames(where, departmentOptions))}`,
+        clear: () => setWhere(NO_SCOPE),
+      });
+    }
+    if (holders.length > 0) {
+      inForce.push({
+        key: "holders",
+        label: `Assignee: ${listNames(labelsOf(holders, holderOptions))}`,
+        clear: () => setHolders([]),
+      });
+    }
+    if (created.from || created.to) {
+      inForce.push({
+        key: "created",
+        label: `Created ${rangeLabel(created)}`,
+        clear: () => setCreated(NO_RANGE),
+      });
+    }
+    if (due.from || due.to) {
+      inForce.push({
+        key: "due",
+        label: `Deadline ${rangeLabel(due)}`,
+        clear: () => setDue(NO_RANGE),
+      });
+    }
+    if (mineOnly) {
+      inForce.push({ key: "mine", label: "Assigned to me", clear: () => setMineOnly(false) });
+    }
+    if (query.trim()) {
+      inForce.push({ key: "query", label: `“${query.trim()}”`, clear: () => setQuery("") });
+    }
+  }
+
+  /** What the rows are called on this page. */
+  const noun = scope === "mine" ? "requests" : "tickets";
 
   /** The tile lit is whichever one the current filter is exactly the answer to. */
   const activeTile = view ?? (statuses.length === 1 ? statuses[0] : null);
@@ -1170,6 +1556,8 @@ export function TicketsWorkspace({
     setMineOnly(false);
     setView(null);
     setFlashed(target.id);
+    // Sent here to act on it - the approval banner, say - rather than to see it.
+    if (params.get("open")) setViewing(target);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     // The query has done its job. Dropping it here rather than through the
@@ -1185,7 +1573,7 @@ export function TicketsWorkspace({
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [focusKey, tickets]);
+  }, [focusKey, tickets, params]);
 
   /** The outline is a pointer, not a state: it lets go on its own. */
   useEffect(() => {
@@ -1202,8 +1590,12 @@ export function TicketsWorkspace({
   const applyStatus = useCallback(
     async (ticket: TicketRecord, next: TicketStatus, cancelReason?: string) => {
       const release = hold();
+      // Finishing somebody else's request goes for their sign-off, so that is
+      // what the row shows while the server agrees.
+      const shown: TicketStatus =
+        next === "Completed" && ticket.raisedBy.id !== meId ? "Resolved" : next;
       setTickets((current) =>
-        current.map((item) => (item.id === ticket.id ? { ...item, status: next } : item)),
+        current.map((item) => (item.id === ticket.id ? { ...item, status: shown } : item)),
       );
 
       try {
@@ -1212,10 +1604,20 @@ export function TicketsWorkspace({
           ...(cancelReason ? { cancelReason } : {}),
         });
         setTickets((current) => current.map((item) => (item.id === saved.id ? saved : item)));
-        toast.success(
-          next === "Cancelled" ? `#${ticket.number} cancelled` : `#${ticket.number} updated`,
-          next === "Cancelled" ? cancelReason : `Status: ${next}`,
-        );
+        if (saved.status === "Resolved" && ticket.status !== "Resolved") {
+          // Asked for Completed, got Resolved: say why, or it reads as a bug.
+          toast.show({
+            tone: "approval",
+            title: `#${ticket.number} sent for approval`,
+            description: `${ticket.raisedBy.name ?? "The requester"} has 48 hours to approve it or send it back. It completes on its own after that.`,
+            duration: 8000,
+          });
+        } else {
+          toast.success(
+            next === "Cancelled" ? `#${ticket.number} cancelled` : `#${ticket.number} updated`,
+            next === "Cancelled" ? cancelReason : `Status: ${STATUS_LABEL[saved.status]}`,
+          );
+        }
       } catch (caught) {
         // The row we were handed is the value before the edit.
         setTickets((current) => current.map((item) => (item.id === ticket.id ? ticket : item)));
@@ -1224,7 +1626,7 @@ export function TicketsWorkspace({
         release();
       }
     },
-    [hold, setTickets, toast],
+    [hold, setTickets, toast, meId],
   );
 
   /**
@@ -1295,7 +1697,7 @@ export function TicketsWorkspace({
       {/* The sheet floats over this, so the table keeps its full width and its
           columns do not reflow the moment a row is opened. */}
       <div>
-      <StatTiles stats={stats} loading={loading} active={activeTile} onSelect={selectTile} />
+      <StatTiles row stats={stats} loading={loading} active={activeTile} onSelect={selectTile} />
 
       <Card className="mt-3 overflow-hidden">
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">
@@ -1314,7 +1716,7 @@ export function TicketsWorkspace({
             <MultiSelect
               display="summary"
               id="filter-status"
-              options={STATUSES.map((item) => ({ value: item, label: item }))}
+              options={STATUSES.map((item) => ({ value: item, label: STATUS_LABEL[item] }))}
               value={statuses}
               onChange={(next) => {
                 setStatuses(next);
@@ -1334,6 +1736,20 @@ export function TicketsWorkspace({
               placeholder="All Priorities"
             />
           </div>
+
+          {/* A list that silently leaves things out is a list nobody trusts, so
+              it says what it is holding back and undoes it in one click. */}
+          {doneHidden > 0 && (
+            <button
+              type="button"
+              onClick={() => setStatuses(["Completed"])}
+              title="Show the completed tickets"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface px-2.5 text-[12px] font-medium text-ink-500 transition-colors hover:bg-ink-50 hover:text-ink-800"
+            >
+              <CheckCircle2 className="size-3.5 text-status-completed-fg" />
+              {doneHidden} completed hidden
+            </button>
+          )}
 
           <button
             type="button"
@@ -1355,17 +1771,6 @@ export function TicketsWorkspace({
               </span>
             )}
           </button>
-
-          {anyFilter && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-brand-200 px-2.5 text-[13px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
-            >
-              <X className="size-3.5" />
-              Clear
-            </button>
-          )}
 
           {canReassignPicked && (
             <Button
@@ -1421,7 +1826,7 @@ export function TicketsWorkspace({
             </button>
           )}
 
-          {!loading && (
+          {!busy && (
             <span className="shrink-0 text-[12px] font-medium text-ink-400">
               {rows.length} {rows.length === 1 ? "ticket" : "tickets"}
             </span>
@@ -1439,6 +1844,57 @@ export function TicketsWorkspace({
             </Link>
           )}
         </div>
+
+        {/* Said out loud whenever the list is narrowed: without it a short
+            list reads as everything there is, not as what matched. */}
+        {inForce.length > 0 && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-1.5 border-b border-status-progress-fg/15 bg-status-progress-bg/70 px-2.5 py-1.5"
+          >
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-status-progress-fg">
+              <ListFilter className="size-3.5" />
+              Filtered view
+            </span>
+            <span className="shrink-0 text-[11px] text-ink-500">
+              {busy ? (
+                "Filtering…"
+              ) : (
+                <>
+                  Showing <span className="font-bold text-ink-800">{rows.length}</span> of{" "}
+                  <span className="font-bold text-ink-800">{inScope.length}</span> {noun}
+                </>
+              )}
+            </span>
+
+            <span aria-hidden className="h-3.5 w-px shrink-0 bg-status-progress-fg/20" />
+
+            {inForce.map((item) => (
+              <span
+                key={item.key}
+                className="inline-flex max-w-[16rem] items-center gap-0.5 rounded-full border border-line bg-surface py-0.5 pr-0.5 pl-2 text-[11px] font-medium text-ink-700 shadow-xs"
+              >
+                <span className="truncate">{item.label}</span>
+                <button
+                  type="button"
+                  onClick={item.clear}
+                  aria-label={`Remove filter: ${item.label}`}
+                  className="grid size-4 shrink-0 cursor-pointer place-items-center rounded-full text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="ml-auto inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold text-status-progress-fg transition-colors hover:bg-status-progress-fg/10"
+            >
+              Show all {noun}
+            </button>
+          </div>
+        )}
 
         {moreOpen && (
           <div
@@ -1616,21 +2072,49 @@ export function TicketsWorkspace({
               </tr>
             </thead>
             <tbody>
-              {loading && <TableSkeleton rows={6} columns={columns} />}
+              {busy && <TableSkeleton rows={6} columns={columns} />}
 
-              {!loading && rows.length === 0 && (
+              {/* Nothing matched is a different answer from nothing exists,
+                  and says so - with the way back beside it. */}
+              {!busy && rows.length === 0 && inForce.length > 0 && inScope.length > 0 && (
+                <tr>
+                  <td colSpan={columns} className="px-3 py-12 text-center">
+                    <ListFilter className="mx-auto size-6 text-ink-300" />
+                    <p className="mt-2 text-sm font-semibold text-ink-700">
+                      No {noun} match these filters
+                    </p>
+                    <p className="mt-0.5 text-sm text-ink-400">
+                      {inScope.length} {inScope.length === 1 ? noun.slice(0, -1) : noun} in total.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="mt-3 inline-flex cursor-pointer items-center gap-1 rounded-md border border-line-strong px-2.5 py-1 text-[12px] font-semibold text-ink-700 transition-colors hover:bg-ink-50"
+                    >
+                      <X className="size-3.5" />
+                      Clear filters
+                    </button>
+                  </td>
+                </tr>
+              )}
+
+              {!busy && rows.length === 0 && !(inForce.length > 0 && inScope.length > 0) && (
                 <tr>
                   <td colSpan={columns} className="px-3 py-12 text-center">
                     <Inbox className="mx-auto size-6 text-ink-300" />
                     <p className="mt-2 text-sm font-semibold text-ink-700">
-                      {mineOnly || scope === "assigned"
-                        ? "Nothing assigned to you"
-                        : scope === "mine"
-                          ? "No requests yet"
-                          : "No tickets yet"}
+                      {scope === "escalated"
+                        ? "Nothing escalated to you"
+                        : mineOnly || scope === "assigned"
+                          ? "Nothing assigned to you"
+                          : scope === "mine"
+                            ? "No requests yet"
+                            : "No tickets yet"}
                     </p>
                     <p className="mt-0.5 text-sm text-ink-400">
-                      {unitName && tickets.length > 0
+                      {scope === "escalated"
+                        ? "When somebody escalates a ticket to you, it lands here with their reason."
+                        : unitName && tickets.length > 0
                         ? `Nothing in ${unitName}. Switch units on your profile to see the rest.`
                         : mineOnly || scope === "assigned"
                           ? "Work handed to you by name shows here. Your department's whole queue is under All Tickets."
@@ -1642,7 +2126,7 @@ export function TicketsWorkspace({
                 </tr>
               )}
 
-              {!loading &&
+              {!busy &&
                 rows.map((ticket) => (
                   <TicketRow
                     key={ticket.id}
@@ -1679,7 +2163,13 @@ export function TicketsWorkspace({
 
         <Pagination
           summary={
-            loading ? "Loading tickets…" : `Showing 1 to ${rows.length} of ${rows.length} tickets`
+            loading
+              ? "Loading tickets…"
+              : filtering
+                ? "Filtering…"
+                : inForce.length > 0
+                  ? `Showing ${rows.length} of ${inScope.length} ${noun} · filtered`
+                  : `Showing 1 to ${rows.length} of ${rows.length} ${noun}`
           }
           pages={1}
           current={1}

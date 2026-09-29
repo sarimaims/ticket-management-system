@@ -97,6 +97,15 @@ export function isSuperAdmin(session: Session | null) {
 }
 
 /** May manage departments, members and other admins. */
+/**
+ * Where a person lands: after signing in, on the app's root, and when a page
+ * is not theirs. The super admin's desk is what people escalate to them, so
+ * that is where they start; everyone else starts on the dashboard.
+ */
+export function homeFor(session: Session | null) {
+  return isSuperAdmin(session) ? "/escalations" : "/dashboard";
+}
+
 export function isAdmin(session: Session | null) {
   return session?.role === "superadmin" || session?.role === "admin";
 }

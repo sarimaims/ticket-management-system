@@ -81,6 +81,26 @@
   --color-status-overdue-bg: #fee2e2;
   --color-status-overdue-fg: #b91c1c;
 
+  /* --- Sign-off: done by the department, waiting on the requester ------- *
+   * Sky blue, a hue no other status wears, so "waiting for your approval"
+   * never reads as "in progress" at a glance. Rejected gets its own rose,
+   * apart from the red of overdue: sent back is a conversation, not a
+   * failure.
+   * --------------------------------------------------------------------- */
+  --color-status-resolved-bg: #e0f2fe;
+  --color-status-resolved-fg: #0369a1;
+  --color-status-resolved-strong: #0284c7;
+  --color-status-rejected-bg: #ffe4e6;
+  --color-status-rejected-fg: #be123c;
+
+  /* --- Escalated: put in front of the super admin ---------------------- *
+   * Fuchsia, worn by nothing else, so an escalated ticket reads as its own
+   * kind of urgent rather than as another shade of late or red.
+   * --------------------------------------------------------------------- */
+  --color-status-escalated-bg: #fae8ff;
+  --color-status-escalated-fg: #a21caf;
+  --color-status-escalated-strong: #c026d3;
+
   /* --- Route bands: the two sides of a request -------------------------- *
    * Where a ticket came from, and where it went. Two hues the app uses for
    * nothing else, so a tinted column is never read as a status: purple for

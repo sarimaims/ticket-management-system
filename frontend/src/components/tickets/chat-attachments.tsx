@@ -7,9 +7,14 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  FileArchive,
+  FileSpreadsheet,
+  FileText,
+  Film,
   Mic,
   Pause,
   Play,
+  Presentation,
   X,
 } from "lucide-react";
 
@@ -34,9 +39,15 @@ export function PhotoLightbox({
   onPrev,
   onNext,
   position,
+  footer,
 }: {
   src: string;
   alt: string;
+  /**
+   * What sits under the photo instead of the plain "Open original" link: the
+   * attachments library puts the ticket it came from there, with its actions.
+   */
+  footer?: React.ReactNode;
   onClose: () => void;
   /** Given when there is a set to step through; the arrows and keys appear with them. */
   onPrev?: () => void;
@@ -117,16 +128,25 @@ export function PhotoLightbox({
         className="max-h-[85vh] max-w-[calc(100%-7rem)] rounded-lg object-contain shadow-2xl"
       />
 
-      <a
-        href={src}
-        target="_blank"
-        rel="noreferrer"
-        onClick={(event) => event.stopPropagation()}
-        className="absolute inset-x-0 bottom-4 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-ink-900/60 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-ink-900"
-      >
-        <ExternalLink className="size-3.5" />
-        Open original
-      </a>
+      {footer ? (
+        <div
+          onClick={(event) => event.stopPropagation()}
+          className="absolute inset-x-0 bottom-4 mx-auto w-fit max-w-[calc(100%-2rem)]"
+        >
+          {footer}
+        </div>
+      ) : (
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => event.stopPropagation()}
+          className="absolute inset-x-0 bottom-4 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-ink-900/60 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-ink-900"
+        >
+          <ExternalLink className="size-3.5" />
+          Open original
+        </a>
+      )}
     </div>,
     document.body,
   );
@@ -246,6 +266,103 @@ function VoiceAttachment({ attachment, mine }: { attachment: MessageAttachment; 
   );
 }
 
+/**
+ * A video in the thread, playable where it sits.
+ *
+ * The native player this time: unlike a voice note, a video's controls are
+ * overlaid on the picture rather than sitting in the bubble's colour, and
+ * every browser's player already does scrubbing, volume and full screen.
+ * `preload="metadata"` fetches the first frame and the length, not the film.
+ */
+function VideoAttachment({ attachment }: { attachment: MessageAttachment }) {
+  return (
+    <video
+      src={attachment.url}
+      controls
+      preload="metadata"
+      playsInline
+      className="max-h-64 w-full max-w-xs rounded-xl bg-ink-900"
+      aria-label={attachment.filename || "Video"}
+    />
+  );
+}
+
+/**
+ * The icon a document wears, from what it actually is.
+ *
+ * A component that picks, rather than a function that hands back a component:
+ * choosing a component during render and then rendering it is what React
+ * cannot keep stable between renders.
+ */
+export function DocumentIcon({
+  mimeType,
+  filename,
+  className,
+}: {
+  mimeType: string;
+  filename: string;
+  className?: string;
+}) {
+  const name = filename.toLowerCase();
+  if (/sheet|excel|csv/.test(mimeType) || /\.(xlsx?|ods|csv)$/.test(name)) {
+    return <FileSpreadsheet className={className} />;
+  }
+  if (/presentation|powerpoint/.test(mimeType) || /\.(pptx?|odp)$/.test(name)) {
+    return <Presentation className={className} />;
+  }
+  if (/zip|rar|7z|compressed/.test(mimeType) || /\.(zip|rar|7z)$/.test(name)) {
+    return <FileArchive className={className} />;
+  }
+  return <FileText className={className} />;
+}
+
+/** The extension as a label, the way a phone shows "PDF" on a document. */
+export function extensionOf(filename: string) {
+  const dot = filename.lastIndexOf(".");
+  return dot > 0 ? filename.slice(dot + 1).toUpperCase().slice(0, 5) : "FILE";
+}
+
+/**
+ * A document in the thread: a card with its name, not an icon to guess at.
+ *
+ * The name is the one it was sent with - "aims-digital-salary-list.xlsx" - so
+ * the card says exactly what the sender called it. Opening it goes to a fresh
+ * signed link in a new tab, where the browser shows what it can and downloads
+ * what it cannot.
+ */
+function FileAttachment({ attachment, mine }: { attachment: MessageAttachment; mine: boolean }) {
+  return (
+    <a
+      href={attachment.url}
+      target="_blank"
+      rel="noreferrer"
+      className={cn(
+        "flex min-w-56 max-w-xs items-center gap-2.5 rounded-xl border p-2 transition-colors",
+        mine
+          ? "border-chat-accent/25 bg-white/50 hover:bg-white/70"
+          : "border-line bg-ink-50 hover:bg-ink-100",
+      )}
+    >
+      <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-chat-accent-soft text-chat-accent-strong">
+        <DocumentIcon
+          mimeType={attachment.mimeType}
+          filename={attachment.filename}
+          className="size-5"
+        />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-semibold text-ink-900">
+          {attachment.filename || "Document"}
+        </span>
+        <span className="block text-[11px] text-ink-500">
+          {extensionOf(attachment.filename)} · {formatBytes(attachment.size)}
+        </span>
+      </span>
+      <Download className="size-4 shrink-0 text-ink-400" />
+    </a>
+  );
+}
+
 export function MessageAttachmentView({
   attachment,
   mine,
@@ -253,11 +370,16 @@ export function MessageAttachmentView({
   attachment: MessageAttachment;
   mine: boolean;
 }) {
-  return attachment.kind === "image" ? (
-    <ImageAttachment attachment={attachment} />
-  ) : (
-    <VoiceAttachment attachment={attachment} mine={mine} />
-  );
+  switch (attachment.kind) {
+    case "image":
+      return <ImageAttachment attachment={attachment} />;
+    case "video":
+      return <VideoAttachment attachment={attachment} />;
+    case "file":
+      return <FileAttachment attachment={attachment} mine={mine} />;
+    default:
+      return <VoiceAttachment attachment={attachment} mine={mine} />;
+  }
 }
 
 /* -------------------------------------------------------------- writing */
@@ -282,20 +404,36 @@ export function DraftPreview({
   percent: number | null;
   onRemove: () => void;
 }) {
+  const fallback = { image: "Photo", video: "Video", file: "Document", voice: "Voice note" }[
+    draft.kind
+  ];
+
   return (
     <div className="mb-2 flex items-center gap-3 rounded-field border border-line bg-ink-50 p-2">
       {draft.kind === "image" ? (
         // eslint-disable-next-line @next/next/no-img-element -- a local blob URL
         <img src={draft.previewUrl} alt="" className="size-12 shrink-0 rounded-lg object-cover" />
+      ) : draft.kind === "video" ? (
+        // The first frame, muted: enough to recognise the clip before sending.
+        <span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-ink-900">
+          <video src={draft.previewUrl} muted preload="metadata" className="size-full object-cover" />
+          <Film className="absolute right-1 bottom-1 size-3.5 text-white drop-shadow" />
+        </span>
       ) : (
         <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-chat-accent-soft text-chat-accent-strong">
-          <Mic className="size-5" />
+          {draft.kind === "file" ? (
+            <DocumentIcon mimeType={draft.file.type} filename={draft.filename} className="size-5" />
+          ) : (
+            <Mic className="size-5" />
+          )}
         </span>
       )}
 
       <div className="min-w-0 flex-1">
+        {/* The name it will be kept under, so the sender sees what a search
+            for it will find later. */}
         <p className="truncate text-[13px] font-semibold text-ink-800">
-          {draft.kind === "image" ? draft.filename || "Photo" : "Voice note"}
+          {draft.kind === "voice" ? fallback : draft.filename || fallback}
         </p>
         <p className="text-[11px] text-ink-500">
           {draft.durationMs ? `${formatDuration(draft.durationMs)} · ` : ""}

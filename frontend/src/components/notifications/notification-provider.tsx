@@ -93,13 +93,21 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
         for (const item of fresh) {
           announced.current!.add(item.id);
+          const approval = item.type === "ticket.approval";
+          const escalation = item.type === "ticket.escalated";
           toast.show({
-            tone:
-              item.type === "ticket.new"
+            tone: approval
+              ? "approval"
+              : escalation
+                ? "escalation"
+                : item.type === "ticket.new"
                 ? "ticket"
                 : item.type === "ticket.message"
                   ? "message"
                   : "update",
+            // A sign-off waiting on you stays up for a while: it is a question
+            // with a clock on it, not news.
+            duration: approval || escalation ? 20_000 : undefined,
             title: item.title,
             description: item.body,
             href: destination(item, canSeeAllTickets(session)),

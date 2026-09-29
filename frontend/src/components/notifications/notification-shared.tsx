@@ -7,6 +7,9 @@ import {
   CircleCheckBig,
   CircleSlash,
   HandHelping,
+  ShieldCheck,
+  Siren,
+  Undo2,
   MessageSquare,
   PencilLine,
   RefreshCw,
@@ -90,6 +93,12 @@ export const destination = (item: NotificationRecord, overseer = true) => {
   // on a page that actually holds the row it is about.
   // A plain user has no All Tickets, so their side of it is Assigned to Me.
   const page = forRaiser ? "/my-requests" : overseer ? "/all-tickets" : "/assigned-to-me";
+
+  // An escalation is read on the super admin's own page, which holds it.
+  if (item.type === "ticket.escalated") {
+    const key = item.ticket ?? item.ticketNumber;
+    return key ? `/escalations?ticket=${encodeURIComponent(key)}&open=1` : "/escalations";
+  }
 
   // A deleted ticket has no row left to find, so it just opens the list.
   if (item.type === "ticket.deleted") return page;
@@ -191,6 +200,38 @@ export const EVENT_META: Record<NotificationEvent, Meta> = {
     rail: "bg-status-overdue-fg",
     label: "Deleted",
   },
+  // The sign-off gets a colour of its own, used for nothing else, so a
+  // request waiting on the reader's approval never blends into the feed.
+  resolved: {
+    icon: ShieldCheck,
+    badge: "bg-status-resolved-bg text-status-resolved-fg",
+    rail: "bg-status-resolved-strong",
+    label: "Approve",
+  },
+  approved: {
+    icon: CircleCheckBig,
+    badge: "bg-status-completed-bg text-status-completed-fg",
+    rail: "bg-status-completed-fg",
+    label: "Approved",
+  },
+  rejected: {
+    icon: Undo2,
+    badge: "bg-status-rejected-bg text-status-rejected-fg",
+    rail: "bg-status-rejected-fg",
+    label: "Sent back",
+  },
+  escalated: {
+    icon: Siren,
+    badge: "bg-status-escalated-bg text-status-escalated-fg",
+    rail: "bg-status-escalated-strong",
+    label: "Escalated",
+  },
+  "escalation.handled": {
+    icon: ShieldCheck,
+    badge: "bg-status-escalated-bg text-status-escalated-fg",
+    rail: "bg-status-escalated-fg",
+    label: "Escalation handled",
+  },
 };
 
 /** What each broad type meant before the finer action was recorded. */
@@ -202,6 +243,8 @@ const TYPE_FALLBACK: Record<NotificationType, NotificationEvent> = {
   "ticket.handover": "handover",
   "ticket.handover.answered": "handover.answered",
   "ticket.deleted": "deleted",
+  "ticket.approval": "resolved",
+  "ticket.escalated": "escalated",
 };
 
 /**

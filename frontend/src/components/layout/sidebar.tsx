@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -8,8 +9,10 @@ import {
   History,
   Layers,
   LayoutDashboard,
+  Paperclip,
   Plus,
   Settings,
+  Siren,
   UserCog,
   UserRound,
   Users,
@@ -21,7 +24,10 @@ import {
 import { Logo } from "@/components/layout/logo";
 import { SidebarProfile } from "@/components/layout/sidebar-profile";
 import { useAuth } from "@/components/auth/auth-provider";
-import { canSeeAllTickets, isAdmin, isHead } from "@/lib/auth";
+import { useNotifications } from "@/components/notifications/notification-provider";
+import { ESCALATIONS_CHANGED } from "@/components/tickets/escalation-card";
+import { canSeeAllTickets, homeFor, isAdmin, isHead, isSuperAdmin } from "@/lib/auth";
+import { countEscalations } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -41,7 +47,52 @@ type NavItem = {
    * hold no departments - and has the whole directory under /admin instead.
    */
   headsOnly?: boolean;
+  /** How many are waiting, shown as a pill beside the label when above zero. */
+  count?: number;
 };
+
+/** How often the escalation count is asked for when nothing has changed it. */
+const COUNT_EVERY_MS = 60_000;
+
+/**
+ * Open escalations, for the super admin's sidebar.
+ *
+ * Asked again whenever an escalation arrives in the feed or is closed here,
+ * and once a minute otherwise - so the number next to the tab is never the
+ * reason one is missed.
+ */
+function useOpenEscalations(enabled: boolean) {
+  const [open, setOpen] = useState(0);
+  const { items } = useNotifications();
+  const arrived = items
+    .filter((item) => item.type === "ticket.escalated")
+    .map((item) => item.id)
+    .join(",");
+
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    const load = () =>
+      countEscalations()
+        .then((count) => {
+          if (alive) setOpen(count);
+        })
+        .catch(() => {
+          // Keeps the last number; the next look tries again.
+        });
+
+    void load();
+    const timer = setInterval(load, COUNT_EVERY_MS);
+    window.addEventListener(ESCALATIONS_CHANGED, load);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener(ESCALATIONS_CHANGED, load);
+    };
+  }, [enabled, arrived]);
+
+  return enabled ? open : 0;
+}
 
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -52,6 +103,8 @@ const NAV: NavItem[] = [
   { href: "/my-requests", label: "My Requests", icon: FileText },
   { href: "/team", label: "Users", icon: UserCog, headsOnly: true },
   { href: "/all-tickets", label: "All Tickets", icon: Layers, overseersOnly: true },
+  // Every file and link from the tickets above, searchable in one place.
+  { href: "/attachments", label: "Attachments", icon: Paperclip },
   { href: "/activity", label: "Activity", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -65,8 +118,10 @@ const ADMIN_NAV: NavItem[] = [
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
   const { session } = useAuth();
+  const top = isSuperAdmin(session);
+  const escalations = useOpenEscalations(top);
 
-  const renderItem = ({ href, label, icon: Icon, accent }: NavItem) => {
+  const renderItem = ({ href, label, icon: Icon, accent, count }: NavItem) => {
     // A child route such as /departments/<id> keeps its section highlighted;
     // the trailing slash stops /admin/users matching /admin/users-archive.
     const active = pathname === href || pathname.startsWith(href + "/");
@@ -96,6 +151,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           </span>
         )}
         {label}
+        {count !== undefined && count > 0 && (
+          <span className="ml-auto rounded-full bg-status-escalated-strong px-1.5 py-px text-[10px] leading-4 font-bold text-white tabular-nums">
+            {count}
+          </span>
+        )}
       </Link>
     );
   };
@@ -117,7 +177,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         )}
       >
         <div className="flex h-11 shrink-0 items-center justify-between px-3">
-          <Link href="/dashboard" onClick={onClose}>
+          <Link href={homeFor(session) as "/"} onClick={onClose}>
             <Logo />
           </Link>
           <button
@@ -131,6 +191,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
 
         <nav className="flex-1 space-y-px overflow-y-auto px-2 py-2">
+          {/* The super admin's own desk comes first: what people escalate to
+              them is the reason they open the app. */}
+          {top && (
+            <>
+              {renderItem({
+                href: "/escalations",
+                label: "Escalations",
+                icon: Siren,
+                count: escalations,
+              })}
+              <span aria-hidden className="my-1.5 block border-t border-line" />
+            </>
+          )}
           {NAV.filter(
             (item) =>
               (!item.adminOnly || isAdmin(session)) &&

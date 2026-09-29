@@ -9,13 +9,27 @@ import { SYSTEM_ROLES } from './User.js';
  * but a fact about the date, so it is worked out on the way out of the API
  * rather than stored - see services/overdue.js.
  */
-export const TICKET_STATUSES = ['New', 'In Progress', 'Completed', 'Cancelled'];
+export const TICKET_STATUSES = ['New', 'In Progress', 'Resolved', 'Completed', 'Cancelled'];
+
+/**
+ * Done as far as the department is concerned, and waiting for the person who
+ * asked to agree. Not closed - it can still be sent back - but not late
+ * either: the work is finished, and a ticket should not turn red while it
+ * waits on somebody else's answer.
+ */
+export const RESOLVED = 'Resolved';
+
+/** How long a resolved ticket waits for an answer before it completes itself. */
+export const APPROVAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 /**
  * Finished, one way or the other: done, or called off. Neither can be late and
  * neither is waiting on anybody.
  */
 export const CLOSED_STATUSES = ['Completed', 'Cancelled'];
+
+/** Statuses the calendar leaves alone: finished, called off, or handed back for sign-off. */
+export const NOT_LATE_STATUSES = [...CLOSED_STATUSES, RESOLVED];
 
 /** Past its date and not finished. Assigned by the calendar, never by hand. */
 export const OVERDUE = 'Overdue';
@@ -169,6 +183,39 @@ const ticketSchema = new mongoose.Schema(
       maxlength: 80,
       default: '',
     },
+    /**
+     * The sign-off. A department finishing somebody else's request marks it
+     * Resolved; the person who asked then approves it (Completed) or sends it
+     * back (In Progress). Names are snapshots, like the activity log.
+     */
+    resolvedAt: { type: Date, default: null },
+    resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    resolvedByName: { type: String, default: '' },
+    /** When the request completes itself if nobody answers. Null unless Resolved. */
+    approvalDueAt: { type: Date, default: null },
+    /** Who signed it off: a name, or 'Auto-approved' when the 48 hours ran out. */
+    approvedByName: { type: String, default: '' },
+    completedAt: { type: Date, default: null },
+    /** The last time it was sent back, and why. Kept until it is resolved again. */
+    rejectedReason: { type: String, trim: true, maxlength: 400, default: '' },
+    rejectedByName: { type: String, default: '' },
+    rejectedAt: { type: Date, default: null },
+    /**
+     * Escalation: anybody who can see a ticket may put it in front of the super
+     * admin, with a reason. Open until the super admin marks it handled; a
+     * handled ticket can be escalated again. The whole story is also told in
+     * the thread and the log - these fields are the current state of it.
+     */
+    escalationStatus: { type: String, enum: ['open', 'handled', null], default: null },
+    escalatedAt: { type: Date, default: null },
+    escalatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    escalatedByName: { type: String, default: '' },
+    escalationReason: { type: String, trim: true, maxlength: 400, default: '' },
+    escalationHandledAt: { type: Date, default: null },
+    escalationHandledByName: { type: String, default: '' },
+    escalationNote: { type: String, trim: true, maxlength: 400, default: '' },
+    /** How many times it has been escalated, all told. */
+    escalationCount: { type: Number, default: 0 },
     // The thread lives in its own collection; these two are kept here so a
     // list can show that a conversation exists without reading any of it.
     /**
@@ -212,6 +259,10 @@ ticketSchema.index({ department: 1, updatedAt: -1 });
 ticketSchema.index({ assignees: 1, updatedAt: -1 });
 ticketSchema.index({ status: 1, updatedAt: -1 });
 ticketSchema.index({ raisedBy: 1, updatedAt: -1 });
+// The sweep that completes unanswered sign-offs asks exactly this.
+ticketSchema.index({ status: 1, approvalDueAt: 1 });
+// The super admin's escalations page, newest first.
+ticketSchema.index({ escalationStatus: 1, escalatedAt: -1 });
 
 ticketSchema.pre('save', async function assignNumber() {
   if (this.number) return;
@@ -223,6 +274,9 @@ ticketSchema.pre('save', async function assignNumber() {
   );
   this.number = `TK-${String(counter.seq).padStart(4, '0')}`;
 });
+
+// Finding a request by the name of a file that came with it.
+ticketSchema.index({ 'attachments.filename': 1 });
 
 const Ticket = mongoose.model('Ticket', ticketSchema);
 
