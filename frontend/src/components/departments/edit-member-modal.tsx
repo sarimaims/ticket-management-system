@@ -60,9 +60,15 @@ function MemberForm({
   onClose: () => void;
   onSaved: (member: Member) => void;
 }) {
+  // Their title here: it belongs to the role in this department, so that is
+  // where it is read from - the account's own is only a fallback.
+  const current =
+    member.departments.find((item) => item.id === departmentId)?.designation?.trim() ||
+    member.designation?.trim() ||
+    "";
   const [name, setName] = useState(member.name);
   const [phone, setPhone] = useState(member.phone ?? "");
-  const [title, setTitle] = useState(member.designation ?? "");
+  const [title, setTitle] = useState(current);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -75,7 +81,7 @@ function MemberForm({
     const changes: { name?: string; phone?: string; designation?: string } = {};
     if (name.trim() !== member.name) changes.name = name.trim();
     if (toStoredPhone(phone) !== (member.phone ?? "")) changes.phone = toStoredPhone(phone);
-    if (title.trim() !== (member.designation ?? "")) changes.designation = title.trim();
+    if (title.trim() !== current) changes.designation = title.trim();
     if (Object.keys(changes).length === 0) return onClose();
 
     setPending(true);
