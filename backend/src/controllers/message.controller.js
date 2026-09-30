@@ -38,12 +38,41 @@ const QUOTE = 160;
  * message answers "who is this, and who do they answer to", which is only
  * worth showing if it is current. One query covers a whole thread.
  */
+/** The departments a ticket touches, in the order a title is looked for. */
+function departmentsOf(ticket) {
+  return [
+    ticket.department?._id ?? ticket.department,
+    ...(ticket.departments ?? []).map((item) => item?._id ?? item),
+    ...(ticket.fromDepartments ?? []).map((item) => item?._id ?? item),
+  ]
+    .filter(Boolean)
+    .map(String);
+}
+
+/**
+ * The title a person goes by in this thread.
+ *
+ * Designation is per role, so it is looked for in the department working the
+ * ticket first, then in the one it was raised from - whichever end of the
+ * conversation this person is on - and only then anywhere they hold one. An
+ * admin holds no roles and carries theirs on the account.
+ */
+function titleOnTicket(affiliation, departmentIds) {
+  if (!affiliation) return '';
+  for (const id of departmentIds) {
+    const role = affiliation.departments.find((item) => item.id === id && item.designation);
+    if (role) return role.designation;
+  }
+  if (affiliation.designation) return affiliation.designation;
+  return affiliation.departments.find((item) => item.designation)?.designation ?? '';
+}
+
 async function affiliationsFor(authorIds) {
   const unique = [...new Set(authorIds.filter(Boolean).map(String))];
   if (unique.length === 0) return new Map();
 
   const users = await User.find({ _id: { $in: unique } })
-    .select('memberships')
+    .select('memberships designation')
     .populate({
       path: 'memberships.department',
       select: 'name unit',
@@ -64,6 +93,7 @@ async function affiliationsFor(authorIds) {
           id: String(department._id),
           name: department.name,
           role: membership.role,
+          designation: membership.designation ?? '',
         });
 
         // One unit can hold several of someone's departments; it is named once.
@@ -73,7 +103,7 @@ async function affiliationsFor(authorIds) {
         }
       }
 
-      return [String(user._id), { departments, units }];
+      return [String(user._id), { departments, units, designation: user.designation ?? '' }];
     }),
   );
 }
@@ -158,6 +188,15 @@ async function present(message, viewer, context = {}) {
     author: { id: String(message.author), name: message.authorName },
     /** Who the author works for now - shown in the menu on their message. */
     authorDepartments: affiliation?.departments ?? [],
+    // Looked for at the end of the ticket this line was written from: somebody
+    // in both departments speaks as the requester in one line and as the
+    // department in the next, and their title should follow.
+    authorDesignation: titleOnTicket(
+      affiliation,
+      message.side === 'raiser'
+        ? [...(context.ticketDepartments ?? []).slice(1), ...(context.ticketDepartments ?? []).slice(0, 1)]
+        : context.ticketDepartments ?? [],
+    ),
     authorUnits: affiliation?.units ?? [],
     /**
      * The line being answered, quoted. A reference rather than a copy, so a
@@ -221,6 +260,7 @@ async function presentOne(message, viewer, ticket) {
   return present(message, viewer, {
     affiliations,
     replies,
+    ticketDepartments: ticket ? departmentsOf(ticket) : [],
     audience: ticket ? audienceFor(ticket) : new Set(),
     lastSeen: new Map(reads.map((read) => [String(read.user), read.lastSeenAt])),
   });
@@ -388,7 +428,13 @@ export async function listMessages(req, res) {
     success: true,
     messages: await Promise.all(
       messages.map((message) =>
-        present(message, req.user, { affiliations, replies, audience, lastSeen }),
+        present(message, req.user, {
+          affiliations,
+          replies,
+          audience,
+          lastSeen,
+          ticketDepartments: departmentsOf(ticket),
+        }),
       ),
     ),
   });
@@ -800,8 +846,9 @@ export async function listLibrary(req, res) {
   const words = filenameWords(typeof req.query.q === 'string' ? req.query.q : '');
 
   const tickets = await Ticket.find(visibilityFilter(req.user))
-    .select('number subject status deadline committedDeadline department raisedBy attachments description createdAt')
+    .select('number subject status deadline committedDeadline department departments raisedBy attachments description createdAt')
     .populate('department', 'name')
+    .populate('departments', 'name')
     .populate('raisedBy', 'name')
     .lean();
 
@@ -823,7 +870,11 @@ export async function listLibrary(req, res) {
     number: ticket.number,
     subject: ticket.subject,
     status: statusOf(ticket),
-    department: ticket.department?.name ?? '',
+    // Every department a shared ticket went to.
+    department:
+      (ticket.departments ?? []).length > 1
+        ? ticket.departments.map((item) => item?.name).filter(Boolean).join(', ')
+        : ticket.department?.name ?? '',
     raisedById: String(ticket.raisedBy?._id ?? ticket.raisedBy ?? ''),
   });
 

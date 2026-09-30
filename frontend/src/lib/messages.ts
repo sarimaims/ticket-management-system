@@ -64,8 +64,13 @@ export type MessageRecord = {
     | null;
   author: { id: string; name: string };
   /** Where the author sits today - named in the menu on their message. */
-  authorDepartments: { id: string; name: string; role?: string }[];
+  authorDepartments: { id: string; name: string; role?: string; designation?: string }[];
   authorUnits: { id: string; name: string }[];
+  /**
+   * The author's title in this thread: in the department working the ticket,
+   * or the one it came from, whichever they sit in.
+   */
+  authorDesignation?: string;
   /** The line this one answers, quoted. */
   replyTo: MessageQuote | null;
   authorRole: Role;

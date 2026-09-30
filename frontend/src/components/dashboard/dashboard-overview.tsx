@@ -8,7 +8,6 @@ import {
   CalendarClock,
   CheckCircle2,
   Inbox,
-  Plus,
   RefreshCw,
   UserRound,
   UserX,
@@ -81,8 +80,11 @@ function departmentSeries(tickets: TicketRecord[]): DepartmentPoint[] {
   const load = new Map<string, number>();
 
   for (const ticket of tickets.filter(isOpen)) {
-    const name = ticket.department.name?.trim() || ticket.department.code?.trim() || "Unassigned";
-    load.set(name, (load.get(name) ?? 0) + 1);
+    // A shared ticket is open work for each department it went to.
+    for (const department of ticket.departments?.length ? ticket.departments : [ticket.department]) {
+      const name = department.name?.trim() || department.code?.trim() || "Unassigned";
+      load.set(name, (load.get(name) ?? 0) + 1);
+    }
   }
 
   return [...load.entries()]
@@ -365,14 +367,6 @@ export function DashboardOverview() {
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </button>
-
-        <Link
-          href="/create-ticket"
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-royal-600 px-3 text-[12px] font-semibold text-white transition-colors hover:bg-royal-700"
-        >
-          <Plus className="size-3.5" strokeWidth={2.5} />
-          New ticket
-        </Link>
       </div>
 
       {error && (

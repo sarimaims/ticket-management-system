@@ -92,6 +92,16 @@ export function changePhone(phone: string) {
   );
 }
 
+/**
+ * Your own name. Only the super admin and admins may: everybody else's is set
+ * by an admin, and the API refuses it for them.
+ */
+export function changeName(name: string) {
+  return api<UserResponse>("/auth/name", { method: "POST", body: { name } }).then(
+    (data) => data.user,
+  );
+}
+
 export function logout() {
   return api<{ success: boolean }>("/auth/logout", { method: "POST" });
 }

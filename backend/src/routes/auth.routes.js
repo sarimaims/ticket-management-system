@@ -1,8 +1,9 @@
 import { Router } from 'express';
 
 import asyncHandler from '../utils/asyncHandler.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import {
+  changeName,
   changePassword,
   changePhone,
   login,
@@ -18,5 +19,7 @@ router.get('/me', requireAuth, asyncHandler(me));
 router.post('/password', requireAuth, asyncHandler(changePassword));
 // Your own number, which you may set or change but never empty.
 router.post('/phone', requireAuth, asyncHandler(changePhone));
+// Your own name: the super admin and admins only, as nobody sits above them.
+router.post('/name', requireAuth, requireAdmin, asyncHandler(changeName));
 
 export default router;

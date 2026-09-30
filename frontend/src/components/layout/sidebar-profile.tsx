@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, Check, ChevronUp, Layers, LogOut, Settings } from "lucide-react";
+import { Building, Check, ChevronUp, Layers, LogOut, UserRound } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { RoleTag } from "@/components/ui/badge";
@@ -68,9 +68,9 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
   const viewing = units.find((unit) => unit.id === chosenUnit) ?? null;
 
   /*
-   * Under the name, the two things a colleague asks first: what they do, and
-   * where. The designation leads - "Finance Manager" says more than a role -
-   * and when an account has none yet, their standing stands in for it.
+   * Under the name, one line: their standing as a badge, then what they do.
+   * The badge is the system role for a manager and the department role for
+   * everyone else, so the same words never appear twice on the button.
    *
    * The department is the one they are working in: those in the unit in
    * view, or all of them. Several read as the first and a count, and the
@@ -83,27 +83,27 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
   const designation =
     primary?.designation?.trim() || session.designation?.trim() || "";
 
-  const title = designation
-    ? designation
-    : manager
-      ? ROLE_LABEL[session.role]
-      : primary
-        ? DEPARTMENT_ROLE_LABEL[primary.role]
-        : ROLE_LABEL[session.role];
+  const place = primary
+    ? [
+        primary.name ?? "Department",
+        here.length > 1 ? `+${here.length - 1}` : "",
+        units.length > 1 ? `· ${primary.unit?.name ?? ""}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "";
 
-  const place = manager
-    ? designation
-      ? ROLE_LABEL[session.role]
-      : "Every unit and department"
+  // The tag beside the name: the system role for a manager, the department role for everyone else.
+  const badgeLabel = manager
+    ? ROLE_LABEL[session.role]
     : primary
-      ? [
-          primary.name ?? "Department",
-          here.length > 1 ? `+${here.length - 1}` : "",
-          units.length > 1 ? `· ${primary.unit?.name ?? ""}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : "Not in a department yet";
+      ? DEPARTMENT_ROLE_LABEL[primary.role]
+      : "";
+  // A line of its own for where they sit. A manager sits above departments.
+  const department = manager ? "" : place || "Not in a department yet";
+
+  const tooltip = [name, badgeLabel, designation, place].filter(Boolean).join(" · ");
+
 
   return (
     <div ref={root} className="relative shrink-0 border-t border-line p-2.5">
@@ -121,16 +121,15 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
       >
         <Avatar initials={initials(name)} tone={avatarTone(session)} className="size-8 shrink-0" />
 
-        <span className="min-w-0 flex-1" title={`${name} · ${title} · ${place}`}>
-          <span className="block truncate text-[13px] leading-tight font-bold text-ink-900">
+        {/* Name and where they sit, nothing else: the rest is one click
+            away in the menu above. */}
+        <span className="min-w-0 flex-1" title={tooltip}>
+          <span className="block truncate text-[13px] leading-tight font-semibold text-ink-900">
             {name}
           </span>
-          {/* What they do, then where: dark enough to read at a glance, quiet
-              enough not to compete with the name. */}
-          <span className="mt-0.5 block truncate text-[11px] leading-tight font-semibold text-ink-700">
-            {title}
+          <span className="mt-0.5 block truncate text-[11px] leading-tight text-ink-500">
+            {manager ? badgeLabel : department}
           </span>
-          <span className="block truncate text-[10.5px] leading-tight text-ink-400">{place}</span>
         </span>
 
         <ChevronUp
@@ -146,17 +145,35 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
           role="menu"
           className="absolute bottom-full left-2.5 z-50 mb-1.5 w-[min(14rem,calc(100vw-1.5rem))] overflow-hidden rounded-lg border border-line bg-surface shadow-lg shadow-ink-900/10"
         >
-          {/* Name and address only. The role badge that used to sit here said
-              what the button below already says, and a pill on its own line is
-              most of why the box was tall. */}
-          <div className="border-b border-line px-2.5 py-2">
-            <p className="truncate text-[13px] leading-tight font-semibold text-ink-900">{name}</p>
-            {designation && (
-              <p className="truncate text-[11px] leading-tight font-medium text-ink-600">
-                {designation}
+          {/* Who this is: their picture, name and address, then what they do -
+              labelled, so it reads as a fact about them rather than a line of
+              small print. */}
+          <div className="border-b border-line px-2.5 py-2.5">
+            <div className="flex items-center gap-2.5">
+              <Avatar
+                initials={initials(name)}
+                tone={avatarTone(session)}
+                className="size-9 shrink-0 text-[12px]"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] leading-tight font-semibold text-ink-900">{name}</p>
+                <p className="truncate text-[11px] leading-tight text-ink-400">{session.email}</p>
+              </div>
+            </div>
+
+            <div className="mt-2 rounded-md bg-ink-50 px-2 py-1.5">
+              <p className="text-[9.5px] font-bold tracking-[0.08em] text-ink-400 uppercase">
+                Designation
               </p>
-            )}
-            <p className="truncate text-[11px] leading-tight text-ink-400">{session.email}</p>
+              <p
+                className={cn(
+                  "mt-0.5 text-[12px] leading-snug break-words",
+                  designation ? "font-semibold text-ink-800" : "text-ink-400",
+                )}
+              >
+                {designation || "Not set yet"}
+              </p>
+            </div>
           </div>
 
           {/* Which unit they are working in. Picking one narrows what they
@@ -249,8 +266,9 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
               }}
               className="flex h-8 items-center gap-2 rounded-md px-2 text-[13px] font-medium text-ink-700 transition-colors hover:bg-ink-50"
             >
-              <Settings className="size-4 text-ink-400" />
-              Settings
+              {/* Your own page: who you are, how to reach you, your password. */}
+              <UserRound className="size-4 text-ink-400" />
+              Profile
             </Link>
 
             <button

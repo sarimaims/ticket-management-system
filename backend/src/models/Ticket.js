@@ -92,6 +92,24 @@ const ticketSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    /**
+     * Every department this one ticket is shared with, the lead one first.
+     *
+     * A request can need two teams at once - IT to set a laptop up and
+     * Pharmacy to hand it over - and splitting it into two tickets splits the
+     * conversation, the deadline and the sign-off with it. So one ticket holds
+     * all of them: each department sees it in its queue, its own people hold
+     * it, and there is one status, one thread and one approval.
+     *
+     * `department` above stays as the lead - the first asked - for everything
+     * that only needs one: the log line, the short label on a bell.
+     */
+    departments: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Department',
+      },
+    ],
     raisedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -253,6 +271,22 @@ const ticketSchema = new mongoose.Schema(
 // person can see, and which of them moved most recently. These cover both
 // halves of the visibility filter so neither question scans the collection.
 ticketSchema.index({ department: 1, updatedAt: -1 });
+// The queues ask by any of a ticket's departments, not only its lead.
+ticketSchema.index({ departments: 1, updatedAt: -1 });
+
+/**
+ * The lead department is always one of the departments, and the list is never
+ * empty - so a ticket saved from anywhere, however old, is in its own queue.
+ */
+ticketSchema.pre('validate', function keepDepartmentsWhole() {
+  const ids = (this.departments ?? []).map(String);
+  if (this.department && !ids.includes(String(this.department))) {
+    this.departments = [this.department, ...(this.departments ?? [])];
+  }
+  if (!this.department && this.departments?.length > 0) {
+    this.department = this.departments[0];
+  }
+});
 
 // The two shapes the queues ask for: "what is on this person" and "what is in
 // this state", newest first. Declared here so a fresh database gets them too.

@@ -33,13 +33,23 @@ async function departmentHeadIds(departmentId) {
  * waiting on an answer rather than working the ticket.
  */
 async function audienceFor(ticket) {
-  const departmentId = ticket.department?._id ?? ticket.department;
+  // Every department on a shared ticket: its holders, and each one's heads.
+  const departmentIds = [
+    ...new Set(
+      [ticket.department, ...(ticket.departments ?? [])]
+        .map((item) => item?._id ?? item)
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
   const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person);
-  const heads = await departmentHeadIds(departmentId);
+  const heads = (await Promise.all(departmentIds.map(departmentHeadIds))).flat();
 
   // A department with no head yet and nothing assigned would hear nothing at
   // all, so it falls back to everyone in it.
-  if (holders.length === 0 && heads.length === 0) return departmentMemberIds(departmentId);
+  if (holders.length === 0 && heads.length === 0) {
+    return (await Promise.all(departmentIds.map(departmentMemberIds))).flat();
+  }
 
   return [...holders, ...heads];
 }
@@ -65,7 +75,11 @@ async function deliver({ recipients, exclude, type, event, ticket, title, body, 
     title,
     body,
     actorName,
-    departmentName: department?.name ?? '',
+    // A shared ticket names every department it went to.
+    departmentName:
+      (ticket.departments ?? []).filter((item) => item?.name).length > 1
+        ? ticket.departments.map((item) => item.name).filter(Boolean).join(', ')
+        : department?.name ?? '',
     // One event, two audiences: the raiser reads it on My Requests, the
     // department on its queue. Stored per copy, because by the time it is
     // clicked nothing else knows which side the reader was on.

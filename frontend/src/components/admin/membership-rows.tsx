@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Building, Plus, X } from "lucide-react";
 
-import { Input, Select } from "@/components/ui/field";
+import { Input, Label, Select } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import { DEPARTMENT_ROLE_LABEL, type DepartmentRole } from "@/lib/auth";
 import type { Department } from "@/lib/departments";
@@ -114,95 +114,167 @@ export function MembershipRows({
     );
   }
 
+  /** The unit a department sits under, by name - for the line at the top of its card. */
+  const unitName = (id: string) => units.find((unit) => unit.id === id)?.name ?? "";
+
   return (
-    <div className="space-y-2">
-      {rows.map((row) => (
-        <div
-          key={row.key}
-          className="grid gap-2 rounded-lg border border-line p-2 sm:grid-cols-[1fr_1fr_7rem_auto]"
-        >
-          <Select
-            className="h-8 text-[13px]"
-            icon={<Building className="text-ink-500" />}
-            value={row.unit}
-            aria-label="Unit"
-            onChange={(event) => {
-              // The department below belongs to the unit above it, so moving
-              // the unit lets go of a department that is no longer under it.
-              const unit = event.target.value;
-              const keep = departments.some(
-                (department) => department.id === row.department && department.unit?.id === unit,
-              );
-              update(row.key, { unit, department: keep ? row.department : "" });
-            }}
-          >
-            <option value="">All units</option>
-            {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name}
-              </option>
-            ))}
-          </Select>
+    <div className="space-y-2.5">
+      {rows.map((row, index) => {
+        const picked = departments.find((department) => department.id === row.department);
+        const missingDepartment = invalid && !row.department;
+        const missingDesignation =
+          invalid && Boolean(row.department) && row.designation.trim().length < 2;
+        const id = (field: string) => `membership-${row.key}-${field}`;
 
-          <Select
-            className={cn(
-              "h-8 text-[13px]",
-              !row.department && "text-ink-400",
-              invalid && !row.department && "border-brand-400 bg-brand-50/40",
-            )}
-            value={row.department}
-            aria-label="Department"
-            onChange={(event) => update(row.key, { department: event.target.value })}
+        return (
+          <section
+            key={row.key}
+            aria-label={`Role ${index + 1}`}
+            className="overflow-hidden rounded-lg border border-line bg-surface"
           >
-            <option value="" disabled>
-              {optionsFor(row).length === 0 ? "Nothing left here" : "Choose a department"}
-            </option>
-            {optionsFor(row).map((department) => (
-              <option key={department.id} value={department.id}>
-                {department.name}
-              </option>
-            ))}
-          </Select>
+            {/* Which posting this is, and what it has come to so far. */}
+            <header className="flex items-center gap-2 border-b border-line bg-ink-50/70 px-3 py-1.5">
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-ink-800 text-[10px] font-bold text-white tabular-nums">
+                {index + 1}
+              </span>
+              <p className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink-800">
+                {picked ? (
+                  <>
+                    {picked.name}
+                    {picked.unit?.id && (
+                      <span className="font-normal text-ink-400"> · {unitName(picked.unit.id)}</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="font-normal text-ink-400">New role</span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => remove(row.key)}
+                aria-label={`Remove role ${index + 1}`}
+                className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+              >
+                <X className="size-3.5" />
+                Remove
+              </button>
+            </header>
 
-          <Select
-            className="h-8 text-[13px]"
-            value={row.role}
-            aria-label="Account type"
-            onChange={(event) => update(row.key, { role: event.target.value as DepartmentRole })}
-          >
-            <option value="team">{ROLE_LABEL.team}</option>
-            <option value="head">{ROLE_LABEL.head}</option>
-          </Select>
+            <div className="space-y-2.5 p-3">
+              {/* Where they work. */}
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor={id("unit")} required>
+                    Unit
+                  </Label>
+                  <Select
+                    id={id("unit")}
+                    className="h-8 text-[13px]"
+                    icon={<Building className="text-ink-500" />}
+                    value={row.unit}
+                    onChange={(event) => {
+                      // The department below belongs to the unit above it, so
+                      // moving the unit lets go of one no longer under it.
+                      const unit = event.target.value;
+                      const keep = departments.some(
+                        (department) =>
+                          department.id === row.department && department.unit?.id === unit,
+                      );
+                      update(row.key, { unit, department: keep ? row.department : "" });
+                    }}
+                  >
+                    <option value="">Any unit</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
 
-          <button
-            type="button"
-            onClick={() => remove(row.key)}
-            aria-label="Remove this role"
-            className="grid h-10 w-10 shrink-0 place-items-center justify-self-end rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
-          >
-            <X className="size-4" />
-          </button>
+                <div>
+                  <Label htmlFor={id("department")} required>
+                    Department
+                  </Label>
+                  <Select
+                    id={id("department")}
+                    className={cn(
+                      "h-8 text-[13px]",
+                      !row.department && "text-ink-400",
+                      missingDepartment && "border-brand-400 bg-brand-50/40",
+                    )}
+                    value={row.department}
+                    aria-invalid={missingDepartment || undefined}
+                    onChange={(event) => {
+                      const department = event.target.value;
+                      // Picking a department says which unit it is in, so the
+                      // unit box follows rather than being left on "Any".
+                      const unit =
+                        departments.find((item) => item.id === department)?.unit?.id ?? row.unit;
+                      update(row.key, { department, unit });
+                    }}
+                  >
+                    <option value="" disabled>
+                      {optionsFor(row).length === 0 ? "Nothing left here" : "Choose a department"}
+                    </option>
+                    {optionsFor(row).map((department) => (
+                      <option key={department.id} value={department.id}>
+                        {department.name}
+                        {!row.unit && department.unit?.id ? ` · ${unitName(department.unit.id)}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                  {missingDepartment && (
+                    <p role="alert" className="mt-1 text-[11px] font-medium text-brand-600">
+                      Choose the department for this role.
+                    </p>
+                  )}
+                </div>
+              </div>
 
-          {/* Under the row it belongs to, across the width of its three
-              choices: the title is part of this posting, not a fourth one. */}
-          <div className="sm:col-span-3">
-            <Input
-              className={cn(
-                "h-8 text-[13px]",
-                invalid &&
-                  row.department &&
-                  row.designation.trim().length < 2 &&
-                  "border-brand-400 bg-brand-50/40",
-              )}
-              value={row.designation}
-              maxLength={80}
-              placeholder="Designation here, e.g. HR Executive"
-              aria-label="Designation in this department"
-              onChange={(event) => update(row.key, { designation: event.target.value })}
-            />
-          </div>
-        </div>
-      ))}
+              {/* What they are there. */}
+              <div className="grid gap-2.5 sm:grid-cols-[8.5rem_1fr]">
+                <div>
+                  <Label htmlFor={id("role")} required>
+                    Role
+                  </Label>
+                  <Select
+                    id={id("role")}
+                    className="h-8 text-[13px]"
+                    value={row.role}
+                    onChange={(event) =>
+                      update(row.key, { role: event.target.value as DepartmentRole })
+                    }
+                  >
+                    <option value="team">{ROLE_LABEL.team}</option>
+                    <option value="head">{ROLE_LABEL.head}</option>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor={id("designation")} required>
+                    Designation
+                  </Label>
+                  <Input
+                    id={id("designation")}
+                    className={cn("h-8 text-[13px]", missingDesignation && "border-brand-400 bg-brand-50/40")}
+                    value={row.designation}
+                    maxLength={80}
+                    placeholder="e.g. HR Executive"
+                    aria-invalid={missingDesignation || undefined}
+                    onChange={(event) => update(row.key, { designation: event.target.value })}
+                  />
+                  {missingDesignation && (
+                    <p role="alert" className="mt-1 text-[11px] font-medium text-brand-600">
+                      Add their designation in this department.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      })}
 
       <button
         type="button"

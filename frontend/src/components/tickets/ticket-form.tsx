@@ -477,8 +477,12 @@ export function TicketForm() {
     .map((person) => ({
       value: pickKey(person.id, person.department.id),
       // Somebody in two of the departments being asked shows up twice, so the
-      // department rides along to tell the two apart.
+      // department rides along to tell those two apart.
       label: targetDepts.length > 1 ? `${person.name} · ${person.department.name}` : person.name,
+      // Their title in that department, as a pill after the name: two people
+      // in Finance are told apart by "Accountant" and "Payroll Lead", not by
+      // their names.
+      tag: person.designation || undefined,
       badge: <RoleTag role={person.departmentRole} className="px-1.5 py-px text-[10px]" />,
     }));
 
@@ -652,7 +656,10 @@ export function TicketForm() {
         tickets.length === 1
           ? `Ticket #${tickets[0].number} created`
           : `${tickets.length} tickets created`,
-        tickets.map((item) => item.department.name).join(", "),
+        tickets
+          .flatMap((item) => (item.departments?.length ? item.departments : [item.department]))
+          .map((department) => department.name)
+          .join(", "),
       );
     } catch (caught) {
       toast.error("Could not create the ticket", errorMessage(caught));
@@ -819,7 +826,7 @@ export function TicketForm() {
           <p className="border-t border-line pt-3 text-[12px] leading-relaxed text-ink-400">
             {selected.length === 1
               ? "One ticket, seen by "
-              : `${selected.length} separate tickets, each seen by `}
+              : `One ticket, shared by ${selected.length} departments: `}
             {selected.map((department, index) => {
               const who = picked
                 .filter((person) => person.departmentId === department.id)
@@ -1071,7 +1078,7 @@ function ReviewModal({
       title="Review this request"
       description={
         many
-          ? `${to.length} departments are being asked, and each gets its own ticket.`
+          ? `One ticket, shared by ${to.length} departments.`
           : "This is what the department will see."
       }
       className="max-w-lg"
@@ -1123,8 +1130,8 @@ function ReviewModal({
 
       {many && (
         <p className="mt-3 rounded-md bg-ink-50 px-3 py-2 text-[11px] text-ink-500">
-          {to.length} separate tickets are raised, one per department. Each has its own number and
-          is resolved on its own.
+          One ticket is raised and every department here works it together: each sees it in its
+          own queue and its own people hold it, with one status, one chat and one approval.
         </p>
       )}
 
@@ -1140,7 +1147,7 @@ function ReviewModal({
             : pending
               ? "Raising..."
               : many
-                ? `Raise ${to.length} tickets`
+                ? `Raise shared ticket`
                 : "Raise ticket"}
         </Button>
       </div>
@@ -1182,8 +1189,14 @@ function TicketRaisedModal({
           <dl className="mt-3 divide-y divide-line text-[12px]">
             {tickets.map((ticket) => (
               <div key={ticket.id} className="flex justify-between gap-4 py-1.5">
-                <dt className="text-ink-500">{ticket.number}</dt>
-                <dd className="font-semibold text-ink-900">{ticket.department.name}</dd>
+                <dt className="shrink-0 text-ink-500">{ticket.number}</dt>
+                <dd className="text-right font-semibold text-ink-900">
+                  {(ticket.departments?.length ? ticket.departments : [ticket.department])
+                    .map((department) =>
+                      department.unit?.name ? `${department.name} · ${department.unit.name}` : department.name,
+                    )
+                    .join(", ")}
+                </dd>
               </div>
             ))}
             {tickets[0].fromDepartments.length > 0 && (

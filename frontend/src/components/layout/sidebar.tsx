@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Building,
+  Building2,
+  ChevronDown,
   FileText,
   History,
   Layers,
@@ -13,6 +15,7 @@ import {
   Plus,
   Settings,
   Siren,
+  Ticket,
   UserCog,
   UserRound,
   Users,
@@ -26,7 +29,13 @@ import { SidebarProfile } from "@/components/layout/sidebar-profile";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { ESCALATIONS_CHANGED } from "@/components/tickets/escalation-card";
-import { canSeeAllTickets, homeFor, isAdmin, isHead, isSuperAdmin } from "@/lib/auth";
+import {
+  canSeeAllTickets,
+  homeFor,
+  isAdmin,
+  isHead,
+  isSuperAdmin,
+} from "@/lib/auth";
 import { countEscalations } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
 
@@ -94,37 +103,176 @@ function useOpenEscalations(enabled: boolean) {
   return enabled ? open : 0;
 }
 
-const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/create-ticket", label: "Create Ticket", icon: Plus, accent: true },
-  { href: "/units", label: "Units", icon: Building, adminOnly: true },
-  { href: "/departments", label: "Departments", icon: Users },
-  { href: "/assigned-to-me", label: "Assigned to Me", icon: UserRound },
-  { href: "/my-requests", label: "My Requests", icon: FileText },
-  { href: "/team", label: "Users", icon: UserCog, headsOnly: true },
-  { href: "/all-tickets", label: "All Tickets", icon: Layers, overseersOnly: true },
+/** Who may see an item, read off the session. */
+type Rule = (session: ReturnType<typeof useAuth>["session"]) => boolean;
+
+const everyone: Rule = () => true;
+
+type NavEntry =
+  | ({ kind: "item"; show: Rule } & NavItem)
+  | {
+      kind: "group";
+      id: string;
+      label: string;
+      icon: LucideIcon;
+      items: ({ show: Rule } & NavItem)[];
+    };
+
+/**
+ * The sidebar, top to bottom: the things done every day first, then the org
+ * chart, the ticket lists, the files, and the workspace's own administration.
+ *
+ * Related pages are gathered under a heading that folds, so a long list reads
+ * as five decisions rather than thirteen. Every item keeps its own rule about
+ * who sees it; a group only shows what its viewer may open.
+ */
+const NAV: NavEntry[] = [
+  {
+    kind: "item",
+    href: "/create-ticket",
+    label: "Create Ticket",
+    icon: Plus,
+    accent: true,
+    show: everyone,
+  },
+  {
+    kind: "item",
+    href: "/dashboard",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    show: everyone,
+  },
+  {
+    kind: "group",
+    id: "organisation",
+    label: "Organisation",
+    icon: Building2,
+    items: [
+      { href: "/units", label: "Units", icon: Building, show: isAdmin },
+      {
+        href: "/departments",
+        label: "Departments",
+        icon: Users,
+        show: everyone,
+      },
+    ],
+  },
+  {
+    kind: "group",
+    id: "tickets",
+    label: "Tickets",
+    icon: Ticket,
+    items: [
+      {
+        href: "/all-tickets",
+        label: "All Tickets",
+        icon: Layers,
+        show: canSeeAllTickets,
+      },
+      {
+        href: "/assigned-to-me",
+        label: "Assigned to Me",
+        icon: UserRound,
+        show: everyone,
+      },
+      {
+        href: "/my-requests",
+        label: "My Requests",
+        icon: FileText,
+        show: everyone,
+      },
+    ],
+  },
   // Every file and link from the tickets above, searchable in one place.
-  { href: "/attachments", label: "Attachments", icon: Paperclip },
-  { href: "/activity", label: "Activity", icon: History },
-  { href: "/settings", label: "Settings", icon: Settings },
+  {
+    kind: "item",
+    href: "/attachments",
+    label: "Attachments",
+    icon: Paperclip,
+    show: everyone,
+  },
+  {
+    kind: "group",
+    id: "administration",
+    label: "Settings",
+    icon: Settings,
+    items: [
+      { href: "/activity", label: "Activity", icon: History, show: everyone },
+      // "Users" is two pages: a head's own team, and the admin's whole
+      // directory. Nobody is both - an admin holds no departments.
+      {
+        href: "/team",
+        label: "Users",
+        icon: UserCog,
+        show: (session) => isHead(session) && !isAdmin(session),
+      },
+      { href: "/admin/users", label: "Users", icon: UserCog, show: isAdmin },
+      {
+        href: "/admin/staff",
+        label: "Admin Access",
+        icon: UsersRound,
+        show: isAdmin,
+      },
+    ],
+  },
 ];
 
-/** Only rendered for the super admin role. */
-const ADMIN_NAV: NavItem[] = [
-  { href: "/admin/users", label: "Users", icon: UserCog },
-  { href: "/admin/staff", label: "Admin Access", icon: UsersRound },
-];
+/** Which groups the viewer has folded away. Kept per browser, like the unit. */
+const CLOSED_KEY = "flowdesk.nav.closed";
 
-export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function readClosed(): string[] {
+  try {
+    const raw = localStorage.getItem(CLOSED_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeClosed(ids: string[]) {
+  try {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify(ids));
+  } catch {
+    // A browser that will not keep it simply opens every group next time.
+  }
+}
+
+export function Sidebar({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
   const pathname = usePathname();
   const { session } = useAuth();
   const top = isSuperAdmin(session);
   const escalations = useOpenEscalations(top);
 
-  const renderItem = ({ href, label, icon: Icon, accent, count }: NavItem) => {
+  // Open unless folded; the sidebar only mounts once the session is known, so
+  // reading storage here never disagrees with a server render.
+  const [closed, setClosed] = useState<string[]>(readClosed);
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(href + "/");
+
+  const toggle = (id: string) => {
+    setClosed((current) => {
+      const next = current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id];
+      writeClosed(next);
+      return next;
+    });
+  };
+
+  const renderItem = (
+    { href, label, icon: Icon, accent, count }: NavItem,
+    nested = false,
+  ) => {
     // A child route such as /departments/<id> keeps its section highlighted;
     // the trailing slash stops /admin/users matching /admin/users-archive.
-    const active = pathname === href || pathname.startsWith(href + "/");
+    const active = isActive(href);
     return (
       <Link
         key={href}
@@ -132,8 +280,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         onClick={onClose}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "group flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-semibold transition-colors",
-          active ? "bg-brand-50 text-brand-700" : "text-ink-600 hover:bg-ink-50 hover:text-ink-900",
+          "group flex items-center gap-2 rounded-md py-1.5 pr-2 text-[13px] font-semibold transition-colors",
+          nested ? "pl-4" : "pl-2",
+          active
+            ? "bg-brand-50 text-brand-700"
+            : "text-ink-600 hover:bg-ink-50 hover:text-ink-900",
         )}
       >
         {accent ? (
@@ -144,7 +295,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <span
             className={cn(
               "grid size-6 shrink-0 place-items-center rounded-md",
-              active ? "text-brand-600" : "text-ink-400 group-hover:text-ink-600",
+              active
+                ? "text-brand-600"
+                : "text-ink-400 group-hover:text-ink-600",
             )}
           >
             <Icon className="size-4" strokeWidth={2} />
@@ -193,30 +346,72 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <nav className="flex-1 space-y-px overflow-y-auto px-2 py-2">
           {/* The super admin's own desk comes first: what people escalate to
               them is the reason they open the app. */}
-          {top && (
-            <>
-              {renderItem({
-                href: "/escalations",
-                label: "Escalations",
-                icon: Siren,
-                count: escalations,
-              })}
-              <span aria-hidden className="my-1.5 block border-t border-line" />
-            </>
-          )}
-          {NAV.filter(
-            (item) =>
-              (!item.adminOnly || isAdmin(session)) &&
-              (!item.overseersOnly || canSeeAllTickets(session)) &&
-              (!item.headsOnly || isHead(session)),
-          ).map(renderItem)}
+          {top &&
+            renderItem({
+              href: "/escalations",
+              label: "Escalations",
+              icon: Siren,
+              count: escalations,
+            })}
 
-          {isAdmin(session) && (
-            <>
-              <span aria-hidden className="my-2 block border-t border-line" />
-              {ADMIN_NAV.map(renderItem)}
-            </>
-          )}
+          {NAV.map((entry) => {
+            if (entry.kind === "item")
+              return entry.show(session) ? renderItem(entry) : null;
+
+            const items = entry.items.filter((item) => item.show(session));
+            if (items.length === 0) return null;
+            // A heading over a single page is a click spent opening a list of
+            // one, so that page stands on its own instead.
+            if (items.length === 1) return renderItem(items[0]);
+
+            const holdsActive = items.some((item) => isActive(item.href));
+            // The heading always folds and unfolds - including the group you
+            // are in. Folded, it keeps the brand colour, so where you are is
+            // still plain from the heading alone.
+            const open = !closed.includes(entry.id);
+            const Icon = entry.icon;
+
+            return (
+              <div key={entry.id} className="pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => toggle(entry.id)}
+                  aria-expanded={open}
+                  className={cn(
+                    "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-semibold transition-colors",
+                    holdsActive && !open
+                      ? "text-brand-700"
+                      : "text-ink-600 hover:bg-ink-50 hover:text-ink-900",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "grid size-6 shrink-0 place-items-center rounded-md",
+                      holdsActive
+                        ? "text-brand-600"
+                        : "text-ink-400 group-hover:text-ink-600",
+                    )}
+                  >
+                    <Icon className="size-4" strokeWidth={2} />
+                  </span>
+                  <span className="flex-1">{entry.label}</span>
+                  <ChevronDown
+                    className={cn(
+                      "size-3.5 shrink-0 text-ink-400 transition-transform",
+                      open ? "rotate-0" : "-rotate-90",
+                    )}
+                  />
+                </button>
+
+                {open && (
+                  // A hairline down the left ties the pages to their heading.
+                  <div className="mt-px ml-4 space-y-px border-l border-line pl-1">
+                    {items.map((item) => renderItem(item, true))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
 
         <SidebarProfile onNavigate={onClose} />

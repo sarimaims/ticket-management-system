@@ -60,6 +60,7 @@ import {
 import {
   attachmentHref,
   attachmentsArchiveHref,
+  departmentsOf,
   type TicketRecord,
 } from "@/lib/tickets";
 import { cn, formatTime } from "@/lib/utils";
@@ -174,6 +175,8 @@ type Participant = {
   where: string;
   /** Only known for the raiser; the member list is names and roles only. */
   email?: string;
+  /** Their title at their end of this ticket. */
+  designation?: string;
 };
 
 /** What the paperclip offers: each opens the picker filtered for it. */
@@ -302,6 +305,13 @@ function People({
                   )}
                   {/* Where they sit. A thread can span units now, so "who is
                       this" is half the question and "from where" is the other. */}
+                  {/* What they do, before where they sit: the title is the
+                      part that says why they are in this conversation. */}
+                  {person.designation && (
+                    <span className="ml-1.5 text-[11px] font-medium text-ink-600">
+                      {person.designation}
+                    </span>
+                  )}
                   {person.where && (
                     <span className="ml-1.5 text-[11px] text-ink-400">
                       {person.where}
@@ -626,7 +636,16 @@ export function TicketChat({
   const nextPendingId = useRef(0);
 
   const ticketId = ticket.id;
-  const departmentName = ticket.department.name ?? "Department";
+  // A shared ticket's thread is every department's.
+  const departmentName =
+    departmentsOf(ticket)
+      .map((department) => department.name)
+      .filter(Boolean)
+      .join(", ") || "Department";
+  /** Every department on the ticket, as one stable key for the effect below. */
+  const departmentKey = departmentsOf(ticket)
+    .map((department) => department.id)
+    .join(",");
   const meId = session?.id;
 
   const fetchNow = useCallback(async () => {
@@ -714,12 +733,20 @@ export function TicketChat({
   useEffect(() => {
     const controller = new AbortController();
 
-    listDepartmentMembers(ticket.department.id, controller.signal)
-      .then(setTeam)
+    // Everyone in every department on it - a shared thread has two teams.
+    Promise.all(
+      departmentKey.split(",").map((id) => listDepartmentMembers(id, controller.signal)),
+    )
+      .then((lists) => {
+        const seen = new Set<string>();
+        setTeam(
+          lists.flat().filter((member) => (seen.has(member.id) ? false : (seen.add(member.id), true))),
+        );
+      })
       .catch(() => setTeam([]));
 
     return () => controller.abort();
-  }, [ticket.department.id]);
+  }, [departmentKey]);
 
   /**
    * Everyone this thread is visible to, most involved first.
@@ -737,10 +764,10 @@ export function TicketChat({
 
     // Everyone on the receiving side sits in the one department being asked;
     // the raiser sits wherever they raised it from.
-    const receiving = place(
-      ticket.department.unit?.name,
-      ticket.department.name,
-    );
+    const receiving = departmentsOf(ticket)
+      .map((department) => place(department.unit?.name, department.name))
+      .filter(Boolean)
+      .join(", ");
     const asking = ticket.fromDepartments
       .map((item) => place(item.unit?.name, item.name))
       .filter(Boolean)
@@ -752,10 +779,11 @@ export function TicketChat({
       standing: Standing,
       where: string,
       email?: string,
+      designation?: string,
     ) => {
       if (!id || seen.has(id)) return;
       seen.add(id);
-      out.push({ id, name, standing, where, email });
+      out.push({ id, name, standing, where, email, designation });
     };
 
     add(
@@ -764,23 +792,24 @@ export function TicketChat({
       "requester",
       asking,
       ticket.raisedBy.email,
+      ticket.raisedBy.designation,
     );
 
     for (const member of team ?? []) {
       if (holders.has(member.id))
-        add(member.id, member.name, "holding", receiving);
+        add(member.id, member.name, "holding", receiving, undefined, member.designation);
     }
     // A manager can hold a ticket without being in the department, so anyone
     // still unaccounted for is taken from the ticket itself - and sits above
     // the org chart rather than in it.
     for (const person of ticket.assignees) {
-      add(person.id, person.name ?? "Someone", "holding", "");
+      add(person.id, person.name ?? "Someone", "holding", "", undefined, person.designation);
     }
     // Of the rest of the department, only whoever runs it: the head oversees
     // every ticket there. Colleagues not on this one are not part of it.
     for (const member of team ?? []) {
       if (member.departmentRole === "head")
-        add(member.id, member.name, "head", receiving);
+        add(member.id, member.name, "head", receiving, undefined, member.designation);
     }
 
     return out;
@@ -788,6 +817,7 @@ export function TicketChat({
     ticket.raisedBy,
     ticket.assignees,
     ticket.department,
+    ticket.departments,
     ticket.fromDepartments,
     team,
   ]);

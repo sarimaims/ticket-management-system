@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
+import { OriginTag, PriorityBadge, RoleTag, StatusBadge } from "@/components/ui/badge";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { DateField, todayISO } from "@/components/tickets/date-field";
@@ -27,13 +27,20 @@ import { EscalationCard } from "@/components/tickets/escalation-card";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
+import { Designation } from "@/components/users/designation";
 import { useNotifications } from "@/components/notifications/notification-provider";
 import { useToast } from "@/components/ui/toast";
 import { getDepartment, type Member } from "@/lib/departments";
-import { attachmentHref, updateTicket, type TicketRecord } from "@/lib/tickets";
+import {
+  attachmentHref,
+  departmentsOf,
+  isShared,
+  updateTicket,
+  type TicketRecord,
+} from "@/lib/tickets";
 import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
-import { DEPARTMENT_ROLE_LABEL, isAdmin, isHead } from "@/lib/auth";
+import { isAdmin, isHead } from "@/lib/auth";
 import {
   answerHandover,
   askHandover,
@@ -496,6 +503,21 @@ function Route({
   );
 }
 
+/**
+ * A person as a picker shows them: their name, their title in this department
+ * as a pill after it, and whether they run it at the far end. The title says
+ * who to pick; the role alone only says whether they are the head.
+ */
+function pickerOption(member: Member, departmentId: string) {
+  return {
+    value: member.id,
+    // The name alone, because it is also what the closed control shows.
+    label: member.name,
+    tag: member.departments.find((item) => item.id === departmentId)?.designation || undefined,
+    badge: <RoleTag role={member.departmentRole} className="px-1.5 py-px text-[10px]" />,
+  };
+}
+
 /** Unit names under a set of departments, each named once. */
 const unitNames = (of: { unit?: { name?: string } | null }[]) =>
   [...new Set(of.map((item) => item.unit?.name).filter(Boolean))].join(", ");
@@ -611,8 +633,28 @@ export function TicketDetailSheet({
  */
 function assignsDirectly(session: ReturnType<typeof useAuth>["session"], ticket: TicketRecord) {
   if (isAdmin(session)) return true;
+  // A shared ticket has a head per department; any of them hands out their part.
+  const here = new Set(departmentsOf(ticket).map((department) => department.id));
   return (session?.departments ?? []).some(
-    (membership) => membership.id === ticket.department.id && membership.role === "head",
+    (membership) => here.has(membership.id) && membership.role === "head",
+  );
+}
+
+/**
+ * Which of a ticket's departments this person may hand out: every one for an
+ * admin, the ones they head for a head, and for anyone else the ones they are
+ * in - where they can ask a colleague to take it.
+ */
+function editableDepartments(
+  session: ReturnType<typeof useAuth>["session"],
+  ticket: TicketRecord,
+  direct: boolean,
+) {
+  const ids = departmentsOf(ticket).map((department) => department.id);
+  if (isAdmin(session)) return ids;
+  const mine = session?.departments ?? [];
+  return ids.filter((id) =>
+    mine.some((membership) => membership.id === id && (!direct || membership.role === "head")),
   );
 }
 
@@ -650,7 +692,8 @@ function SheetBody({
       is a commitment, not a field to brush past. */
   const [movingDate, setMovingDate] = useState(!ticket.committedDeadline);
   const [assignees, setAssignees] = useState(ticket.assignees.map((person) => person.id));
-  const [members, setMembers] = useState<Member[]>([]);
+  /** People on offer, each stamped with the ticket department they were loaded for. */
+  const [members, setMembers] = useState<(Member & { forDepartment: string })[]>([]);
   /** Every ask on this ticket, so both sides of one can be shown. */
   const [handovers, setHandovers] = useState<HandoverRecord[]>([]);
   /** Who this person is proposing to hand it to, before they send the ask. */
@@ -692,7 +735,12 @@ function SheetBody({
   );
 
   // A department name is only missing when the record was never populated.
-  const departmentName = ticket.department.name ?? "That department";
+  // A shared ticket names every department it went to.
+  const departmentName =
+    departmentsOf(ticket)
+      .map((department) => department.name)
+      .filter(Boolean)
+      .join(", ") || "That department";
 
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -867,11 +915,28 @@ function SheetBody({
     // the receiving department's - the raiser's own department is not it.
     if (!canWork && !direct) return;
     const controller = new AbortController();
-    getDepartment(ticket.department.id, controller.signal)
-      .then((data) => setMembers(data.members))
+    // Every department this viewer may hand out on a shared ticket - a head of
+    // IT sees IT's people, an admin sees everybody's.
+    const wanted = editableDepartments(session, ticket, direct);
+    Promise.all(
+      wanted.map((id) =>
+        getDepartment(id, controller.signal).then((data) =>
+          data.members.map((member) => ({ ...member, forDepartment: id })),
+        ),
+      ),
+    )
+      .then((lists) => {
+        // Somebody in two of them is offered once, under the first.
+        const seen = new Set<string>();
+        setMembers(
+          lists.flat().filter((member) => (seen.has(member.id) ? false : (seen.add(member.id), true))),
+        );
+      })
       .catch(() => setMembers([]));
     return () => controller.abort();
-  }, [ticket.department.id, canWork, direct]);
+    // The ticket's departments decide the list; a re-render with the same ones asks nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [departmentsOf(ticket).map((department) => department.id).join(","), canWork, direct]);
 
   /** Saving closes the sheet; the toast carries what changed. */
   const save = async (nextStatus: TicketStatus = status, cancelReason?: string) => {
@@ -908,7 +973,13 @@ function SheetBody({
             cancelReason
             ? { status: "Cancelled" as const, cancelReason }
             : {}),
-        ...(direct ? { assignees } : {}),
+        ...(direct
+          ? {
+              assignees: isAdmin(session)
+                ? assignees
+                : assignees.filter((id) => members.some((member) => member.id === id)),
+            }
+          : {}),
       });
       onSaved(saved);
 
@@ -1044,14 +1115,51 @@ function SheetBody({
               units={unitNames(ticket.fromDepartments)}
               departments={ticket.fromDepartments.map((item) => item.name).join(", ")}
               people={
-                <UserLink
-                  id={ticket.raisedBy.id}
-                  name={ticket.raisedBy.name ?? "Someone"}
-                  className="hover:text-brand-600"
-                />
+                <span className="flex min-w-0 flex-col">
+                  <UserLink
+                    id={ticket.raisedBy.id}
+                    name={ticket.raisedBy.name ?? "Someone"}
+                    className="hover:text-brand-600"
+                  />
+                  <Designation value={ticket.raisedBy.designation} />
+                </span>
               }
               extra={<OriginTag role={ticket.raisedByRole} />}
             />
+            {isShared(ticket) &&
+              departmentsOf(ticket).map((department, index) => {
+                const here = ticket.assignees.filter(
+                  (person) => (person.departmentId ?? ticket.department.id) === department.id,
+                );
+                return (
+                  <Route
+                    key={department.id}
+                    label={index === 0 ? "To" : ""}
+                    tone="to"
+                    units={department.unit?.name ?? ""}
+                    departments={department.name ?? ""}
+                    people={
+                      here.length > 0 ? (
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          {here.map((person) => (
+                            <span key={person.id} className="flex min-w-0 flex-col">
+                              <UserLink
+                                id={person.id}
+                                name={person.name ?? "Someone"}
+                                className="hover:text-brand-600"
+                              />
+                              <Designation value={person.designation} />
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <Blank>Nobody yet</Blank>
+                      )
+                    }
+                  />
+                );
+              })}
+            {!isShared(ticket) && (
             <Route
               label="To"
               tone="to"
@@ -1061,21 +1169,25 @@ function SheetBody({
                 ticket.assignees.length > 0 ? (
                   // Each name its own link: the card is per person, not per
                   // list.
-                  ticket.assignees.map((person, index) => (
-                    <span key={person.id}>
-                      {index > 0 && ", "}
-                      <UserLink
-                        id={person.id}
-                        name={person.name ?? "Someone"}
-                        className="hover:text-brand-600"
-                      />
-                    </span>
-                  ))
+                  // One per line, each with their title in this department.
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    {ticket.assignees.map((person) => (
+                      <span key={person.id} className="flex min-w-0 flex-col">
+                        <UserLink
+                          id={person.id}
+                          name={person.name ?? "Someone"}
+                          className="hover:text-brand-600"
+                        />
+                        <Designation value={person.designation} />
+                      </span>
+                    ))}
+                  </span>
                 ) : (
                   <Blank>Nobody yet</Blank>
                 )
               }
             />
+            )}
           </Group>
 
           <Group title="Dates" tone="dates">
@@ -1185,11 +1297,14 @@ function SheetBody({
                         // be saved - it just cannot gain you.
                         options={members
                           .filter((member) => member.id !== meId || assignees.includes(member.id))
-                          .map((member) => ({
-                            value: member.id,
-                            label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
-                          }))}
-                        value={assignees}
+                          .map((member) => pickerOption(member, member.forDepartment))}
+                        // On a shared ticket a head edits their own department's
+                        // part; the other departments' people are kept as they are.
+                        value={
+                          isAdmin(session)
+                            ? assignees
+                            : assignees.filter((id) => members.some((member) => member.id === id))
+                        }
                         onChange={setAssignees}
                         display="summary"
                         placeholder="Nobody yet"
@@ -1211,10 +1326,7 @@ function SheetBody({
                               member.departmentRole !== "head" &&
                               !ticket.assignees.some((person) => person.id === member.id),
                           )
-                          .map((member) => ({
-                            value: member.id,
-                            label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
-                          }))}
+                          .map((member) => pickerOption(member, member.forDepartment))}
                         value={asking}
                         onChange={setAsking}
                         display="summary"

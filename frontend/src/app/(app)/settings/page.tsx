@@ -4,15 +4,15 @@ import { PageHeader } from "@/components/layout/page-header";
 import { SettingsForm } from "@/components/settings/settings-form";
 
 export const metadata: Metadata = {
-  title: "Settings — FlowDesk",
+  title: "Profile — FlowDesk",
 };
 
 export default function SettingsPage() {
   return (
     <>
       <PageHeader
-        title="Settings"
-        crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Settings" }]}
+        title="Profile"
+        crumbs={[{ label: "Home", href: "/dashboard" }, { label: "Profile" }]}
       />
       <SettingsForm />
     </>

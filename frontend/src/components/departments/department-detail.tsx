@@ -23,6 +23,7 @@ import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { UserLink } from "@/components/users/user-profile";
+import { Designation } from "@/components/users/designation";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
@@ -155,7 +156,13 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
   const visible = members.filter(
     (member) =>
       (!roleFilter || member.departmentRole === roleFilter) &&
-      (member.name + member.email).toLowerCase().includes(query.trim().toLowerCase()),
+      (
+        member.name +
+        member.email +
+        (member.departments.find((item) => item.id === departmentId)?.designation ?? "")
+      )
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
   );
 
   const header = (name: string) => (
@@ -352,6 +359,14 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                           id={member.id}
                           name={member.name}
                           className="block font-semibold text-ink-900 hover:text-brand-600"
+                        />
+                        {/* Their title in this department, which is the one
+                            this page is about. */}
+                        <Designation
+                          value={
+                            member.departments.find((item) => item.id === departmentId)?.designation
+                          }
+                          className="text-xs"
                         />
                         <span className="block text-xs text-ink-400">{member.email}</span>
                         <span className="block text-xs text-ink-400">
