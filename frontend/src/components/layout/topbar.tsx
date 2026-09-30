@@ -81,11 +81,11 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
       {pathname !== "/create-ticket" && (
         <Link
           href="/create-ticket"
-          aria-label="Raise ticket"
+          aria-label="Create ticket"
           className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-brand-600 px-2 text-[12px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700 sm:px-2.5"
         >
           <Plus className="size-3.5" strokeWidth={2.5} />
-          <span className="hidden sm:inline">Raise Ticket</span>
+          <span className="hidden sm:inline">Create Ticket</span>
         </Link>
       )}
 

@@ -16,14 +16,11 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/page-header";
-import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RoleTag } from "@/components/ui/badge";
 import { Field, Input, Select } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
-import { UserLink } from "@/components/users/user-profile";
-import { Designation } from "@/components/users/designation";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
@@ -34,9 +31,10 @@ import { EditMemberModal } from "@/components/departments/edit-member-modal";
 import { listUnitOptions, type UnitOption } from "@/lib/units";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
+import { FilteredStrip, type ActiveFilter } from "@/components/ui/filtered-strip";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
-import { DEPARTMENT_ROLE_LABEL, initials, isAdmin, type DepartmentRole } from "@/lib/auth";
+import { DEPARTMENT_ROLE_LABEL, isAdmin, type DepartmentRole } from "@/lib/auth";
 import type { Stat } from "@/lib/types";
 import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
 import {
@@ -47,10 +45,9 @@ import {
   type Member,
   removeMember,
   updateDepartment,
-  updateMemberRole,
 } from "@/lib/departments";
 import { updateUser, type MembershipInput } from "@/lib/users";
-import { cn, formatDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 function Banner({ message }: { message: string }) {
   return (
@@ -124,21 +121,6 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
     load(controller.signal);
     return () => controller.abort();
   }, [load]);
-
-  const changeRole = async (member: Member, role: DepartmentRole) => {
-    const previous = members;
-    setMembers((current) =>
-      current.map((item) => (item.id === member.id ? { ...item, departmentRole: role } : item)),
-    );
-    try {
-      await updateMemberRole(departmentId, member.id, role);
-      await load();
-      toast.success(`${member.name} is now ${role === "head" ? "a head" : "a team member"}`);
-    } catch (caught) {
-      setMembers(previous);
-      toast.error(`Could not change the role of ${member.name}`, errorMessage(caught));
-    }
-  };
 
   const remove = async (member: Member) => {
     const previous = members;
@@ -254,13 +236,21 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
       <EditMemberModal
         departmentId={department.id}
         member={editingMember}
+        canChangeRole={isHere}
         onClose={() => setEditingMember(null)}
-        onSaved={(saved) => {
+        onSaved={(saved, roleChanged) => {
           setMembers((current) =>
             current.map((item) => (item.id === saved.id ? { ...item, ...saved } : item)),
           );
           setEditingMember(null);
-          toast.success(`${saved.name} updated`, "Their details are saved.");
+          toast.success(
+            `${saved.name} updated`,
+            roleChanged
+              ? `Now ${saved.departmentRole === "head" ? "a head" : "a team member"} here.`
+              : "Their details are saved.",
+          );
+          // A new role moves the Heads and Users counts, which come from the server.
+          if (roleChanged) void load();
         }}
       />
 
@@ -319,21 +309,50 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
           )}
         </div>
 
+        {/* The same strip My Requests shows: a narrowed list says so, and
+            puts each filter one click from gone. */}
+        <FilteredStrip
+          filters={
+            [
+              ...(roleFilter
+                ? [
+                    {
+                      key: "role",
+                      label: roleFilter === "head" ? "Heads" : "Users",
+                      clear: () => setRoleFilter(null),
+                    },
+                  ]
+                : []),
+              ...(query.trim()
+                ? [{ key: "query", label: `“${query.trim()}”`, clear: () => setQuery("") }]
+                : []),
+            ] satisfies ActiveFilter[]
+          }
+          shown={visible.length}
+          total={members.length}
+          noun="members"
+          onClearAll={() => {
+            setRoleFilter(null);
+            setQuery("");
+          }}
+        />
+
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] border-collapse">
             <thead className="border-b border-line bg-ink-50/60">
               <tr>
                 <TableHead sortable>Member</TableHead>
+                <TableHead>Contact</TableHead>
+                <TableHead sortable>Designation</TableHead>
                 <TableHead sortable>Role</TableHead>
                 <TableHead sortable>Status</TableHead>
-                <TableHead sortable>Joined</TableHead>
                 {canManage && <TableHead>Actions</TableHead>}
               </tr>
             </thead>
             <tbody>
               {visible.length === 0 && (
                 <tr>
-                  <td colSpan={canManage ? 5 : 4} className="px-3 py-10 text-center">
+                  <td colSpan={canManage ? 6 : 5} className="px-3 py-10 text-center">
                     <UserRound className="mx-auto size-6 text-ink-300" />
                     <p className="mt-2 text-sm font-semibold text-ink-700">No members yet</p>
                     <p className="mt-0.5 text-sm text-ink-400">
@@ -345,89 +364,85 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                 </tr>
               )}
 
-              {visible.map((member) => (
-                <tr key={member.id} className="border-b border-line last:border-0 hover:bg-ink-50/70">
-                  <TableCell>
-                    <span className="flex items-center gap-2.5">
-                      <Avatar
-                        initials={initials(member.name)}
-                        tone={member.departmentRole}
-                        className="size-8 text-[11px]"
-                      />
-                      <span className="min-w-0">
-                        <UserLink
-                          id={member.id}
-                          name={member.name}
-                          className="block font-semibold text-ink-900 hover:text-brand-600"
-                        />
-                        {/* Their title in this department, which is the one
-                            this page is about. */}
-                        <Designation
-                          value={
-                            member.departments.find((item) => item.id === departmentId)?.designation
-                          }
-                          className="text-xs"
-                        />
-                        <span className="block text-xs text-ink-400">{member.email}</span>
-                        <span className="block text-xs text-ink-400">
-                          {formatPhone(member.phone) || "No phone number"}
-                        </span>
-                      </span>
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <RoleTag role={member.departmentRole} />
-                  </TableCell>
-                  <TableCell className="capitalize">{member.status}</TableCell>
-                  <TableCell>{formatDate(member.createdAt.slice(0, 10))}</TableCell>
-                  {canManage && (
+              {visible.map((member) => {
+                // Their title in this department, which is the one this page is about.
+                const title =
+                  member.departments.find((item) => item.id === departmentId)?.designation?.trim() ||
+                  "";
+                return (
+                  <tr key={member.id} className="border-b border-line last:border-0 hover:bg-ink-50/70">
+                    {/* Who, and the address they sign in with. */}
                     <TableCell>
-                      <span className="flex items-center gap-2">
-                        {isHere ? (
-                          <Select
-                            className="h-7 w-[5.5rem] pr-6 pl-2 text-[11px]"
-                            value={member.departmentRole}
-                            onChange={(event) =>
-                              changeRole(member, event.target.value as DepartmentRole)
-                            }
-                            aria-label={`Role for ${member.name}`}
-                          >
-                            <option value="head">Head</option>
-                            <option value="team">User</option>
-                          </Select>
-                        ) : (
-                          <RoleTag role={member.departmentRole} />
-                        )}
-
-                        {/* An admin edits anyone here; a head, the team they run. */}
-                        {(isHere ||
-                          (member.departmentRole === "team" && member.id !== session?.id)) && (
-                          <button
-                            type="button"
-                            onClick={() => setEditingMember(member)}
-                            className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                            aria-label={`Edit ${member.name}`}
-                            title="Edit details"
-                          >
-                            <Pencil className="size-3.5" />
-                          </button>
-                        )}
-
-                        {(isHere || member.departmentRole === "team") && (
-                          <button
-                            type="button"
-                            onClick={() => setRemoving(member)}
-                            className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-brand-600"
-                            aria-label={`Remove ${member.name}`}
-                          >
-                            <Trash2 className="size-4" />
-                          </button>
-                        )}
+                      <span className="block min-w-0">
+                        <span className="block truncate font-semibold text-ink-900">
+                          {member.name}
+                        </span>
+                        <span className="block truncate text-xs text-ink-400">{member.email}</span>
                       </span>
                     </TableCell>
-                  )}
-                </tr>
-              ))}
+
+                    <TableCell>
+                      {member.phone ? (
+                        <a
+                          href={`tel:${member.phone}`}
+                          className="text-[13px] font-medium whitespace-nowrap text-ink-700 hover:text-brand-600"
+                        >
+                          {formatPhone(member.phone)}
+                        </a>
+                      ) : (
+                        <span className="text-xs text-ink-400">No phone number</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="whitespace-normal">
+                      {title ? (
+                        <span className="text-[13px] font-medium text-ink-800">{title}</span>
+                      ) : (
+                        <span className="text-xs text-ink-400">Not set</span>
+                      )}
+                    </TableCell>
+
+                    {/* Read here, changed in the edit dialog - an admin's alone. */}
+                    <TableCell>
+                      <RoleTag role={member.departmentRole} />
+                    </TableCell>
+
+                    <TableCell className="capitalize">{member.status}</TableCell>
+
+                    {canManage && (
+                      <TableCell>
+                        <span className="flex items-center gap-1">
+                          {/* An admin edits anyone here; a head, the team they run. */}
+                          {(isHere ||
+                            (member.departmentRole === "team" && member.id !== session?.id)) && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingMember(member)}
+                              className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                              aria-label={`Edit ${member.name}`}
+                              title="Edit details"
+                            >
+                              <Pencil className="size-3.5" />
+                            </button>
+                          )}
+
+                          {(isHere || member.departmentRole === "team") && (
+                            <button
+                              type="button"
+                              onClick={() => setRemoving(member)}
+                              className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-brand-600"
+                              aria-label={`Remove ${member.name}`}
+                              title="Remove from this department"
+                            >
+                              <Trash2 className="size-4" />
+                            </button>
+                          )}
+                        </span>
+                      </TableCell>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -602,6 +602,7 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
         user={editing}
         departments={departments}
         isSelf={editing?.id === session?.id}
+        canChangeRole={scope === "admins"}
         onClose={() => setEditing(null)}
         onSaved={(updated) => {
           setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
@@ -1092,12 +1093,14 @@ function EditUserModal({
   user,
   departments,
   isSelf,
+  canChangeRole,
   onClose,
   onSaved,
 }: {
   user: DirectoryUser | null;
   departments: Department[];
   isSelf: boolean;
+  canChangeRole: boolean;
   onClose: () => void;
   onSaved: (user: DirectoryUser) => void;
 }) {
@@ -1114,6 +1117,7 @@ function EditUserModal({
           user={user}
           departments={departments}
           isSelf={isSelf}
+          canChangeRole={canChangeRole}
           onClose={onClose}
           onSaved={onSaved}
         />
@@ -1127,12 +1131,19 @@ function EditUserForm({
   user,
   departments,
   isSelf,
+  canChangeRole,
   onClose,
   onSaved,
 }: {
   user: DirectoryUser;
   departments: Department[];
   isSelf: boolean;
+  /**
+   * Only on Admin Access, where an admin can be stepped back down. The Users
+   * directory is members only - like creating one, it never turns a member
+   * into an admin.
+   */
+  canChangeRole: boolean;
   onClose: () => void;
   onSaved: (user: DirectoryUser) => void;
 }) {
@@ -1223,7 +1234,7 @@ function EditUserForm({
           ...(password ? { password } : {}),
           // The API refuses these on your own account anyway; don't even send
           // them. The super admin's role is fixed, so it is never sent either.
-          ...(isSelf ? {} : { status, ...(isFixedRole ? {} : { role }) }),
+          ...(isSelf ? {} : { status, ...(isFixedRole || !canChangeRole ? {} : { role }) }),
         }),
       );
     } catch (caught) {
@@ -1294,24 +1305,26 @@ function EditUserForm({
           </Select>
         </Field>
 
-        <Field label="System role" htmlFor="edit-role">
-          {isFixedRole ? (
-            <div className="flex h-11 items-center rounded-field border border-line-strong bg-ink-50 px-3 text-sm font-medium text-ink-500">
-              Super Admin · fixed
-            </div>
-          ) : (
-            <Select
-              id="edit-role"
-              className="h-8"
-              value={role}
-              disabled={isSelf}
-              onChange={(event) => setRole(event.target.value as "admin" | "user")}
-            >
-              <option value="user">Member</option>
-              <option value="admin">Admin</option>
-            </Select>
-          )}
-        </Field>
+        {canChangeRole && (
+          <Field label="System role" htmlFor="edit-role">
+            {isFixedRole ? (
+              <div className="flex h-11 items-center rounded-field border border-line-strong bg-ink-50 px-3 text-sm font-medium text-ink-500">
+                Super Admin · fixed
+              </div>
+            ) : (
+              <Select
+                id="edit-role"
+                className="h-8"
+                value={role}
+                disabled={isSelf}
+                onChange={(event) => setRole(event.target.value as "admin" | "user")}
+              >
+                <option value="user">Member</option>
+                <option value="admin">Admin</option>
+              </Select>
+            )}
+          </Field>
+        )}
       </div>
 
       {isSelf && (

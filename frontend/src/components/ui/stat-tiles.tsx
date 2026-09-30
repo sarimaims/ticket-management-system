@@ -79,6 +79,17 @@ export function StatTiles({
             </p>
             {loading ? (
               <span className="mt-1 block h-4 w-8 animate-pulse rounded bg-current opacity-20" />
+            ) : stat.parts ? (
+              // Each number with its own name, side by side, so neither is lost
+              // in the other.
+              <p className="mt-0.5 flex items-baseline gap-2 leading-none whitespace-nowrap">
+                {stat.parts.map((part) => (
+                  <span key={part.label} className="inline-flex items-baseline gap-1">
+                    <span className="text-base font-bold tabular-nums">{part.value}</span>
+                    <span className="text-[10px] font-semibold opacity-70">{part.label}</span>
+                  </span>
+                ))}
+              </p>
             ) : (
               <p className="mt-0.5 text-base leading-none font-bold tabular-nums">{stat.value}</p>
             )}
@@ -87,7 +98,9 @@ export function StatTiles({
         const tile = cn(
           "rounded-lg px-2.5 py-1.5",
           // Shared out evenly, but never so narrow a label cannot be read.
-          row && "min-w-[92px] flex-1 shrink-0 basis-0",
+          // A tile of two numbers is given the room to show both.
+          row &&
+            cn("shrink-0 basis-0", stat.parts ? "min-w-[136px] flex-[1.5]" : "min-w-[92px] flex-1"),
           TILE_TONES[stat.tone],
         );
 

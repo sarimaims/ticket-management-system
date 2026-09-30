@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
@@ -19,7 +18,6 @@ import {
   Inbox,
   ListFilter,
   MessagesSquare,
-  Plus,
   RefreshCw,
   Search,
   Siren,
@@ -209,6 +207,9 @@ const VIEWS = {
   urgent: (ticket: TicketRecord) => isUrgent(ticket),
   // Somebody handed this over and is waiting for a yes or a no.
   asked: (ticket: TicketRecord) => ticket.awaitingMe && !isClosed(ticket.status),
+  // Either of the two above: every ticket waiting on a yes or a no.
+  answer: (ticket: TicketRecord) =>
+    isAwaitingApproval(ticket) || (ticket.awaitingMe && !isClosed(ticket.status)),
   undated: (ticket: TicketRecord) => hasNoCommitment(ticket),
   fresh: (ticket: TicketRecord) => isNewToday(ticket),
   quiet: (ticket: TicketRecord) => isQuiet(ticket),
@@ -235,6 +236,7 @@ const VIEW_LABEL: Record<View, string> = {
   urgent: "Urgent",
   unread: "New replies",
   asked: "Asked of me",
+  answer: "For approval or asked of me",
   undated: "No date promised",
   fresh: "Raised today",
   quiet: "Quiet 3+ days",
@@ -307,47 +309,25 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope, context: ViewCont
     tone,
   });
 
-  if (scope === "mine") {
+  /*
+   * The three queues people work from share one order, so a tile is in the
+   * same place whichever of them is open: the clock first - what is due today
+   * and what is already late - then who has written, then where the work
+   * stands, then what is waiting on a yes or a no, and last what is done.
+   */
+  if (scope === "mine" || scope === "assigned" || scope === "all") {
     return [
-      // What is still live, and what is waiting on somebody else. "Open" is
-      // everything not finished, not the New column alone - with In Progress
-      // standing beside it, the older count read as a contradiction.
-      // First, because it is the only tile that is a question for *you*:
-      // the department says it is done and is waiting for your sign-off.
-      tile("To Approve", "approval", "approval"),
-      tile("Open Requests", "open", "new"),
-      byStatus("In Progress", "In Progress", "progress"),
-      tile("New Replies", "unread", "admin"),
-      tile("Not Picked Up", "unassigned", "waiting"),
-      tile("Urgent", "urgent", "overdue"),
-      // Then the clock, then the ones that are done with.
       tile("Due Today", "today", "due"),
-      tile("Next 7 Days", "week", "new"),
       tile("Overdue", "past", "overdue"),
-      byStatus("Completed", "Completed", "completed"),
-      byStatus("Cancelled", "Cancelled", "cancelled"),
-    ];
-  }
-
-  if (scope === "assigned") {
-    /*
-     * The person doing the work. Their questions run in the order a morning
-     * starts: what is on me, what has not been started, what has somebody
-     * asked me to take, who is waiting for an answer - then what is late,
-     * and what I have not yet promised a date for, which is the thing the
-     * raiser is waiting to hear.
-     */
-    return [
+      tile("New Replies", "unread", "admin"),
+      byStatus("In Progress", "In Progress", "progress"),
       tile("Open", "open", "new"),
       byStatus("Not Started", "New", "cancelled"),
-      byStatus("In Progress", "In Progress", "progress"),
-      // Finished on my side, waiting for whoever asked to agree.
+      tile("Urgent", "urgent", "overdue"),
+      // Somebody is waiting on a yes or a no: finished work to sign off, and
+      // a handover to accept. Side by side, one number each.
       tile("For Approval", "approval", "approval"),
       tile("Asked of Me", "asked", "waiting"),
-      tile("New Replies", "unread", "admin"),
-      tile("Urgent", "urgent", "overdue"),
-      tile("Due Today", "today", "due"),
-      tile("Overdue", "past", "overdue"),
       tile("No Date Promised", "undated", "waiting"),
       byStatus("Completed", "Completed", "completed"),
     ];
@@ -371,27 +351,6 @@ function statsFor(tickets: TicketRecord[], scope: TicketScope, context: ViewCont
       tile("For Approval", "approval", "approval"),
       byStatus("Completed", "Completed", "completed"),
       tile("Handled", "handled", "completed"),
-    ];
-  }
-
-  if (scope === "all") {
-    /*
-     * The department's whole queue, read by whoever hands work out. Their
-     * questions are about the queue rather than one person: what came in,
-     * what nobody has taken, what is urgent or late - and what has gone
-     * quiet, which a list sorted by date is worst at showing.
-     */
-    return [
-      tile("Open", "open", "new"),
-      tile("Raised Today", "fresh", "due"),
-      tile("Not Picked Up", "unassigned", "waiting"),
-      byStatus("In Progress", "In Progress", "progress"),
-      tile("New Replies", "unread", "admin"),
-      tile("Urgent", "urgent", "overdue"),
-      tile("Due Today", "today", "due"),
-      tile("Overdue", "past", "overdue"),
-      tile("Quiet 3+ Days", "quiet", "cancelled"),
-      byStatus("Completed", "Completed", "completed"),
     ];
   }
 
@@ -1886,16 +1845,6 @@ export function TicketsWorkspace({
           )}
 
           {live && <RefreshButton onRefresh={refresh} syncedAt={syncedAt} />}
-
-          {scope === "mine" && (
-            <Link
-              href="/create-ticket"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-[13px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
-            >
-              <Plus className="size-3.5" strokeWidth={2.5} />
-              Create Ticket
-            </Link>
-          )}
         </div>
 
         {/* Said out loud whenever the list is narrowed: without it a short
