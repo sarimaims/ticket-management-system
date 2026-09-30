@@ -30,6 +30,7 @@ import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
+import { FilteredStrip, type ActiveFilter } from "@/components/ui/filtered-strip";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, TableCell, TableHead } from "@/components/ui/table";
@@ -80,6 +81,22 @@ function Banner({ message }: { message: string }) {
   );
 }
 
+/**
+ * An account missing something every account should now have: a phone
+ * number, and a designation - on each role for a member, on the account for
+ * an admin, who holds no roles.
+ */
+function isIncomplete(user: DirectoryUser, scope: Scope) {
+  if (!user.phone) return true;
+  if (scope === "admins") return !user.designation?.trim();
+  return user.departments.length === 0 || user.departments.some((item) => !item.designation?.trim());
+}
+
+/**
+ * The numbers above the directory, which are also its filters. Each tile is
+ * counted with the same test a click on it applies, so a lit tile and the
+ * rows under it always agree.
+ */
 function statsFor(users: DirectoryUser[], scope: Scope): Stat[] {
   const count = (predicate: (user: DirectoryUser) => boolean) => users.filter(predicate).length;
 
@@ -91,6 +108,25 @@ function statsFor(users: DirectoryUser[], scope: Scope): Stat[] {
       tone: "new",
       key: "all",
     },
+    // Heads and their teams, for the org chart; admins have no department role.
+    ...(scope === "admins"
+      ? []
+      : ([
+          {
+            label: "Heads",
+            value: count((user) => effectiveRole(user) === "head"),
+            caption: "Running a department",
+            tone: "admin",
+            key: "head",
+          },
+          {
+            label: "Users",
+            value: count((user) => effectiveRole(user) === "team"),
+            caption: "In a team",
+            tone: "progress",
+            key: "team",
+          },
+        ] satisfies Stat[])),
     {
       label: "Active",
       value: count((user) => user.status === "active"),
@@ -104,6 +140,13 @@ function statsFor(users: DirectoryUser[], scope: Scope): Stat[] {
       caption: "Access revoked",
       tone: "overdue",
       key: "suspended",
+    },
+    {
+      label: "Missing Details",
+      value: count((user) => isIncomplete(user, scope)),
+      caption: "No phone or designation",
+      tone: "waiting",
+      key: "incomplete",
     },
   ];
 }
@@ -139,6 +182,9 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     const named = params.get("role");
     return named === "head" || named === "team" ? [named] : [];
   });
+
+  /** Set by the one tile that is not a role or a status. */
+  const [view, setView] = useState<"incomplete" | null>(null);
 
   const [editing, setEditing] = useState<DirectoryUser | null>(null);
   const [removing, setRemoving] = useState<DirectoryUser | null>(null);
@@ -220,9 +266,78 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
       }
       if (statuses.length > 0 && !statuses.includes(user.status)) return false;
       if (roles.length > 0 && !roles.includes(effectiveRole(user))) return false;
+      if (view === "incomplete" && !isIncomplete(user, scope)) return false;
       return true;
     });
-  }, [users, query, where, statuses, roles]);
+  }, [users, query, where, statuses, roles, view, scope]);
+
+  /*
+   * A tile is one lens on the list: picking it replaces whatever the other
+   * tiles had set, and the dropdowns follow so they always show the truth.
+   * Clicking the lit tile, or the total, shows everybody again.
+   */
+  const litTile =
+    view !== null
+      ? view
+      : roles.length === 1 && statuses.length === 0
+        ? roles[0]
+        : statuses.length === 1 && roles.length === 0
+          ? statuses[0]
+          : roles.length === 0 && statuses.length === 0
+            ? "all"
+            : null;
+
+  const selectTile = (key: string) => {
+    const again = key === litTile;
+    setView(!again && key === "incomplete" ? "incomplete" : null);
+    setRoles(!again && (key === "head" || key === "team") ? [key] : []);
+    setStatuses(!again && (key === "active" || key === "suspended") ? [key] : []);
+  };
+
+  /** What is narrowing the list, each one removable on its own. */
+  const filters: ActiveFilter[] = [];
+  if (view === "incomplete") {
+    filters.push({ key: "view", label: "Missing details", clear: () => setView(null) });
+  }
+  if (roles.length > 0) {
+    filters.push({
+      key: "roles",
+      label: `Role: ${roles.map((role) => (role === "head" ? "Head" : "User")).join(", ")}`,
+      clear: () => setRoles([]),
+    });
+  }
+  if (statuses.length > 0) {
+    filters.push({
+      key: "statuses",
+      label: `Status: ${statuses.map((status) => status[0].toUpperCase() + status.slice(1)).join(", ")}`,
+      clear: () => setStatuses([]),
+    });
+  }
+  if (where.units.length + where.departments.length > 0) {
+    const unitNames = new Map(
+      scopeOptions.filter((option) => option.unit).map((option) => [option.unit!.id, option.unit!.name]),
+    );
+    const named = [
+      ...where.units.map((id) => unitNames.get(id) ?? "Unit"),
+      ...where.departments.map((id) => scopeOptions.find((option) => option.id === id)?.name ?? "Department"),
+    ];
+    filters.push({
+      key: "where",
+      label: `In: ${named.slice(0, 2).join(", ")}${named.length > 2 ? ` +${named.length - 2}` : ""}`,
+      clear: () => setWhere({ units: [], departments: [] }),
+    });
+  }
+  if (query.trim()) {
+    filters.push({ key: "query", label: `“${query.trim()}”`, clear: () => setQuery("") });
+  }
+
+  const clearFilters = () => {
+    setView(null);
+    setRoles([]);
+    setStatuses([]);
+    setWhere({ units: [], departments: [] });
+    setQuery("");
+  };
 
   const setStatusFor = async (user: DirectoryUser, next: DirectoryUser["status"]) => {
     try {
@@ -244,10 +359,8 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
       <StatTiles
         stats={stats}
         loading={loading}
-        active={statuses.length === 1 ? statuses[0] : statuses.length === 0 ? "all" : null}
-        onSelect={(key) =>
-          setStatuses(key === "all" || (statuses.length === 1 && statuses[0] === key) ? [] : [key])
-        }
+        active={litTile}
+        onSelect={selectTile}
       />
 
       <Card className="mt-4 overflow-hidden">
@@ -305,6 +418,15 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
             {scope === "admins" ? "Create Admin" : "Create User"}
           </Button>
         </div>
+
+        {/* A narrowed list says so, and puts each filter one click from gone. */}
+        <FilteredStrip
+          filters={filters}
+          shown={rows.length}
+          total={users.length}
+          noun={scope === "admins" ? "admins" : "users"}
+          onClearAll={clearFilters}
+        />
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] border-collapse">
@@ -745,14 +867,7 @@ function CreatePersonModal({
         {/* Where they work, and what they are in each place. */}
         {!adminsOnly && (
           <div>
-            <p className="mb-1.5 text-sm font-semibold text-ink-800">
-              Roles
-              <span className="text-brand-600">*</span>
-              <span className="ml-1 font-normal text-ink-400">
-                (a unit, a department, and what they are in it
-                {memberships.length > 0 ? ` · ${memberships.length} added` : ""})
-              </span>
-            </p>
+            <RolesHeading count={memberships.length} />
             <MembershipRows
               departments={departments}
               value={memberships}
@@ -762,9 +877,8 @@ function CreatePersonModal({
               }}
               invalid={rolesMissing}
             />
-            <p className="mt-1.5 text-xs text-ink-400">
-              At least one is required. Add a row for each posting: several departments in one
-              unit, or across units, both work.
+            <p className="mt-1.5 text-[11px] text-ink-400">
+              Add one for each department they work in - in one unit or across several.
             </p>
           </div>
         )}
@@ -787,6 +901,24 @@ function CreatePersonModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** The heading over the roles: what they are, that one is needed, and how many so far. */
+function RolesHeading({ count }: { count: number }) {
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <p className="text-[13px] font-semibold text-ink-800">
+        Roles
+        <span className="ml-1 text-brand-600">*</span>
+      </p>
+      <span className="text-[11px] text-ink-400">Unit, department, role and designation</span>
+      {count > 0 && (
+        <span className="ml-auto rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-bold text-ink-600 tabular-nums">
+          {count} added
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -1224,13 +1356,7 @@ function EditUserForm({
         </div>
       ) : (
         <div>
-          <p className="mb-1.5 text-sm font-semibold text-ink-800">
-            Roles
-            <span className="text-brand-600">*</span>
-            <span className="ml-1.5 font-normal text-ink-400">
-              (a unit, a department, and what they are in it · {memberships.length} added)
-            </span>
-          </p>
+          <RolesHeading count={memberships.length} />
           <MembershipRows
             departments={departments}
             value={memberships}

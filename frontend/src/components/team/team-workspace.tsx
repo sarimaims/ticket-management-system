@@ -9,12 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
-import { UserLink } from "@/components/users/user-profile";
+import { MemberSheet } from "@/components/team/member-sheet";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
 import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
+import { FilteredStrip, type ActiveFilter } from "@/components/ui/filtered-strip";
 import { RoleTag } from "@/components/ui/badge";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { TableCell, TableHead } from "@/components/ui/table";
@@ -25,7 +26,7 @@ import { addMember } from "@/lib/departments";
 import { listMyTeam, type DirectoryUser } from "@/lib/users";
 import { avatarTone, headDepartments, initials, type DepartmentRole } from "@/lib/auth";
 import { errorMessage } from "@/lib/api";
-import { cn, formatDateOf } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { Stat } from "@/lib/types";
 
 const STATUS_CHIP: Record<DirectoryUser["status"], string> = {
@@ -36,6 +37,11 @@ const STATUS_CHIP: Record<DirectoryUser["status"], string> = {
 
 /** The shortest password the API accepts, said before it is hit. */
 const MIN_PASSWORD = 8;
+
+/** An empty cell, said quietly. */
+function Dash() {
+  return <span className="text-ink-300">—</span>;
+}
 
 function Banner({ message }: { message: string }) {
   return (
@@ -74,7 +80,18 @@ export function TeamWorkspace() {
     return named === "head" || named === "team" ? [named] : [];
   });
   const [statuses, setStatuses] = useState<string[]>([]);
+  /** Set by the one tile that is not a role or a status. */
+  const [view, setView] = useState<"incomplete" | null>(null);
   const [adding, setAdding] = useState(false);
+  /** The member in the sheet. Kept after it closes, so it slides out full. */
+  const [viewing, setViewing] = useState<DirectoryUser | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const openSheet = (user: DirectoryUser) => {
+    setViewing(user);
+    setSheetOpen(true);
+  };
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
 
   /** The scope, taken from the session: the departments they are head of. */
   const mine = useMemo(() => headDepartments(session), [session]);
@@ -118,6 +135,13 @@ export function TeamWorkspace() {
     [mineIds],
   );
 
+  /** No phone, or no designation on one of their roles in this head's departments. */
+  const incomplete = useCallback(
+    (user: DirectoryUser) =>
+      !user.phone || here(user).some((item) => !item.designation?.trim()),
+    [here],
+  );
+
   const scopeOptions = useMemo<ScopeOption[]>(
     () =>
       mine.map((membership) => ({
@@ -147,6 +171,7 @@ export function TeamWorkspace() {
         return false;
       if (statuses.length > 0 && !statuses.includes(user.status)) return false;
       if (roles.length > 0 && !roles.includes(roleHere(user))) return false;
+      if (view === "incomplete" && !incomplete(user)) return false;
 
       // A ticked unit means everything under it, so either half of the
       // answer is enough for a row to stay.
@@ -162,7 +187,7 @@ export function TeamWorkspace() {
       }
       return true;
     });
-  }, [users, query, statuses, roles, where, roleHere, here]);
+  }, [users, query, statuses, roles, where, roleHere, here, view, incomplete]);
 
   const stats: Stat[] = useMemo(
     () => [
@@ -181,6 +206,13 @@ export function TeamWorkspace() {
         key: "head",
       },
       {
+        label: "Users",
+        value: users.filter((user) => roleHere(user) === "team").length,
+        caption: "In your team",
+        tone: "progress",
+        key: "team",
+      },
+      {
         label: "Active",
         value: users.filter((user) => user.status === "active").length,
         caption: "Signed in and working",
@@ -194,9 +226,77 @@ export function TeamWorkspace() {
         tone: "overdue",
         key: "suspended",
       },
+      {
+        label: "Missing Details",
+        value: users.filter(incomplete).length,
+        caption: "No phone or designation",
+        tone: "waiting",
+        key: "incomplete",
+      },
     ],
-    [users, mine, roleHere],
+    [users, mine, roleHere, incomplete],
   );
+
+  /*
+   * A tile is one lens on the list: picking it replaces whatever the other
+   * tiles had set, and the dropdowns follow so they always show the truth.
+   * Clicking the lit tile, or the total, shows everybody again.
+   */
+  const litTile =
+    view !== null
+      ? view
+      : roles.length === 1 && statuses.length === 0
+        ? roles[0]
+        : statuses.length === 1 && roles.length === 0
+          ? statuses[0]
+          : roles.length === 0 && statuses.length === 0
+            ? "all"
+            : null;
+
+  const selectTile = (key: string) => {
+    const again = key === litTile;
+    setView(!again && key === "incomplete" ? "incomplete" : null);
+    setRoles(!again && (key === "head" || key === "team") ? [key] : []);
+    setStatuses(!again && (key === "active" || key === "suspended") ? [key] : []);
+  };
+
+  /** What is narrowing the list, each one removable on its own. */
+  const filters: ActiveFilter[] = [];
+  if (view === "incomplete") {
+    filters.push({ key: "view", label: "Missing details", clear: () => setView(null) });
+  }
+  if (roles.length > 0) {
+    filters.push({
+      key: "roles",
+      label: `Role: ${roles.map((role) => (role === "head" ? "Head" : "User")).join(", ")}`,
+      clear: () => setRoles([]),
+    });
+  }
+  if (statuses.length > 0) {
+    filters.push({
+      key: "statuses",
+      label: `Status: ${statuses.map((status) => status[0].toUpperCase() + status.slice(1)).join(", ")}`,
+      clear: () => setStatuses([]),
+    });
+  }
+  if (where.units.length + where.departments.length > 0) {
+    filters.push({
+      key: "where",
+      label: `In: ${where.units.length + where.departments.length} selected`,
+      clear: () => setWhere({ units: [], departments: [] }),
+    });
+  }
+  if (query.trim()) {
+    filters.push({ key: "query", label: `“${query.trim()}”`, clear: () => setQuery("") });
+  }
+
+  const clearFilters = () => {
+    setView(null);
+    setRoles([]);
+    setStatuses([]);
+    setWhere({ units: [], departments: [] });
+    setQuery("");
+  };
 
   return (
     <>
@@ -207,22 +307,8 @@ export function TeamWorkspace() {
       <StatTiles
         stats={stats}
         loading={loading}
-        active={
-          roles.length === 1 && statuses.length === 0
-            ? roles[0]
-            : statuses.length === 1 && roles.length === 0
-              ? statuses[0]
-              : roles.length === 0 && statuses.length === 0
-                ? "all"
-                : null
-        }
-        onSelect={(key) => {
-          const lit =
-            (roles.length === 1 && roles[0] === key) ||
-            (statuses.length === 1 && statuses[0] === key);
-          setRoles(key === "head" && !lit ? ["head"] : []);
-          setStatuses((key === "active" || key === "suspended") && !lit ? [key] : []);
-        }}
+        active={litTile}
+        onSelect={selectTile}
       />
 
       <Card className="mt-3 overflow-hidden">
@@ -284,23 +370,33 @@ export function TeamWorkspace() {
           </Button>
         </div>
 
+        {/* A narrowed list says so, and puts each filter one click from gone. */}
+        <FilteredStrip
+          filters={filters}
+          shown={rows.length}
+          total={users.length}
+          noun="members"
+          onClearAll={clearFilters}
+        />
+
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] border-collapse">
+          <table className="w-full min-w-225 border-collapse">
             <thead className="border-b border-line bg-ink-50/60">
               <tr>
                 <TableHead sortable>Member</TableHead>
+                <TableHead sortable>Designation</TableHead>
                 <TableHead sortable>Department</TableHead>
+                <TableHead sortable>Unit</TableHead>
+                <TableHead>Phone</TableHead>
                 <TableHead sortable>Role</TableHead>
                 <TableHead sortable>Status</TableHead>
-                <TableHead sortable>Joined</TableHead>
-                <TableHead sortable>Last Active</TableHead>
               </tr>
             </thead>
 
             <tbody>
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-12 text-center">
+                  <td colSpan={7} className="px-3 py-12 text-center">
                     <UserPlus className="mx-auto size-6 text-ink-300" />
                     <p className="mt-2 text-sm font-semibold text-ink-700">
                       {users.length === 0 ? "Nobody here yet" : "Nobody matches that"}
@@ -318,10 +414,34 @@ export function TeamWorkspace() {
                 rows.map((user) => {
                   const theirs = here(user);
                   const role = roleHere(user);
+                  // Their titles in the departments you run - a person can be
+                  // something else elsewhere, and that is not this page's
+                  // business. The sheet has the whole of them.
+                  const titles = theirs.map((item) => item.designation).filter(Boolean);
+                  const unitNames = [
+                    ...new Set(theirs.map((item) => item.unit?.name).filter(Boolean)),
+                  ];
+                  const phone = formatPhone(user.phone);
+                  const selected = sheetOpen && viewing?.id === user.id;
 
                   return (
-                    <tr key={user.id} className="border-b border-line last:border-0 hover:bg-ink-50/70">
-                      <TableCell className="whitespace-normal">
+                    <tr
+                      key={user.id}
+                      tabIndex={0}
+                      aria-selected={selected}
+                      onClick={() => openSheet(user)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openSheet(user);
+                        }
+                      }}
+                      className={cn(
+                        "cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-ink-50/70 focus-visible:bg-ink-50/70 focus-visible:outline-none",
+                        selected && "bg-brand-50/50 hover:bg-brand-50/50",
+                      )}
+                    >
+                      <TableCell>
                         <span className="flex items-center gap-2.5">
                           <Avatar
                             initials={initials(user.name)}
@@ -329,37 +449,23 @@ export function TeamWorkspace() {
                             className="size-8 text-[11px]"
                           />
                           <span className="min-w-0">
-                            <span className="block truncate text-[13px] font-semibold text-ink-900">
-                              <UserLink
-                                id={user.id}
-                                name={user.name}
-                                className="hover:text-brand-600"
-                              />
+                            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-ink-900">
+                              <span className="truncate">{user.name}</span>
                               {user.id === session?.id && (
-                                <span className="ml-1.5 rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
+                                <span className="shrink-0 rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
                                   You
                                 </span>
                               )}
                             </span>
-                            {/* Their titles in the departments you run - a
-                                person can be something else elsewhere, and
-                                that is not this page's business. */}
-                            {here(user).some((item) => item.designation) && (
-                              <span className="block truncate text-[11px] font-medium text-ink-600">
-                                {here(user)
-                                  .map((item) => item.designation)
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </span>
-                            )}
-                            <span className="block truncate text-[11px] text-ink-500">
+                            <span className="block max-w-56 truncate text-[11px] text-ink-500">
                               {user.email}
-                            </span>
-                            <span className="block truncate text-[11px] text-ink-500">
-                              {formatPhone(user.phone) || "No phone number"}
                             </span>
                           </span>
                         </span>
+                      </TableCell>
+
+                      <TableCell className="text-[12px] font-medium text-ink-700">
+                        {titles.length > 0 ? titles.join(" · ") : <Dash />}
                       </TableCell>
 
                       <TableCell className="whitespace-normal">
@@ -370,12 +476,24 @@ export function TeamWorkspace() {
                               className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-600"
                             >
                               {item.name ?? "Department"}
-                              {item.unit?.name && (
-                                <span className="ml-1 text-ink-400">· {item.unit.name}</span>
-                              )}
                             </span>
                           ))}
                         </span>
+                      </TableCell>
+
+                      <TableCell className="text-[12px] text-ink-600">
+                        {unitNames.length > 0 ? (
+                          <span className="inline-flex items-center gap-1">
+                            <Building2 className="size-3.5 shrink-0 text-ink-400" />
+                            {unitNames.join(", ")}
+                          </span>
+                        ) : (
+                          <Dash />
+                        )}
+                      </TableCell>
+
+                      <TableCell className="text-[12px] text-ink-600 tabular-nums">
+                        {phone || <Dash />}
                       </TableCell>
 
                       <TableCell>
@@ -392,18 +510,22 @@ export function TeamWorkspace() {
                           {user.status}
                         </span>
                       </TableCell>
-
-                      <TableCell>{formatDateOf(user.createdAt)}</TableCell>
-                      <TableCell>{formatDateOf(user.lastActiveAt)}</TableCell>
                     </tr>
                   );
                 })}
 
-              {loading && <TableSkeleton rows={5} columns={6} />}
+              {loading && <TableSkeleton rows={5} columns={7} />}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <MemberSheet
+        user={viewing}
+        open={sheetOpen}
+        isSelf={viewing?.id === session?.id}
+        onClose={closeSheet}
+      />
 
       {adding && (
         <AddUserModal

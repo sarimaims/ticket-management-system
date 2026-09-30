@@ -102,8 +102,9 @@ export async function me(req, res) {
  * the field is an account nobody can reach. Changing it to a different number
  * is always allowed - it is theirs, and a new SIM should not need an admin.
  *
- * The name and the email stay with an admin: those are how everyone else
- * recognises this person, and are not for the person to rewrite.
+ * The email stays with an admin, and so does a member's name: those are how
+ * everyone else recognises this person, and are not for the person to rewrite.
+ * A manager's name is the exception - see changeName.
  */
 export async function changePhone(req, res) {
   const { phone } = req.body ?? {};
@@ -121,6 +122,40 @@ export async function changePhone(req, res) {
 
   user.phone = number;
   await user.save();
+
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(user._id)),
+    features: { attachments: storageReady() },
+  });
+}
+
+/**
+ * Your own name, for the super admin and admins only.
+ *
+ * A member's name is set by an admin. A manager's has nobody above it to ask -
+ * the super admin least of all - so they correct their own here rather than
+ * through the directory, which asks for a whole profile to change one field.
+ */
+export async function changeName(req, res) {
+  const { name } = req.body ?? {};
+
+  if (typeof name !== 'string' || !name.trim()) {
+    throw ApiError.badRequest('Name cannot be empty.');
+  }
+  if (name.trim().length > 80) {
+    throw ApiError.badRequest('Name must be 80 characters or fewer.');
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user) throw ApiError.unauthorized('This session is no longer valid.');
+
+  user.name = name.trim();
+  await user.save({ validateModifiedOnly: true });
+
+  // The session cache holds this account for a few seconds; the new name
+  // should be on the next request, not the one after.
+  forgetUser(user._id);
 
   res.json({
     success: true,

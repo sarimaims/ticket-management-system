@@ -8,14 +8,12 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Building,
-  CheckCircle2,
   CircleSlash,
   Trash2,
   Inbox,
@@ -33,7 +31,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
-import { OriginTag, PriorityBadge, StatusBadge } from "@/components/ui/badge";
+import { OriginTag, PriorityBadge, RoleTag, StatusBadge } from "@/components/ui/badge";
 import { Input, Textarea } from "@/components/ui/field";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { SearchSelect } from "@/components/ui/search-select";
@@ -61,6 +59,7 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import {
   deleteTickets,
+  departmentsOf,
   hasNoCommitment,
   isAwaitingApproval,
   isDueThisWeek,
@@ -68,19 +67,22 @@ import {
   isNewToday,
   isOverdue,
   isQuiet,
+  isShared,
   isUnassigned,
   isUrgent,
   OPEN_TICKET,
   reassignTickets,
-  updateTicket,
   type TicketRecord,
   type TicketScope,
+  unitsOf,
+  updateTicket,
 } from "@/lib/tickets";
 import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
-import { DEPARTMENT_ROLE_LABEL, isAdmin } from "@/lib/auth";
+import { Designation } from "@/components/users/designation";
+import { isAdmin } from "@/lib/auth";
 import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import {
@@ -172,7 +174,7 @@ const FLASH_MS = 4000;
  */
 function inUnit(ticket: TicketRecord, unitId: string) {
   if (!unitId) return true;
-  if (ticket.department.unit?.id === unitId) return true;
+  if (departmentsOf(ticket).some((item) => item.unit?.id === unitId)) return true;
   return ticket.fromDepartments.some((item) => item.unit?.id === unitId);
 }
 
@@ -262,6 +264,14 @@ function rangeLabel(range: { from: string; to: string }) {
 }
 
 const isView = (value: string | null): value is View => value !== null && value in VIEWS;
+
+/** Still going: what Assigned to Me and My Requests open on. */
+const LIVE_STATUSES: string[] = ["New", "In Progress", "Resolved", "Overdue"];
+const NO_STATUSES: string[] = [];
+
+/** Whether a status selection is exactly the live default, in any order. */
+const isLiveSelection = (value: string[]) =>
+  value.length === LIVE_STATUSES.length && LIVE_STATUSES.every((status) => value.includes(status));
 
 /** The status a `?status=` link names, if it is one. */
 const isStatus = (value: string | null): value is TicketStatus =>
@@ -422,9 +432,9 @@ function sortValue(ticket: TicketRecord, key: SortKey): string | number {
     case "raisedBy":
       return (ticket.raisedBy.name ?? "").toLowerCase();
     case "toUnit":
-      return (ticket.department.unit?.name ?? "").toLowerCase();
+      return names(unitsOf(ticket));
     case "toDepartment":
-      return (ticket.department.name ?? "").toLowerCase();
+      return names(departmentsOf(ticket));
     case "assignees":
       return names(ticket.assignees);
     case "priority":
@@ -674,20 +684,42 @@ const TicketRow = memo(function TicketRow({
           )}
           <OriginTag role={ticket.raisedByRole} />
         </span>
+        {/* What they are in the department they asked from. */}
+        <Designation value={ticket.raisedBy.designation} />
       </TableCell>
 
-      {/* And where it landed. One department per ticket, so this side never
-          holds a list: several departments asked at once are several tickets. */}
+      {/* And where it landed: every department one shared ticket went to,
+          each under its own unit. */}
       <TableCell className={cn(CELL, TO_EDGE, TO, "whitespace-normal")}>
-        {ticket.department.unit?.name ?? <Blank />}
+        {unitsOf(ticket).length === 0 ? (
+          <Blank />
+        ) : (
+          <span className="flex flex-col gap-0.5">
+            {unitsOf(ticket).map((unit) => (
+              <span key={unit.id}>{unit.name}</span>
+            ))}
+          </span>
+        )}
       </TableCell>
 
       <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
         {/* White rather than the brand tint it wore before: a red chip on an
             orange band was two warm colours arguing over the same cell. */}
-        <span className="rounded bg-surface px-1 py-px text-[10px] font-semibold text-route-to-fg">
-          {ticket.department.name}
+        <span className="flex flex-wrap gap-1">
+          {departmentsOf(ticket).map((department) => (
+            <span
+              key={department.id}
+              className="rounded bg-surface px-1 py-px text-[10px] font-semibold text-route-to-fg"
+            >
+              {department.name}
+            </span>
+          ))}
         </span>
+        {isShared(ticket) && (
+          <span className="mt-0.5 block text-[9px] font-bold tracking-wide text-route-to-fg/70 uppercase">
+            Shared
+          </span>
+        )}
       </TableCell>
 
       {/* Who is doing it is the receiving department's business. On your own
@@ -698,15 +730,17 @@ const TicketRow = memo(function TicketRow({
           {ticket.assignees.length === 0 ? (
             <span className="text-ink-400">Nobody yet</span>
           ) : (
-            <span className="font-medium text-ink-700">
-              {ticket.assignees.map((person, index) => (
-                <span key={person.id}>
-                  {index > 0 && ", "}
+            // One line per person, each with their title in this department:
+            // "Rida, Omar" says nothing about which of them is the specialist.
+            <span className="flex flex-col gap-0.5 font-medium text-ink-700">
+              {ticket.assignees.map((person) => (
+                <span key={person.id} className="min-w-0">
                   <UserLink
                     id={person.id}
                     name={person.name ?? "Someone"}
                     className="hover:text-brand-600"
                   />
+                  <Designation value={person.designation} />
                 </span>
               ))}
             </span>
@@ -975,9 +1009,21 @@ export function TicketsWorkspace({
   const [sort, setSort] = useState(DEFAULT_SORT);
   // A link can arrive already filtered: a dashboard card, or `?status=`.
   const params = useSearchParams();
+  /*
+   * Your own desk and your own requests open on what is still going: New, In
+   * Progress, Awaiting Approval and Overdue are ticked, Completed and
+   * Cancelled are not. Unticked rather than hidden - the filter shows exactly
+   * what is left out, and ticking them brings them back.
+   *
+   * A link that names a status or a view has said what it wants instead.
+   */
+  const liveByDefault = scope === "assigned" || scope === "mine";
+  const defaultStatuses = liveByDefault ? LIVE_STATUSES : NO_STATUSES;
   const [statuses, setStatuses] = useState<string[]>(() => {
     const named = params.get("status");
-    return isStatus(named) ? [named] : [];
+    if (isStatus(named)) return [named];
+    if (isView(params.get("view"))) return [];
+    return defaultStatuses;
   });
   const [priorities, setPriorities] = useState<string[]>([]);
   const [where, setWhere] = useState<{ units: string[]; departments: string[] }>({
@@ -1069,7 +1115,7 @@ export function TicketsWorkspace({
   const canWorkTicket = useCallback(
     (ticket: TicketRecord) =>
       manager ||
-      myDepartmentIds.has(ticket.department.id) ||
+      departmentsOf(ticket).some((department) => myDepartmentIds.has(department.id)) ||
       // Their own request: the raiser may name who should pick it up, here in
       // a batch exactly as they could one at a time in the sheet.
       ticket.raisedBy.id === meId,
@@ -1123,20 +1169,23 @@ export function TicketsWorkspace({
     const byId = new Map<string, ScopeOption>();
 
     for (const ticket of inScope) {
-      const found = byId.get(ticket.department.id);
-      if (found) {
-        found.count += 1;
-        continue;
-      }
+      // A shared ticket counts once in each department it went to.
+      for (const department of departmentsOf(ticket)) {
+        const found = byId.get(department.id);
+        if (found) {
+          found.count += 1;
+          continue;
+        }
 
-      byId.set(ticket.department.id, {
-        id: ticket.department.id,
-        name: ticket.department.name ?? "Department",
-        unit: ticket.department.unit?.id
-          ? { id: ticket.department.unit.id, name: ticket.department.unit.name ?? "Unit" }
-          : null,
-        count: 1,
-      });
+        byId.set(department.id, {
+          id: department.id,
+          name: department.name ?? "Department",
+          unit: department.unit?.id
+            ? { id: department.unit.id, name: department.unit.name ?? "Unit" }
+            : null,
+          count: 1,
+        });
+      }
     }
 
     return [...byId.values()];
@@ -1224,20 +1273,6 @@ export function TicketsWorkspace({
 
   const mineCount = useMemo(() => inScope.filter(isMine).length, [inScope, isMine]);
 
-  /**
-   * Whether finished work is being kept out of the way.
-   *
-   * Only on the page about your own desk, and only while nothing has been
-   * asked of the status: the moment somebody names a status - by filter, by
-   * tile, or by a link carrying one - they have said what they want to see.
-   */
-  const hidesDone = scope === "assigned" && statuses.length === 0 && view === null;
-
-  const doneHidden = useMemo(
-    () => (hidesDone ? inScope.filter((ticket) => ticket.status === "Completed").length : 0),
-    [hidesDone, inScope],
-  );
-
   const rows = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
     const kept = inScope.filter((ticket) => {
@@ -1249,22 +1284,13 @@ export function TicketsWorkspace({
       // An empty filter asks nothing of the row, so it lets everything past.
       if (statuses.length > 0 && !statuses.includes(ticket.status)) return false;
 
-      /*
-       * What is on your desk is what is still to do. A queue that opens on
-       * every ticket you have ever finished buries the handful that are still
-       * waiting, and the finished ones are never the reason this page is open.
-       *
-       * Hidden rather than dropped: the Completed tile still counts them and
-       * clicking it - or naming the status in the filter - brings them back,
-       * so nothing is unreachable.
-       */
-      if (hidesDone && ticket.status === "Completed") return false;
       if (priorities.length > 0 && !priorities.includes(ticket.priority)) return false;
       // A unit stands for everything under it, so either half of the choice
       // can match on its own.
       if (where.units.length > 0 || where.departments.length > 0) {
-        const byUnit = where.units.includes(ticket.department.unit?.id ?? "");
-        const byDepartment = where.departments.includes(ticket.department.id);
+        const asked = departmentsOf(ticket);
+        const byUnit = asked.some((item) => where.units.includes(item.unit?.id ?? ""));
+        const byDepartment = asked.some((item) => where.departments.includes(item.id));
         if (!byUnit && !byDepartment) return false;
       }
       if (fromWhere.units.length > 0 || fromWhere.departments.length > 0) {
@@ -1314,7 +1340,6 @@ export function TicketsWorkspace({
     inScope,
     deferredQuery,
     statuses,
-    hidesDone,
     priorities,
     where,
     fromWhere,
@@ -1388,7 +1413,11 @@ export function TicketsWorkspace({
     if (statuses.length > 0) {
       inForce.push({
         key: "status",
-        label: `Status: ${listNames(statuses.map((item) => STATUS_LABEL[item as TicketStatus] ?? item))}`,
+        // The default says what it leaves out, which is the thing to know.
+        label:
+          liveByDefault && isLiveSelection(statuses)
+            ? "Open only · Completed & Cancelled hidden"
+            : `Status: ${listNames(statuses.map((item) => STATUS_LABEL[item as TicketStatus] ?? item))}`,
         clear: () => setStatuses([]),
       });
     }
@@ -1459,7 +1488,7 @@ export function TicketsWorkspace({
   const selectTile = useCallback(
     (key: string) => {
       if (key === activeTile) {
-        setStatuses([]);
+        setStatuses(defaultStatuses);
         setView(null);
       } else if (isView(key)) {
         setStatuses([]);
@@ -1469,7 +1498,7 @@ export function TicketsWorkspace({
         setView(null);
       }
     },
-    [activeTile],
+    [activeTile, defaultStatuses],
   );
 
   /**
@@ -1508,8 +1537,11 @@ export function TicketsWorkspace({
    * something while the batch sits with one. A mixed selection says so rather
    * than offering a list that would be wrong for half of it.
    */
+  // A shared ticket is handed out from the ticket itself, one department's
+  // head at a time, so it never makes a batch reassignable.
   const chosenDepartment =
-    chosen.length > 0 && chosen.every((ticket) => ticket.department.id === chosen[0].department.id)
+    chosen.length > 0 &&
+    chosen.every((ticket) => !isShared(ticket) && ticket.department.id === chosen[0].department.id)
       ? chosen[0].department
       : null;
 
@@ -1771,20 +1803,6 @@ export function TicketsWorkspace({
               placeholder="All Priorities"
             />
           </div>
-
-          {/* A list that silently leaves things out is a list nobody trusts, so
-              it says what it is holding back and undoes it in one click. */}
-          {doneHidden > 0 && (
-            <button
-              type="button"
-              onClick={() => setStatuses(["Completed"])}
-              title="Show the completed tickets"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface px-2.5 text-[12px] font-medium text-ink-500 transition-colors hover:bg-ink-50 hover:text-ink-800"
-            >
-              <CheckCircle2 className="size-3.5 text-status-completed-fg" />
-              {doneHidden} completed hidden
-            </button>
-          )}
 
           <button
             type="button"
@@ -2283,7 +2301,12 @@ export function TicketsWorkspace({
 
       <TicketDetailSheet
         ticket={viewing}
-        canWork={viewing ? manager || myDepartmentIds.has(viewing.department.id) : false}
+        canWork={
+          viewing
+            ? manager ||
+              departmentsOf(viewing).some((department) => myDepartmentIds.has(department.id))
+            : false
+        }
         canEdit={viewing ? manager || viewing.raisedBy.id === meId : false}
         tab={tab}
         onTab={setTab}
@@ -2571,7 +2594,11 @@ function ReassignTicketsModal({
                 .filter((member) => member.id !== session?.id)
                 .map((member) => ({
                   value: member.id,
-                  label: `${member.name} (${DEPARTMENT_ROLE_LABEL[member.departmentRole]})`,
+                  // Name, then their title in this department as a pill, then
+                  // whether they run it - the same as every other people list.
+                  label: member.name,
+                  tag: member.designation || undefined,
+                  badge: <RoleTag role={member.departmentRole} className="px-1.5 py-px text-[10px]" />,
                 }))}
               value={chosen}
               onChange={setChosen}

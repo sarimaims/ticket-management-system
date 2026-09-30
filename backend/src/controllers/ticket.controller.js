@@ -37,7 +37,14 @@ import { record } from '../services/activity.js';
 import { recordAssignment } from '../services/assignment.js';
 import { assignsDirectly } from './handover.controller.js';
 import { postSystemMessage } from '../services/chat.js';
-import { canWorkOn, isRaiser, visibilityFilter } from '../services/ticketAccess.js';
+import {
+  canWorkOn,
+  departmentIdsOf,
+  departmentsHeadedOn,
+  inTicketDepartments,
+  isRaiser,
+  visibilityFilter,
+} from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
 import {
   notifyApprovalAnswered,
@@ -67,6 +74,13 @@ const WITH_DEPARTMENT = {
 const WITH_FROM_DEPARTMENTS = { ...WITH_DEPARTMENT, path: 'fromDepartments' };
 
 /**
+ * What a person is loaded with wherever a ticket shows them: enough to name
+ * them, and their roles, so the title beside their name can be the one that
+ * fits this ticket.
+ */
+const PERSON_FIELDS = 'name email designation memberships';
+
+/**
  * Fills in the departments, people and units a set of tickets points at.
  *
  * Mongoose runs one query per populated path, and each of those is a separate
@@ -86,6 +100,7 @@ async function hydrate(tickets) {
 
   for (const ticket of tickets) {
     if (ticket.department) departmentIds.add(String(ticket.department));
+    for (const item of ticket.departments ?? []) departmentIds.add(String(item));
     for (const item of ticket.fromDepartments ?? []) departmentIds.add(String(item));
     if (ticket.raisedBy) userIds.add(String(ticket.raisedBy));
     for (const person of ticket.assignees ?? []) userIds.add(String(person));
@@ -97,7 +112,7 @@ async function hydrate(tickets) {
       .select('name code unit')
       .lean(),
     User.find({ _id: { $in: [...userIds] } })
-      .select('name email')
+      .select(PERSON_FIELDS)
       .lean(),
     // Every unit rather than the ones referenced: the collection holds a
     // handful of rows, and asking for all of them saves waiting for the
@@ -120,6 +135,7 @@ async function hydrate(tickets) {
   return tickets.map((ticket) => ({
     ...ticket,
     department: ticket.department ? asDepartment(ticket.department) : ticket.department,
+    departments: departmentIdsOf(ticket).map(asDepartment),
     fromDepartments: (ticket.fromDepartments ?? []).map(asDepartment),
     raisedBy: ticket.raisedBy ? asUser(ticket.raisedBy) : ticket.raisedBy,
     assignees: (ticket.assignees ?? []).map(asUser),
@@ -133,6 +149,30 @@ async function hydrateOne(ticket) {
   return filled;
 }
 
+/**
+ * A person's title, in the department this ticket asks it of.
+ *
+ * Designation is per role - the HR Executive in one unit is the Payroll Lead
+ * in another - so there is no single answer to "what is this person". On a
+ * ticket there is: the raiser is what they are in the department they raised
+ * from, and whoever works it is what they are in the department working it.
+ * Failing that, any title they hold says more than none; an admin, who holds
+ * no roles, carries theirs on the account.
+ */
+function titleIn(person, departmentIds) {
+  if (!person || typeof person !== 'object') return '';
+
+  const wanted = new Set(departmentIds.filter(Boolean).map(String));
+  const roles = person.memberships ?? [];
+
+  const here = roles.find(
+    (role) => wanted.has(String(role.department?._id ?? role.department)) && role.designation,
+  );
+  if (here) return here.designation;
+  if (person.designation) return person.designation;
+  return roles.find((role) => role.designation)?.designation ?? '';
+}
+
 /** A populated unit, flattened to what the client reads. */
 function presentUnit(unit) {
   if (!unit) return null;
@@ -142,6 +182,11 @@ function presentUnit(unit) {
 }
 
 function present(ticket, { awaiting } = {}) {
+  const toId = String(ticket.department?._id ?? ticket.department ?? '');
+  /** Every department it is shared with, the lead first. */
+  const toIds = departmentIdsOf(ticket);
+  const fromIds = (ticket.fromDepartments ?? []).map((item) => String(item?._id ?? item));
+
   const department = ticket.department;
   const raisedBy = ticket.raisedBy;
   const populated = (value) => value && typeof value === 'object' && !(value instanceof mongoose.Types.ObjectId);
@@ -160,7 +205,11 @@ function present(ticket, { awaiting } = {}) {
     deadline: ticket.deadline,
     committedDeadline: ticket.committedDeadline ?? null,
     committedBy: populated(ticket.committedBy)
-      ? { id: String(ticket.committedBy._id), name: ticket.committedBy.name }
+      ? {
+          id: String(ticket.committedBy._id),
+          name: ticket.committedBy.name,
+          designation: titleIn(ticket.committedBy, toIds),
+        }
       : null,
     committedAt: ticket.committedAt ?? null,
     /** Why the current promise is the date it is. Empty when none was made. */
@@ -203,18 +252,49 @@ function present(ticket, { awaiting } = {}) {
           unit: presentUnit(department.unit),
         }
       : { id: String(department) },
+    /**
+     * Every department the ticket is shared with, the lead first. One entry
+     * for a ticket that went to a single department.
+     */
+    departments: (ticket.departments?.length ? ticket.departments : [department])
+      .filter(Boolean)
+      .map((item) =>
+        populated(item)
+          ? { id: String(item._id), name: item.name, code: item.code, unit: presentUnit(item.unit) }
+          : { id: String(item) },
+      ),
     fromDepartments: (ticket.fromDepartments ?? []).map((item) =>
       populated(item)
         ? { id: String(item._id), name: item.name, code: item.code, unit: presentUnit(item.unit) }
         : { id: String(item) },
     ),
     raisedBy: populated(raisedBy)
-      ? { id: String(raisedBy._id), name: raisedBy.name, email: raisedBy.email }
+      ? {
+          id: String(raisedBy._id),
+          name: raisedBy.name,
+          email: raisedBy.email,
+          // What they are in the department they asked from.
+          designation: titleIn(raisedBy, fromIds),
+        }
       : { id: String(raisedBy) },
     // What level this came from: 'superadmin', 'admin' or 'user'.
     raisedByRole: ticket.raisedByRole,
     assignees: (ticket.assignees ?? []).map((person) =>
-      populated(person) ? { id: String(person._id), name: person.name } : { id: String(person) },
+      populated(person)
+        ? {
+            id: String(person._id),
+            name: person.name,
+            // What they are in the department doing the work.
+            designation: titleIn(person, toIds),
+            /** Which of the ticket's departments they hold it for. */
+            departmentId:
+              toIds.find((id) =>
+                (person.memberships ?? []).some(
+                  (role) => String(role.department?._id ?? role.department) === id,
+                ),
+              ) ?? toId,
+          }
+        : { id: String(person) },
     ),
     /**
      * What was attached to the request. No URLs here: a signed link expires
@@ -580,21 +660,29 @@ export async function createTicket(req, res) {
     attachments,
   };
 
-  // One ticket per receiving department: each owns its own number, status and
-  // assignee, so one department resolving does not close it for the others.
-  const created = [];
-  for (const target of targets) {
-    // Sequential rather than Promise.all: the ticket number comes from a
-    // shared counter, and this keeps the numbering in a predictable order.
-    // eslint-disable-next-line no-await-in-loop
-    created.push(
-      await Ticket.create({
-        ...shared,
-        department: target._id,
-        assignees: assignedTo.get(String(target._id)) ?? [],
-      }),
-    );
-  }
+  /*
+   * One ticket, however many departments are asked: the lead is the first one
+   * picked, and every department is on it. Each one's people hold it together,
+   * so there is one number, one status, one thread and one sign-off - asking
+   * IT and Pharmacy for the same laptop is one request, not two.
+   *
+   * Somebody named for two of the departments is on it once.
+   */
+  const everyone = [
+    ...new Map(
+      targets
+        .flatMap((target) => assignedTo.get(String(target._id)) ?? [])
+        .map((id) => [String(id), id]),
+    ).values(),
+  ];
+  const created = [
+    await Ticket.create({
+      ...shared,
+      department: targets[0]._id,
+      departments: targets.map((target) => target._id),
+      assignees: everyone,
+    }),
+  ];
 
   // One parallel step for every reference instead of a populate per path -
   // the same reason the queues stopped using them.
@@ -609,11 +697,20 @@ export async function createTicket(req, res) {
    * back was a round trip spent learning nothing new.
    */
   const departmentById = new Map(targets.map((target) => [String(target._id), target]));
-  const raiser = { _id: req.user._id, name: req.user.name, email: req.user.email };
+  // With their roles, so the title beside their name is the one they hold in
+  // the department they are raising from.
+  const raiser = {
+    _id: req.user._id,
+    name: req.user.name,
+    email: req.user.email,
+    designation: req.user.designation,
+    memberships: req.user.memberships,
+  };
 
   const populated = created.map((ticket) => ({
     ...ticket.toObject(),
     department: departmentById.get(String(ticket.department)) ?? ticket.department,
+    departments: (ticket.departments ?? []).map((id) => departmentById.get(String(id)) ?? id),
     fromDepartments: fromDocs,
     raisedBy: raiser,
     assignees: (ticket.assignees ?? []).map((id) => peopleById.get(String(id)) ?? id),
@@ -663,7 +760,14 @@ export async function createTicket(req, res) {
         actor: req.user,
         event: 'raised',
         side: 'raiser',
-        body: `raised this ticket to ${ticket.department.name}`,
+        body: `raised this ticket to ${
+          ticket.departments.length > 1
+            ? `${ticket.departments
+                .slice(0, -1)
+                .map((item) => item.name)
+                .join(', ')} and ${ticket.departments.at(-1).name}`
+            : ticket.department.name
+        }`,
       }),
       notifyNewTicket({ ticket, actor: req.user }),
     ]),
@@ -725,7 +829,7 @@ export async function listTickets(req, res) {
       // requests they sent elsewhere into a queue that is about incoming work.
       filter =
         departments.length > 0
-          ? { department: { $in: departments } }
+          ? { $or: [{ departments: { $in: departments } }, { department: { $in: departments } }] }
           : // Nobody's department: all that is left is what is on them by name.
             { assignees: req.user._id };
     }
@@ -772,7 +876,12 @@ export async function listTickets(req, res) {
     }
   }
   if (priority) filter.priority = priority;
-  if (department && mongoose.isValidObjectId(department)) filter.department = department;
+  if (department && mongoose.isValidObjectId(department)) {
+    filter.$and = [
+      ...(filter.$and ?? []),
+      { $or: [{ departments: department }, { department }] },
+    ];
+  }
 
   // A polling client sends back the tag it already holds. When nothing has
   // moved the answer is 304 with no body, and the five populate lookups below
@@ -1384,6 +1493,16 @@ export async function reassignTickets(req, res) {
   const tickets = await Ticket.find({ _id: { $in: valid }, ...visibilityFilter(req.user) });
   if (tickets.length === 0) throw ApiError.notFound('Ticket not found.');
 
+  // A shared ticket has a head per department and a list per department, and
+  // a batch hands everything to one set of people - so it is left out, and
+  // reassigned from the ticket itself.
+  const shared = tickets.find((ticket) => departmentIdsOf(ticket).length > 1);
+  if (shared) {
+    throw ApiError.badRequest(
+      `${shared.number} is shared by several departments. Reassign it from the ticket itself.`,
+    );
+  }
+
   // All or nothing, so a half-applied batch never leaves somebody guessing
   // which half moved.
   const departments = new Set(tickets.map((ticket) => String(ticket.department)));
@@ -1468,7 +1587,10 @@ export async function reassignTickets(req, res) {
     // Whoever was holding it cannot keep holding it from another department,
     // so an unnamed move leaves it with the new department rather than with
     // people who can no longer see it.
-    if (changingDepartment) ticket.department = destination._id;
+    if (changingDepartment) {
+      ticket.department = destination._id;
+      ticket.departments = [destination._id];
+    }
     ticket.assignees = held;
     // eslint-disable-next-line no-await-in-loop
     await ticket.save();
@@ -1495,10 +1617,11 @@ export async function reassignTickets(req, res) {
     // eslint-disable-next-line no-await-in-loop
     const populated = await Ticket.findById(ticket._id)
       .populate(WITH_DEPARTMENT)
-      .populate('raisedBy', 'name email')
+      .populate({ ...WITH_DEPARTMENT, path: 'departments' })
+      .populate('raisedBy', PERSON_FIELDS)
       .populate(WITH_FROM_DEPARTMENTS)
-      .populate('assignees', 'name email')
-      .populate('committedBy', 'name email');
+      .populate('assignees', PERSON_FIELDS)
+      .populate('committedBy', PERSON_FIELDS);
 
     // eslint-disable-next-line no-await-in-loop
     await record({
@@ -1840,27 +1963,59 @@ export async function updateTicket(req, res) {
       throw ApiError.badRequest('You cannot assign a ticket to yourself.');
     }
 
-    // Once a ticket sits with somebody it stays with somebody: it is handed
-    // on, never dropped. Tickets raised before that rule can stay empty.
-    if (wanted.length === 0 && held.length > 0) {
-      throw ApiError.badRequest(
-        'A ticket has to sit with someone. Hand it to another person instead.',
-      );
-    }
+    /*
+     * On a shared ticket each department's head hands out their own part. So
+     * a head may add and remove people from the departments they run, and the
+     * people holding it for the other departments stay on it whatever this
+     * list says - a head of IT cannot take Pharmacy's name off the ticket.
+     */
+    const headed = new Set(departmentsHeadedOn(req.user, ticket));
+    const theirs = (person) =>
+      MANAGER_ROLES.includes(req.user.role) ||
+      MANAGER_ROLES.includes(person.role) ||
+      [...headed].some((id) => person.roleInDepartment(id));
 
-    const people = [];
+    const heldPeople = await User.find({ _id: { $in: held } }).select('name role memberships');
+    const kept = heldPeople.filter((person) => !theirs(person) && !wanted.includes(String(person._id)));
+
+    const people = [...kept];
     for (const userId of wanted) {
       if (!mongoose.isValidObjectId(userId)) throw ApiError.badRequest('Invalid assignee.');
 
       // eslint-disable-next-line no-await-in-loop
       const candidate = await User.findById(userId).select('name role memberships');
-      const belongs =
-        candidate &&
-        (MANAGER_ROLES.includes(candidate.role) ||
-          candidate.roleInDepartment(ticket.department));
-
-      if (!belongs) throw ApiError.badRequest('That person is not in this department.');
+      if (!candidate || !inTicketDepartments(candidate, ticket)) {
+        throw ApiError.badRequest('That person is not in a department on this ticket.');
+      }
+      if (!held.includes(String(userId)) && !theirs(candidate)) {
+        throw ApiError.forbidden(
+          `${candidate.name} is in another department on this ticket - its head assigns them.`,
+        );
+      }
       people.push(candidate);
+    }
+
+    // Once a ticket sits with somebody it stays with somebody: it is handed
+    // on, never dropped. Tickets raised before that rule can stay empty.
+    if (people.length === 0 && held.length > 0) {
+      throw ApiError.badRequest(
+        'A ticket has to sit with someone. Hand it to another person instead.',
+      );
+    }
+
+    // And on a shared ticket, each department that had somebody on it keeps
+    // somebody: clearing your own part would leave that department's share of
+    // the work with nobody.
+    for (const departmentId of departmentIdsOf(ticket)) {
+      const had = heldPeople.some((person) => person.roleInDepartment(departmentId));
+      const has = people.some((person) => person.roleInDepartment(departmentId));
+      if (had && !has) {
+        // eslint-disable-next-line no-await-in-loop
+        const named = await Department.findById(departmentId).select('name').lean();
+        throw ApiError.badRequest(
+          `${named?.name ?? 'That department'} needs someone on this ticket. Hand it to another person instead.`,
+        );
+      }
     }
 
     const moved = held.join(',') !== people.map((person) => String(person._id)).sort().join(',');
@@ -1885,10 +2040,11 @@ export async function updateTicket(req, res) {
 
   const populated = await Ticket.findById(ticket._id)
     .populate(WITH_DEPARTMENT)
-    .populate('raisedBy', 'name email')
+    .populate({ ...WITH_DEPARTMENT, path: 'departments' })
+    .populate('raisedBy', PERSON_FIELDS)
     .populate(WITH_FROM_DEPARTMENTS)
-    .populate('assignees', 'name email')
-    .populate('committedBy', 'name email');
+    .populate('assignees', PERSON_FIELDS)
+    .populate('committedBy', PERSON_FIELDS);
 
   const changes = [];
   /** Marked done for the first time since it was last open: a question for the raiser. */

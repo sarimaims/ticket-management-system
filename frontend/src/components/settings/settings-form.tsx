@@ -10,7 +10,15 @@ import { Field, Input } from "@/components/ui/field";
 import { RoleTag } from "@/components/ui/badge";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/ui/toast";
-import { avatarTone, changePassword, changePhone, initials, ROLE_LABEL } from "@/lib/auth";
+import {
+  avatarTone,
+  changeName,
+  changePassword,
+  changePhone,
+  initials,
+  isAdmin,
+  ROLE_LABEL,
+} from "@/lib/auth";
 import { formatPhone } from "@/lib/phone";
 import { errorMessage } from "@/lib/api";
 
@@ -348,6 +356,117 @@ function PhoneLine() {
   );
 }
 
+/** The same ceiling the API and the model enforce. */
+const MAX_NAME = 80;
+
+/**
+ * Your name, in place - for the super admin and admins.
+ *
+ * Everybody else's name is set by an admin, so for them this is plain text
+ * with no button. A manager has nobody above them to ask, so theirs can be
+ * corrected here; like the phone number, it can be changed but not emptied.
+ */
+function NameLine() {
+  const { session, setSession } = useAuth();
+  const toast = useToast();
+
+  const current = session?.name ?? "";
+  const editable = isAdmin(session);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(current);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+
+  const open = () => {
+    setDraft(current);
+    setError("");
+    setEditing(true);
+  };
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    const next = draft.trim();
+    if (!next) {
+      setError("A name cannot be removed, only changed.");
+      return;
+    }
+    if (next.length > MAX_NAME) {
+      setError(`At most ${MAX_NAME} characters.`);
+      return;
+    }
+    if (next === current) {
+      setEditing(false);
+      return;
+    }
+
+    setPending(true);
+    try {
+      const saved = await changeName(next);
+      setSession(saved);
+      setEditing(false);
+      toast.success("Name saved", saved.name);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <p className="mt-0.5 flex items-center gap-1.5 text-[14px] leading-tight font-bold text-ink-900">
+        <span className="truncate">{current || "Your account"}</span>
+        {editable && (
+          <button
+            type="button"
+            onClick={open}
+            className="shrink-0 rounded px-1 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+          >
+            Edit
+          </button>
+        )}
+      </p>
+    );
+  }
+
+  return (
+    <form className="mt-1 flex items-start gap-1.5" onSubmit={submit}>
+      <span className="min-w-0 flex-1">
+        <Input
+          autoFocus
+          id="profile-name"
+          className="h-8 text-[12px]"
+          autoComplete="name"
+          maxLength={MAX_NAME}
+          aria-label="Your name"
+          value={draft}
+          invalid={Boolean(error)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setError("");
+          }}
+        />
+        {error && <span className="mt-0.5 block text-[10px] font-medium text-brand-600">{error}</span>}
+      </span>
+
+      <Button type="submit" size="sm" className="h-8 shrink-0" disabled={pending}>
+        {pending ? "Saving…" : "Save"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 shrink-0"
+        onClick={() => setEditing(false)}
+        disabled={pending}
+      >
+        Cancel
+      </Button>
+    </form>
+  );
+}
+
 export function SettingsForm() {
   const { session } = useAuth();
 
@@ -360,9 +479,10 @@ export function SettingsForm() {
     // switches gone there is one thing to do on this page, and a full-width
     // sheet of cards made it look like there were several.
     <div className="mx-auto w-full max-w-2xl space-y-3">
-      {/* Who you are, rather than a form for it. Name, email and membership are
-          all set by an admin - the boxes that used to be here had nowhere to
-          save to, and a Save button that does nothing is worse than none. */}
+      {/* Who you are, rather than a form for it. Email and membership are set
+          by an admin, and so is a member's name - the boxes that used to be
+          here had nowhere to save to, and a Save button that does nothing is
+          worse than none. A manager's name and everyone's phone edit in place. */}
       <Card className="overflow-hidden">
         <div className="flex items-center gap-3 px-3.5 py-3">
           <Avatar
@@ -372,9 +492,7 @@ export function SettingsForm() {
           />
           <div className="min-w-0 flex-1">
             <Eyebrow>Profile</Eyebrow>
-            <p className="mt-0.5 truncate text-[14px] leading-tight font-bold text-ink-900">
-              {name || "Your account"}
-            </p>
+            <NameLine />
             {session?.designation && (
               <p className="truncate text-[12px] font-medium text-ink-600">{session.designation}</p>
             )}
@@ -418,8 +536,9 @@ export function SettingsForm() {
         </div>
 
         <p className="border-t border-line px-3.5 py-2 text-[11px] text-ink-400">
-          Your name, email and phone number appear on every ticket you raise. The number is
-          yours to keep current; ask an admin to change your name or email.
+          {isAdmin(session)
+            ? "Your name, email and phone number appear on every ticket you raise. The name and number are yours to keep current; your email is changed from the directory."
+            : "Your name, email and phone number appear on every ticket you raise. The number is yours to keep current; ask an admin to change your name or email."}
         </p>
       </Card>
 

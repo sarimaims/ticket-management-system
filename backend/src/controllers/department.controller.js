@@ -141,6 +141,11 @@ export async function getDepartment(req, res) {
     members: members.map((member) => ({
       ...presentUser(member),
       departmentRole: member.roleInDepartment(department._id),
+      // Their title here, so a picker says what each person does.
+      designation:
+        member.memberships.find(
+          (membership) => String(membership.department) === String(department._id),
+        )?.designation ?? '',
     })),
   });
 }
@@ -176,6 +181,11 @@ export async function listMemberOptions(req, res) {
       id: String(member._id),
       name: member.name,
       departmentRole: member.roleInDepartment(department._id),
+      // Their title here, so a picker says what each person does.
+      designation:
+        member.memberships.find(
+          (membership) => String(membership.department) === String(department._id),
+        )?.designation ?? '',
     })),
   });
 }
@@ -241,6 +251,7 @@ export async function listAllMemberOptions(req, res) {
         id: String(user._id),
         name: user.name,
         departmentRole: membership.role,
+        designation: membership.designation ?? '',
         department: { id: String(held._id), name: held.name },
         unit: held.unit ? { id: String(held.unit._id), name: held.unit.name } : null,
       });

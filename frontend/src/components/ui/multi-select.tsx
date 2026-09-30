@@ -12,6 +12,12 @@ export type Option = {
   label: string;
   /** Shown beside the label in the list only; the chips and search use the label. */
   badge?: React.ReactNode;
+  /**
+   * A short pill straight after the label - a person's title, say. In the list
+   * only, like the badge, but searched too: typing "HR" should find the HR
+   * Executive whether or not their name has those letters in it.
+   */
+  tag?: string;
 };
 
 /** Below this many options the eye finds it faster than the keyboard would. */
@@ -142,7 +148,9 @@ export function MultiSelect({
 
   const needle = term.trim().toLowerCase();
   const shown = needle
-    ? options.filter((option) => option.label.toLowerCase().includes(needle))
+    ? options.filter((option) =>
+        `${option.label} ${option.tag ?? ""}`.toLowerCase().includes(needle),
+      )
     : options;
 
   return (
@@ -287,7 +295,15 @@ export function MultiSelect({
                       >
                         {selected && <Check className="size-2.5" strokeWidth={3.5} />}
                       </span>
-                      {option.label}
+                      <span className="min-w-0 truncate">{option.label}</span>
+                      {option.tag && (
+                        <span
+                          title={option.tag}
+                          className="max-w-40 shrink truncate rounded-full border border-line bg-ink-50 px-2 py-px text-[10.5px] font-medium text-ink-600"
+                        >
+                          {option.tag}
+                        </span>
+                      )}
                       {option.badge && <span className="ml-auto shrink-0">{option.badge}</span>}
                     </button>
                   </li>

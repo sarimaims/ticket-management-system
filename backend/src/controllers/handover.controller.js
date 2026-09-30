@@ -12,7 +12,7 @@ import {
   notifyHandoverAsked,
   notifyTicketUpdated,
 } from '../services/notify.js';
-import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
+import { canWorkOn, departmentIdsOf, inTicketDepartments, visibilityFilter } from '../services/ticketAccess.js';
 
 /**
  * Who may move a ticket without being asked.
@@ -27,7 +27,9 @@ import { canWorkOn, visibilityFilter } from '../services/ticketAccess.js';
  */
 export function assignsDirectly(user, ticket) {
   if (MANAGER_ROLES.includes(user.role)) return true;
-  return user.roleInDepartment(ticket.department?._id ?? ticket.department) === 'head';
+  // A shared ticket has a head for each of its departments; any of them hands
+  // out the part that is theirs.
+  return departmentIdsOf(ticket).some((id) => user.roleInDepartment(id) === 'head');
 }
 
 async function readableTicket(req) {
@@ -104,11 +106,11 @@ export async function createHandover(req, res) {
     const belongs =
       candidate &&
       candidate.status !== 'suspended' &&
-      (MANAGER_ROLES.includes(candidate.role) || candidate.roleInDepartment(ticket.department));
+      inTicketDepartments(candidate, ticket);
 
-    if (!belongs) throw ApiError.badRequest('That person is not in this department.');
+    if (!belongs) throw ApiError.badRequest('That person is not in a department on this ticket.');
     // The head is not asked: releasing the ticket is how it goes back to them.
-    if (candidate.roleInDepartment(ticket.department) === 'head') {
+    if (departmentIdsOf(ticket).some((id) => candidate.roleInDepartment(id) === 'head')) {
       throw ApiError.badRequest('Release the ticket to hand it back to the head.');
     }
     people.push(candidate);

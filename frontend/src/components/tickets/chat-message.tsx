@@ -514,6 +514,13 @@ export function ChatMessage({
         name={message.author.name}
         className={cn("text-[11px] leading-none font-bold", nameColour(message.author.id))}
       />
+      {/* What they are in this thread's department, the way a work chat puts a
+          title beside a name: it tells the reader who is speaking for whom. */}
+      {message.authorDesignation && (
+        <span className="text-[10px] leading-none font-medium text-ink-500">
+          {message.authorDesignation}
+        </span>
+      )}
       {raiser && (
         <span
           className="inline-flex items-center gap-0.5 rounded bg-chat-accent/15 px-1 py-px text-[9px] leading-none font-semibold text-chat-accent-strong"

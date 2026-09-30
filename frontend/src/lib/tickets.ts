@@ -4,6 +4,30 @@ import { isSettled, type TicketPriority, type TicketStatus } from "./types";
 /** The unit a department sits under, as the ticket carries it. */
 export type TicketUnit = { id: string; name?: string; code?: string } | null;
 
+/** A department a ticket was raised to. */
+export type TicketDepartment = { id: string; name?: string; code?: string; unit?: TicketUnit };
+
+/**
+ * Every department a ticket is shared with, the lead first - read off the
+ * list, or off the lead alone for a ticket from before tickets could be shared.
+ */
+export function departmentsOf(ticket: Pick<TicketRecord, "department" | "departments">) {
+  return ticket.departments?.length ? ticket.departments : [ticket.department];
+}
+
+/** One ticket asked of more than one department. */
+export const isShared = (ticket: Pick<TicketRecord, "department" | "departments">) =>
+  departmentsOf(ticket).length > 1;
+
+/** The units a ticket's departments sit under, each named once. */
+export function unitsOf(ticket: Pick<TicketRecord, "department" | "departments">) {
+  const byId = new Map<string, string>();
+  for (const department of departmentsOf(ticket)) {
+    if (department.unit?.id) byId.set(department.unit.id, department.unit.name ?? "Unit");
+  }
+  return [...byId].map(([id, name]) => ({ id, name }));
+}
+
 /**
  * One file attached to the request itself. No URL: a signed link expires
  * within the hour and a cached list would hand out dead ones, so the link is
@@ -135,7 +159,8 @@ export type TicketRecord = {
   deadline: string | null;
   /** What the receiving department promised back. */
   committedDeadline: string | null;
-  committedBy: { id: string; name?: string } | null;
+  /** `designation` is their title in the department working the ticket. */
+  committedBy: { id: string; name?: string; designation?: string } | null;
   committedAt: string | null;
   /** Why the current promise is that date. Empty when nothing is promised. */
   committedReason: string;
@@ -161,13 +186,27 @@ export type TicketRecord = {
   /** Null when nobody has ever escalated it. */
   escalation: TicketEscalation | null;
   /** The unit rides along, so a list can be scoped without a second request. */
-  department: { id: string; name?: string; code?: string; unit?: TicketUnit };
+  /** The lead department: the first one asked. */
+  department: TicketDepartment;
+  /**
+   * Every department this one ticket is shared with, the lead first. A single
+   * entry for a ticket that went to one department.
+   */
+  departments: TicketDepartment[];
   fromDepartments: { id: string; name?: string; code?: string; unit?: TicketUnit }[];
-  raisedBy: { id: string; name?: string; email?: string };
+  /** `designation` is their title in the department they raised it from. */
+  raisedBy: { id: string; name?: string; email?: string; designation?: string };
   /** The raiser's standing when the ticket was raised, not their standing now. */
   raisedByRole: "superadmin" | "admin" | "user";
   /** Who is handling it. A department can put more than one person on it. */
-  assignees: { id: string; name?: string }[];
+  /** Each `designation` is that person's title in the department working it. */
+  assignees: {
+    id: string;
+    name?: string;
+    designation?: string;
+    /** Which of the ticket's departments they hold it for. */
+    departmentId?: string;
+  }[];
   /** The paperwork that came with the request. */
   attachments: TicketAttachment[];
   /**

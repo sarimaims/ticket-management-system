@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Building2, Check, Copy, Mail, Phone, X } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
-import { RoleTag } from "@/components/ui/badge";
+import { OriginTag, RoleTag } from "@/components/ui/badge";
 import { avatarTone, initials, ROLE_LABEL } from "@/lib/auth";
 import { errorMessage } from "@/lib/api";
 import { formatPhone } from "@/lib/phone";
@@ -89,8 +89,79 @@ export function UserLink({
 
 /* ----------------------------------------------------------------- card */
 
+/**
+ * Their standing as a badge, then what they do - the line under a name.
+ *
+ * A manager's title is their own; a member goes by the role they lead with,
+ * and every other role is listed wherever the rest of the person is.
+ */
+export function Standing({ user, className }: { user: DirectoryUser; className?: string }) {
+  const manager = user.role === "superadmin" || user.role === "admin";
+  const primary = user.departments.find((item) => item.role === "head") ?? user.departments[0];
+  const title = manager ? user.designation : primary?.designation || user.designation;
+
+  return (
+    <p className={cn("flex min-w-0 items-center gap-1.5", className)}>
+      {manager ? (
+        <OriginTag role={user.role} className="shrink-0 rounded px-1.5 py-px text-[9.5px]" />
+      ) : (
+        primary && (
+          <RoleTag
+            role={primary.role}
+            className="shrink-0 px-1.5 py-px text-[9.5px] font-bold tracking-wide uppercase"
+          />
+        )
+      )}
+      <span className="min-w-0 truncate text-[12px] text-ink-500">
+        {title || (manager ? "" : ROLE_LABEL[user.role])}
+      </span>
+    </p>
+  );
+}
+
+/** Every role somebody holds: department and standing, then title and unit. */
+export function DepartmentList({ user }: { user: DirectoryUser }) {
+  if (user.departments.length === 0) {
+    return (
+      <p className="text-[12px] text-ink-400">
+        {user.role === "user" ? "Not in a department" : "Works across every department"}
+      </p>
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+      {user.departments.map((item) => (
+        <li key={item.id} className="flex items-center gap-2 px-2.5 py-1.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-semibold text-ink-800">
+              {item.name ?? "Department"}
+            </p>
+            <p className="flex min-w-0 items-center gap-1 text-[11px] text-ink-500">
+              {item.designation && <span className="truncate">{item.designation}</span>}
+              {item.designation && item.unit?.name && (
+                <span aria-hidden className="text-ink-300">·</span>
+              )}
+              {item.unit?.name && (
+                <span className="inline-flex shrink-0 items-center gap-1 text-ink-400">
+                  <Building2 className="size-3" />
+                  {item.unit.name}
+                </span>
+              )}
+            </p>
+          </div>
+          <RoleTag
+            role={item.role}
+            className="shrink-0 px-1.5 py-px text-[9.5px] font-bold tracking-wide uppercase"
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** One line of the card: an icon, what it is, and a way to take it away. */
-function Contact({
+export function Contact({
   icon,
   value,
   href,
@@ -149,7 +220,7 @@ function Contact({
 }
 
 /** A fact under the card, said in as few words as it takes. */
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+export function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <p className="text-[10px] tracking-[0.06em] text-ink-400 uppercase">{label}</p>
@@ -158,7 +229,7 @@ function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-const STATUS_LABEL: Record<DirectoryUser["status"], string> = {
+export const STATUS_LABEL: Record<DirectoryUser["status"], string> = {
   active: "Active",
   invited: "Invited",
   suspended: "Suspended",
@@ -232,12 +303,15 @@ function ProfileCard({
             className="size-11 text-[14px]"
           />
           <div className="min-w-0 flex-1 pr-6">
-            <p className="truncate text-[14px] leading-tight font-bold text-ink-900">
+            <p className="truncate text-[14px] leading-tight font-semibold text-ink-900">
               {shownName || "Profile"}
             </p>
-            <p className="mt-0.5 text-[11px] text-ink-400">
-              {user ? ROLE_LABEL[user.role] : "Loading…"}
-            </p>
+            {/* The same line the sidebar shows. */}
+            {user ? (
+              <Standing user={user} className="mt-1" />
+            ) : (
+              <p className="mt-1 text-[11px] text-ink-400">Loading…</p>
+            )}
           </div>
         </div>
 
@@ -271,30 +345,10 @@ function ProfileCard({
             </div>
 
             <div className="border-t border-line px-3.5 py-2.5">
-              <p className="text-[10px] tracking-[0.06em] text-ink-400 uppercase">Departments</p>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {user.departments.length === 0 ? (
-                  <span className="text-[12px] text-ink-400">
-                    {user.role === "user" ? "Not in a department" : "Works across every department"}
-                  </span>
-                ) : (
-                  user.departments.map((item) => (
-                    <span
-                      key={item.id}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ink-50 py-1 pr-1 pl-2 text-[11px] font-semibold text-ink-700"
-                    >
-                      {item.unit?.name && (
-                        <span className="inline-flex items-center gap-1 font-normal text-ink-400">
-                          <Building2 className="size-3" />
-                          {item.unit.name} ·
-                        </span>
-                      )}
-                      {item.name ?? "Department"}
-                      <RoleTag role={item.role} />
-                    </span>
-                  ))
-                )}
-              </div>
+              <p className="mb-1.5 text-[10px] tracking-[0.06em] text-ink-400 uppercase">
+                Departments
+              </p>
+              <DepartmentList user={user} />
             </div>
 
             <div className="grid grid-cols-3 gap-3 border-t border-line px-3.5 py-2.5">

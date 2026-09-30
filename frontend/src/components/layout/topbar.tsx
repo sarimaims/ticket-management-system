@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ChevronRight, Menu } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { ArrowLeft, ChevronRight, Menu, Plus } from "lucide-react";
 
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { usePageMeta } from "@/components/layout/page-title";
@@ -13,6 +14,7 @@ import { usePageMeta } from "@/components/layout/page-title";
  */
 export function Topbar({ onMenu }: { onMenu: () => void }) {
   const { title, crumbs, backHref } = usePageMeta();
+  const pathname = usePathname();
   const trail = crumbs.length > 0 ? crumbs : [{ label: title }];
 
   return (
@@ -73,6 +75,19 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
       {/* Each page portals its actions in here, so a page never needs a
           header row of its own. */}
       <div id="page-actions" className="ml-auto flex shrink-0 items-center gap-2" />
+
+      {/* Raising a ticket is one click from anywhere - except the form itself,
+          where the button would only lead back to where you are. */}
+      {pathname !== "/create-ticket" && (
+        <Link
+          href="/create-ticket"
+          aria-label="Raise ticket"
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-brand-600 px-2 text-[12px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700 sm:px-2.5"
+        >
+          <Plus className="size-3.5" strokeWidth={2.5} />
+          <span className="hidden sm:inline">Raise Ticket</span>
+        </Link>
+      )}
 
       <div className="flex shrink-0 items-center">
         <NotificationBell />

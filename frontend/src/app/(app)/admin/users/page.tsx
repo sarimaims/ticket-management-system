@@ -15,7 +15,7 @@ export default function AdminUsersPage() {
         title="Users"
         crumbs={[
           { label: "Home", href: "/dashboard" },
-          { label: "Administration" },
+          { label: "Settings" },
           { label: "Users" },
         ]}
       />

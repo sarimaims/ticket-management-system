@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Building, Building2, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  Building,
+  Building2,
+  ListFilter,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -29,6 +39,18 @@ import {
 } from "@/lib/departments";
 import { listUnitOptions, type UnitOption } from "@/lib/units";
 
+/** A tile that narrows the list: which departments it counts, and keeps. */
+type View = "headed" | "headless" | "empty";
+
+const VIEWS: Record<View, { label: string; test: (department: Department) => boolean }> = {
+  headed: { label: "With Head", test: (department) => department.headCount > 0 },
+  // Nobody to approve or hand work to: the one worth noticing.
+  headless: { label: "No Head", test: (department) => department.headCount === 0 },
+  empty: { label: "Empty", test: (department) => department.memberCount === 0 },
+};
+
+const isView = (key: string): key is View => key in VIEWS;
+
 function Banner({ message }: { message: string }) {
   return (
     <div
@@ -53,6 +75,8 @@ export function DepartmentsWorkspace() {
   const [query, setQuery] = useState("");
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [unitFilter, setUnitFilter] = useState<string[]>([]);
+  /** Set by a tile; null shows every department. */
+  const [view, setView] = useState<View | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Department | null>(null);
@@ -97,43 +121,57 @@ export function DepartmentsWorkspace() {
     return () => controller.abort();
   }, [load]);
 
+  const search = query.trim().toLowerCase();
   const visible = departments.filter((department) => {
+    if (view && !VIEWS[view].test(department)) return false;
     // An empty filter asks nothing of the row, so it lets everything past.
     if (unitFilter.length > 0 && !unitFilter.includes(department.unit?.id ?? "")) return false;
     return (department.name + department.code + department.description)
       .toLowerCase()
-      .includes(query.trim().toLowerCase());
+      .includes(search);
   });
 
-  const totals = departments.reduce(
-    (sum, department) => ({
-      members: sum.members + department.memberCount,
-      heads: sum.heads + department.headCount,
-      team: sum.team + department.teamCount,
-    }),
-    { members: 0, heads: 0, team: 0 },
-  );
-
+  /*
+   * Every tile counts departments, with the same test a click on it applies,
+   * so a lit tile and the rows below it always agree on the number.
+   */
   const stats: Stat[] = [
-    { label: "Departments", value: departments.length, caption: "", tone: "new" },
-    { label: "Members", value: totals.members, caption: "", tone: "progress" },
-    { label: "Heads", value: totals.heads, caption: "", tone: "admin", key: "head" },
-    { label: "Users", value: totals.team, caption: "", tone: "completed", key: "team" },
+    { label: "Departments", value: departments.length, caption: "", tone: "new", key: "all" },
+    ...(Object.keys(VIEWS) as View[]).map(
+      (key): Stat => ({
+        label: VIEWS[key].label,
+        value: departments.filter(VIEWS[key].test).length,
+        caption: "",
+        tone: key === "headed" ? "admin" : key === "headless" ? "overdue" : "cancelled",
+        key,
+      }),
+    ),
   ];
 
-  /**
-   * The counts are of people, and people are listed elsewhere: the whole
-   * directory for an admin, a head's own team for a head. Departments is this
-   * list, so it just clears the search.
-   */
-  const openTile = (key: string) => {
-    if (key === "Departments") {
-      setQuery("");
-      return;
-    }
-    const directory = canManage ? "/admin/users" : "/team";
-    const role = key === "head" || key === "team" ? `?role=${key}` : "";
-    router.push(`${directory}${role}` as "/");
+  /** A tile is a filter; clicking the lit one, or Departments, clears it. */
+  const selectTile = (key: string) => {
+    setView(key === view || !isView(key) ? null : key);
+  };
+
+  // What is narrowing the list, each one removable on its own.
+  const unitName = (id: string) => units.find((unit) => unit.id === id)?.name ?? "Unit";
+  const inForce: { key: string; label: string; clear: () => void }[] = [];
+  if (view) inForce.push({ key: "view", label: VIEWS[view].label, clear: () => setView(null) });
+  if (unitFilter.length > 0) {
+    inForce.push({
+      key: "unit",
+      label: `Unit: ${unitFilter.map(unitName).join(", ")}`,
+      clear: () => setUnitFilter([]),
+    });
+  }
+  if (search) {
+    inForce.push({ key: "search", label: `Search: “${query.trim()}”`, clear: () => setQuery("") });
+  }
+
+  const clearFilters = () => {
+    setView(null);
+    setUnitFilter([]);
+    setQuery("");
   };
 
   return (
@@ -145,7 +183,13 @@ export function DepartmentsWorkspace() {
 
       {error && <Banner message={error} />}
 
-      <StatTiles stats={stats} loading={loading} className="mb-2" onSelect={openTile} />
+      <StatTiles
+        stats={stats}
+        loading={loading}
+        className="mb-2"
+        active={view ?? "all"}
+        onSelect={selectTile}
+      />
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-1.5">
@@ -179,6 +223,51 @@ export function DepartmentsWorkspace() {
           )}
         </div>
 
+        {/* The same strip My Requests shows: a list that leaves things out
+            says so, and puts each filter one click from gone. */}
+        {inForce.length > 0 && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-1.5 border-b border-status-progress-fg/15 bg-status-progress-bg/70 px-2.5 py-1.5"
+          >
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-status-progress-fg">
+              <ListFilter className="size-3.5" />
+              Filtered view
+            </span>
+            <span className="shrink-0 text-[11px] text-ink-500">
+              Showing <span className="font-bold text-ink-800">{visible.length}</span> of{" "}
+              <span className="font-bold text-ink-800">{departments.length}</span> departments
+            </span>
+
+            <span aria-hidden className="h-3.5 w-px shrink-0 bg-status-progress-fg/20" />
+
+            {inForce.map((item) => (
+              <span
+                key={item.key}
+                className="inline-flex max-w-[16rem] items-center gap-0.5 rounded-full border border-line bg-surface py-0.5 pr-0.5 pl-2 text-[11px] font-medium text-ink-700 shadow-xs"
+              >
+                <span className="truncate">{item.label}</span>
+                <button
+                  type="button"
+                  onClick={item.clear}
+                  aria-label={`Remove filter: ${item.label}`}
+                  className="grid size-4 shrink-0 cursor-pointer place-items-center rounded-full text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="ml-auto inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold text-status-progress-fg transition-colors hover:bg-status-progress-fg/10"
+            >
+              Show all departments
+            </button>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full min-w-[960px] border-collapse">
             <thead className="border-b border-line bg-ink-50/60">
@@ -195,7 +284,25 @@ export function DepartmentsWorkspace() {
             <tbody>
               {loading && <TableSkeleton rows={4} columns={7} />}
 
-              {!loading && visible.length === 0 && (
+              {!loading && visible.length === 0 && departments.length > 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-10 text-center">
+                    <ListFilter className="mx-auto size-6 text-ink-300" />
+                    <p className="mt-2 text-sm font-semibold text-ink-700">
+                      No departments match these filters
+                    </p>
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="mt-1 text-sm font-semibold text-brand-600 hover:text-brand-700"
+                    >
+                      Clear filters
+                    </button>
+                  </td>
+                </tr>
+              )}
+
+              {!loading && departments.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-3 py-10 text-center">
                     <Building2 className="mx-auto size-6 text-ink-300" />

@@ -47,6 +47,8 @@ export type MemberOption = {
   id: string;
   name: string;
   departmentRole: DepartmentRole;
+  /** Their title in this department. Empty only on an older role. */
+  designation?: string;
 };
 
 /**
