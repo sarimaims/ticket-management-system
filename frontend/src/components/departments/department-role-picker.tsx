@@ -35,7 +35,9 @@ export function DepartmentRolePicker({
     onChange(
       roleOf(id)
         ? value.filter((item) => item.department !== id)
-        : [...value, { department: id, role: "team" }],
+        // Titled when the form is sent, from the one typed for the main
+        // department; a picker of ticks has no room for a box per row.
+        : [...value, { department: id, role: "team", designation: "" }],
     );
   };
 

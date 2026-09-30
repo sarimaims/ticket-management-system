@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Building, Building2, Plus, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Building, Building2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -18,12 +18,14 @@ import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import { EditDetailsModal } from "@/components/ui/edit-details-modal";
 import type { Stat } from "@/lib/types";
 import {
   createDepartment,
   deleteDepartment,
-  listDepartments,
   type Department,
+  listDepartments,
+  updateDepartment,
 } from "@/lib/departments";
 import { listUnitOptions, type UnitOption } from "@/lib/units";
 
@@ -41,7 +43,7 @@ function Banner({ message }: { message: string }) {
 
 export function DepartmentsWorkspace() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, refresh } = useAuth();
   const canManage = isAdmin(session);
   const toast = useToast();
 
@@ -54,6 +56,12 @@ export function DepartmentsWorkspace() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Department | null>(null);
+  /** The one being edited, if any. */
+  const [editing, setEditing] = useState<Department | null>(null);
+  /** The departments this person heads: theirs to rename, as any is an admin's. */
+  const headOf = new Set(
+    (session?.departments ?? []).filter((item) => item.role === "head").map((item) => item.id),
+  );
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -69,6 +77,16 @@ export function DepartmentsWorkspace() {
       if (!signal?.aborted) setLoading(false);
     }
   }, []);
+
+  /** Saves what changed, then reads the list again so order and counts agree. */
+  const saveEdit = async (changes: { name?: string; description?: string; unit?: string }) => {
+    if (!editing) return;
+    const saved = await updateDepartment(editing.id, changes);
+    toast.success("Department updated", saved.name);
+    setEditing(null);
+    await load();
+    void refresh();
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -239,6 +257,17 @@ export function DepartmentsWorkspace() {
                         >
                           Manage
                         </Link>
+                        {(canManage || headOf.has(department.id)) && (
+                          <button
+                            type="button"
+                            onClick={() => setEditing(department)}
+                            className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                            aria-label={`Edit ${department.name}`}
+                            title="Edit"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                        )}
                         {canManage && (
                           <button
                             type="button"
@@ -269,6 +298,22 @@ export function DepartmentsWorkspace() {
           setCreateOpen(false);
           toast.success(`${department.name} created`, `Short code ${department.code}`);
         }}
+      />
+
+      <EditDetailsModal
+        open={editing !== null}
+        title="Edit department"
+        hint="What it is called and what it handles. Everyone sees the change at once; the short code stays the same."
+        nameLabel="Department name"
+        current={{
+          name: editing?.name ?? "",
+          description: editing?.description ?? "",
+          unit: editing?.unit?.id,
+        }}
+        // Moving between units is an admin's alone.
+        units={canManage && units.length > 0 ? units : undefined}
+        onClose={() => setEditing(null)}
+        onSave={saveEdit}
       />
 
       <DeleteDepartmentModal

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Building, Plus, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Building, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,9 @@ import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import { EditDetailsModal } from "@/components/ui/edit-details-modal";
 import type { Stat } from "@/lib/types";
-import { createUnit, deleteUnit, listUnits, type Unit } from "@/lib/units";
+import { createUnit, deleteUnit, listUnits, type Unit, updateUnit } from "@/lib/units";
 
 function Banner({ message }: { message: string }) {
   return (
@@ -35,8 +36,10 @@ function Banner({ message }: { message: string }) {
 /** The top of the org chart: units, and how much sits under each. */
 export function UnitsWorkspace() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, refresh } = useAuth();
   const canManage = isAdmin(session);
+  /** The one being edited, if any. */
+  const [editing, setEditing] = useState<Unit | null>(null);
   const toast = useToast();
 
   const [units, setUnits] = useState<Unit[]>([]);
@@ -201,6 +204,17 @@ export function UnitsWorkspace() {
                         {canManage && (
                           <button
                             type="button"
+                            onClick={() => setEditing(unit)}
+                            className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                            aria-label={`Edit ${unit.name}`}
+                            title="Edit"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            type="button"
                             onClick={() => setPendingDelete(unit)}
                             className="grid size-7 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-brand-600"
                             aria-label={`Delete ${unit.name}`}
@@ -224,6 +238,27 @@ export function UnitsWorkspace() {
           setUnits((current) => [...current, unit].sort((a, b) => a.name.localeCompare(b.name)));
           setCreateOpen(false);
           toast.success(`${unit.name} created`, `Short code ${unit.code}`);
+        }}
+      />
+
+      <EditDetailsModal
+        open={editing !== null}
+        title="Edit unit"
+        hint="What it is called and what it covers. Every department under it shows the change at once; the short code stays the same."
+        nameLabel="Unit name"
+        current={{ name: editing?.name ?? "", description: editing?.description ?? "" }}
+        onClose={() => setEditing(null)}
+        onSave={async (changes) => {
+          if (!editing) return;
+          const saved = await updateUnit(editing.id, changes);
+          setUnits((current) =>
+            current
+              .map((item) => (item.id === saved.id ? { ...item, ...saved } : item))
+              .sort((a, b) => a.name.localeCompare(b.name)),
+          );
+          toast.success("Unit updated", saved.name);
+          setEditing(null);
+          void refresh();
         }}
       />
 

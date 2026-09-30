@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Building, Plus, X } from "lucide-react";
 
-import { Select } from "@/components/ui/field";
+import { Input, Select } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import { DEPARTMENT_ROLE_LABEL, type DepartmentRole } from "@/lib/auth";
 import type { Department } from "@/lib/departments";
@@ -22,10 +22,14 @@ type Row = {
   unit: string;
   department: string;
   role: DepartmentRole;
+  /** Their title in this department; each role carries its own. */
+  designation: string;
 };
 
 /**
- * One line per posting: unit, department, and what they are in it.
+ * One line per posting: unit, department, what they are in it, and their
+ * title there - because the same person can be the HR Executive in one unit
+ * and the Payroll Lead in another.
  *
  * A row rather than a tick-list, because the same person can hold several
  * departments in one unit and several units at once - add Reception under
@@ -58,6 +62,7 @@ export function MembershipRows({
       unit: departments.find((department) => department.id === item.department)?.unit?.id ?? "",
       department: item.department,
       role: item.role,
+      designation: item.designation ?? "",
     })),
   );
 
@@ -74,7 +79,11 @@ export function MembershipRows({
     onChange(
       next
         .filter((row) => row.department)
-        .map((row) => ({ department: row.department, role: row.role })),
+        .map((row) => ({
+          department: row.department,
+          role: row.role,
+          designation: row.designation,
+        })),
     );
   };
 
@@ -84,7 +93,7 @@ export function MembershipRows({
   const add = () => {
     // One past the highest in play, so a key is never reused after a removal.
     const key = rows.reduce((highest, row) => Math.max(highest, row.key), -1) + 1;
-    publish([...rows, { key, unit: "", department: "", role: "team" }]);
+    publish([...rows, { key, unit: "", department: "", role: "team", designation: "" }]);
   };
 
   const remove = (key: number) => publish(rows.filter((row) => row.key !== key));
@@ -108,7 +117,10 @@ export function MembershipRows({
   return (
     <div className="space-y-2">
       {rows.map((row) => (
-        <div key={row.key} className="grid gap-2 sm:grid-cols-[1fr_1fr_7rem_auto]">
+        <div
+          key={row.key}
+          className="grid gap-2 rounded-lg border border-line p-2 sm:grid-cols-[1fr_1fr_7rem_auto]"
+        >
           <Select
             className="h-8 text-[13px]"
             icon={<Building className="text-ink-500" />}
@@ -170,6 +182,25 @@ export function MembershipRows({
           >
             <X className="size-4" />
           </button>
+
+          {/* Under the row it belongs to, across the width of its three
+              choices: the title is part of this posting, not a fourth one. */}
+          <div className="sm:col-span-3">
+            <Input
+              className={cn(
+                "h-8 text-[13px]",
+                invalid &&
+                  row.department &&
+                  row.designation.trim().length < 2 &&
+                  "border-brand-400 bg-brand-50/40",
+              )}
+              value={row.designation}
+              maxLength={80}
+              placeholder="Designation here, e.g. HR Executive"
+              aria-label="Designation in this department"
+              onChange={(event) => update(row.key, { designation: event.target.value })}
+            />
+          </div>
         </div>
       ))}
 

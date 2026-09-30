@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Building, Building2, Plus, Trash2, Users } from "lucide-react";
+import { AlertCircle, Building, Building2, Pencil, Plus, Trash2, Users } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -16,8 +16,9 @@ import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
+import { EditDetailsModal } from "@/components/ui/edit-details-modal";
 import { createDepartment, deleteDepartment, type Department } from "@/lib/departments";
-import { getUnit, type Unit } from "@/lib/units";
+import { getUnit, type Unit, updateUnit } from "@/lib/units";
 
 function Banner({ message }: { message: string }) {
   return (
@@ -43,8 +44,9 @@ function Stat({ label, value }: { label: string; value: number }) {
 /** One unit: what it is, and every department filed under it. */
 export function UnitDetail({ unitId }: { unitId: string }) {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, refresh } = useAuth();
   const canManage = isAdmin(session);
+  const [editing, setEditing] = useState(false);
   const toast = useToast();
 
   const [unit, setUnit] = useState<Unit | null>(null);
@@ -100,13 +102,37 @@ export function UnitDetail({ unitId }: { unitId: string }) {
         ]}
         actions={
           canManage && unit ? (
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" strokeWidth={2.5} />
-              New Department
-            </Button>
+            <>
+              <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                <Pencil className="size-3.5" />
+                Edit
+              </Button>
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" strokeWidth={2.5} />
+                New Department
+              </Button>
+            </>
           ) : undefined
         }
       />
+
+      {unit && (
+        <EditDetailsModal
+          open={editing}
+          title="Edit unit"
+          hint="What it is called and what it covers. Every department under it shows the change at once; the short code stays the same."
+          nameLabel="Unit name"
+          current={{ name: unit.name, description: unit.description ?? "" }}
+          onClose={() => setEditing(false)}
+          onSave={async (changes) => {
+            const saved = await updateUnit(unit.id, changes);
+            setUnit((current) => (current ? { ...current, ...saved } : current));
+            setEditing(false);
+            toast.success("Unit updated", saved.name);
+            void refresh();
+          }}
+        />
+      )}
 
       {error && <Banner message={error} />}
 

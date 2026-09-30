@@ -136,7 +136,14 @@ export function TeamWorkspace() {
     const term = query.trim().toLowerCase();
 
     return users.filter((user) => {
-      if (term && !`${user.name} ${user.email} ${user.phone ?? ""}`.toLowerCase().includes(term))
+      if (
+        term &&
+        !`${user.name} ${user.email} ${user.phone ?? ""} ${here(user)
+          .map((item) => item.designation ?? "")
+          .join(" ")}`
+          .toLowerCase()
+          .includes(term)
+      )
         return false;
       if (statuses.length > 0 && !statuses.includes(user.status)) return false;
       if (roles.length > 0 && !roles.includes(roleHere(user))) return false;
@@ -334,6 +341,17 @@ export function TeamWorkspace() {
                                 </span>
                               )}
                             </span>
+                            {/* Their titles in the departments you run - a
+                                person can be something else elsewhere, and
+                                that is not this page's business. */}
+                            {here(user).some((item) => item.designation) && (
+                              <span className="block truncate text-[11px] font-medium text-ink-600">
+                                {here(user)
+                                  .map((item) => item.designation)
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </span>
+                            )}
                             <span className="block truncate text-[11px] text-ink-500">
                               {user.email}
                             </span>
@@ -426,6 +444,7 @@ function AddUserModal({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [designation, setDesignation] = useState("");
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState(false);
   const [role, setRole] = useState<DepartmentRole>("team");
@@ -440,6 +459,7 @@ function AddUserModal({
       return setError("Enter a valid email address.");
     }
     if (!isPhone(phone)) return setError(PHONE_HELP);
+    if (designation.trim().length < 2) return setError("Designation is required.");
     if (password.length < MIN_PASSWORD) {
       return setError(`Password must be at least ${MIN_PASSWORD} characters.`);
     }
@@ -450,6 +470,7 @@ function AddUserModal({
         name: name.trim(),
         email: email.trim(),
         phone: toStoredPhone(phone),
+        designation: designation.trim(),
         password,
         role,
       });
@@ -496,15 +517,33 @@ function AddUserModal({
           </Field>
         </div>
 
-        <Field label="Phone number" required htmlFor="team-phone">
-          <PhoneInput
-            id="team-phone"
-            className="h-9"
-            placeholder="+971 50 123 4567"
-            value={phone}
-            onChange={setPhone}
-          />
-        </Field>
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field label="Phone number" required htmlFor="team-phone">
+            <PhoneInput
+              id="team-phone"
+              className="h-9"
+              placeholder="+971 50 123 4567"
+              value={phone}
+              onChange={setPhone}
+            />
+          </Field>
+
+          <Field
+            label="Designation"
+            required
+            hint="(in this department)"
+            htmlFor="team-designation"
+          >
+            <Input
+              id="team-designation"
+              className="h-9"
+              placeholder="e.g. HR Executive"
+              maxLength={80}
+              value={designation}
+              onChange={(event) => setDesignation(event.target.value)}
+            />
+          </Field>
+        </div>
 
         <div className="grid gap-3.5 sm:grid-cols-2">
           {/* Only the departments this person runs: the API refuses any other,

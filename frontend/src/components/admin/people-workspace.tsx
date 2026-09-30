@@ -200,7 +200,9 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
     return users.filter((user) => {
       if (
         term &&
-        !`${user.name} ${user.email} ${user.phone ?? ""} ${shortId(user.id)}`
+        !`${user.name} ${user.email} ${user.phone ?? ""} ${user.designation ?? ""} ${user.departments
+          .map((item) => item.designation ?? "")
+          .join(" ")} ${shortId(user.id)}`
           .toLowerCase()
           .includes(term)
       )
@@ -347,6 +349,11 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                             name={user.name}
                             className="block font-semibold text-ink-900 hover:text-brand-600"
                           />
+                          {user.designation && (
+                            <span className="block truncate text-xs font-medium text-ink-600">
+                              {user.designation}
+                            </span>
+                          )}
                           <span className="block truncate text-xs text-ink-400">{user.email}</span>
                           {/* The way to reach them when the ticket cannot
                               wait for a reply in the thread. */}
@@ -376,6 +383,13 @@ export function PeopleWorkspace({ scope }: { scope: Scope }) {
                                 <span className="text-ink-400">{item.unit.name} ·</span>
                               )}
                               {item.name ?? "Department"}
+                              {/* Their title there, which can differ from one
+                                  department to the next. */}
+                              {item.designation && (
+                                <span className="font-semibold text-ink-800">
+                                  · {item.designation}
+                                </span>
+                              )}
                             </span>
                           ))}
                         </span>
@@ -530,6 +544,7 @@ function CreatePersonModal({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [designation, setDesignation] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [memberships, setMemberships] = useState<MembershipInput[]>([]);
@@ -546,6 +561,7 @@ function CreatePersonModal({
     setName("");
     setEmail("");
     setPhone("");
+    setDesignation("");
     setPassword("");
     setShowPassword(false);
     setMemberships([]);
@@ -562,12 +578,26 @@ function CreatePersonModal({
       return setError("Enter a valid email address.");
     }
     if (!isPhone(phone)) return setError(PHONE_HELP);
+    // An admin's title is their own; a member's is on each role below.
+    if (role === "admin" && designation.trim().length < 2) {
+      return setError("Designation is required.");
+    }
     if (password.length < 8) return setError("Password must be at least 8 characters.");
     // A member with no department cannot raise from anywhere or be asked for
     // anything, so the account would be created unusable.
     if (role === "user" && memberships.length === 0) {
       setRolesMissing(true);
       return setError("Add at least one role: a unit, a department and what they are in it.");
+    }
+    // A title on every role, because the same person can be one thing in one
+    // unit and something else in another.
+    if (role === "user") {
+      const untitled = memberships.find((item) => item.designation.trim().length < 2);
+      if (untitled) {
+        setRolesMissing(true);
+        const where = departments.find((item) => item.id === untitled.department)?.name;
+        return setError(`Add a designation for ${where ?? "each role"}.`);
+      }
     }
 
     setPending(true);
@@ -576,10 +606,19 @@ function CreatePersonModal({
         name: name.trim(),
         email: email.trim(),
         phone: toStoredPhone(phone),
+        // Sent only for an admin; a member's titles travel with their roles.
+        designation: role === "admin" ? designation.trim() : "",
         password,
         role,
         // An admin holds no departments, so the picker's value is not sent.
-        ...(role === "user" ? { memberships } : {}),
+        ...(role === "user"
+          ? {
+              memberships: memberships.map((item) => ({
+                ...item,
+                designation: item.designation.trim(),
+              })),
+            }
+          : {}),
       });
 
       toast.success(
@@ -598,6 +637,33 @@ function CreatePersonModal({
       setPending(false);
     }
   };
+
+  // Defined once, placed in whichever row has room: beside the phone for a
+  // member, and on its own row for an admin, whose designation takes that seat.
+  const passwordField = (
+    <Field label="Temporary password" required htmlFor="person-password">
+      <Input
+        id="person-password"
+        type={showPassword ? "text" : "password"}
+        placeholder="At least 8 characters"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        name="person-password"
+        autoComplete="new-password"
+        data-1p-ignore
+        trailing={
+          <button
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
+          </button>
+        }
+      />
+    </Field>
+  );
 
   return (
     <Modal
@@ -654,29 +720,27 @@ function CreatePersonModal({
             />
           </Field>
 
-          <Field label="Temporary password" required htmlFor="person-password">
-            <Input
-              id="person-password"
-              type={showPassword ? "text" : "password"}
-              placeholder="At least 8 characters"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              name="person-password"
-              autoComplete="new-password"
-              data-1p-ignore
-              trailing={
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((current) => !current)}
-                  className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
-                </button>
-              }
-            />
-          </Field>
+          {/* An admin holds no department to carry a title in, so theirs is
+              asked for here; a member gives one on each role further down. */}
+          {adminsOnly ? (
+            <Field label="Designation" required htmlFor="person-designation">
+              <Input
+                id="person-designation"
+                placeholder="e.g. IT Manager"
+                value={designation}
+                maxLength={80}
+                onChange={(event) => setDesignation(event.target.value)}
+                name="person-designation"
+                autoComplete="off"
+                data-1p-ignore
+              />
+            </Field>
+          ) : (
+            passwordField
+          )}
         </div>
+
+        {adminsOnly && <div className="grid gap-3.5 sm:grid-cols-2">{passwordField}</div>}
 
         {/* Where they work, and what they are in each place. */}
         {!adminsOnly && (
@@ -943,10 +1007,15 @@ function EditUserForm({
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
   const [phone, setPhone] = useState(user.phone ?? "");
+  const [designation, setDesignation] = useState(user.designation ?? "");
   const [status, setStatus] = useState(user.status);
   const [role, setRole] = useState<"admin" | "user">(user.role === "admin" ? "admin" : "user");
   const [memberships, setMemberships] = useState<MembershipInput[]>(
-    user.departments.map((item) => ({ department: item.id, role: item.role })),
+    user.departments.map((item) => ({
+      department: item.id,
+      role: item.role,
+      designation: item.designation ?? "",
+    })),
   );
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -975,6 +1044,13 @@ function EditUserForm({
       setError(PHONE_HELP);
       return;
     }
+    // An admin's title is on the account; a member's is on each role, so an
+    // older account is asked for them the first time it is saved - as
+    // happened with the phone number.
+    if (isManager && designation.trim().length < 2) {
+      setError("Designation is required.");
+      return;
+    }
     if (password && password.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
@@ -986,6 +1062,15 @@ function EditUserForm({
       setError("Add at least one role: a unit, a department and what they are in it.");
       return;
     }
+    if (!isManager) {
+      const untitled = memberships.find((item) => item.designation.trim().length < 2);
+      if (untitled) {
+        setRolesMissing(true);
+        const where = departments.find((item) => item.id === untitled.department)?.name;
+        setError(`Add a designation for ${where ?? "each role"}.`);
+        return;
+      }
+    }
 
     setPending(true);
     try {
@@ -994,7 +1079,14 @@ function EditUserForm({
           name: name.trim(),
           email: email.trim(),
           phone: toStoredPhone(phone),
-          ...(isManager ? {} : { memberships }),
+          ...(isManager
+            ? { designation: designation.trim() }
+            : {
+                memberships: memberships.map((item) => ({
+                  ...item,
+                  designation: item.designation.trim(),
+                })),
+              }),
           // Left blank means "keep the current password".
           ...(password ? { password } : {}),
           // The API refuses these on your own account anyway; don't even send
@@ -1040,6 +1132,21 @@ function EditUserForm({
             onChange={setPhone}
           />
         </Field>
+
+        {/* A member's titles are on their roles below; only an admin, who
+            holds none, carries one on the account itself. */}
+        {isManager && (
+          <Field label="Designation" required htmlFor="edit-designation">
+            <Input
+              id="edit-designation"
+              className="h-8"
+              placeholder="e.g. IT Manager"
+              maxLength={80}
+              value={designation}
+              onChange={(event) => setDesignation(event.target.value)}
+            />
+          </Field>
+        )}
 
         <Field label="Status" htmlFor="edit-status">
           <Select
