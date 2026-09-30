@@ -29,6 +29,7 @@ export type Member = {
   name: string;
   email: string;
   phone: string;
+  designation: string;
   role: "superadmin" | "user";
   status: "active" | "invited" | "suspended";
   departments: Membership[];
@@ -175,6 +176,8 @@ export function addMember(
     email: string;
     /** Required for a new account; an existing one keeps the number it has. */
     phone?: string;
+    /** Required for a new account; an existing one keeps its own. */
+    designation?: string;
     password?: string;
     role: DepartmentRole;
   },
@@ -187,6 +190,25 @@ export function addMember(
     .finally(() => {
       forget("departments:");
       forget("units:");
+    });
+}
+
+/**
+ * A member's name, phone and designation. A head may do this for the team
+ * they run; an admin for anyone. Sign-in details stay on the Users page.
+ */
+export function updateMemberDetails(
+  departmentId: string,
+  userId: string,
+  input: { name?: string; phone?: string; designation?: string },
+) {
+  return api<{ member: Member }>(`/departments/${departmentId}/members/${userId}/details`, {
+    method: "PATCH",
+    body: input,
+  })
+    .then((data) => data.member)
+    .finally(() => {
+      forget("departments:");
     });
 }
 

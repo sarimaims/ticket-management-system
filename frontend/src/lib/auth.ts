@@ -28,6 +28,8 @@ export type Membership = {
   name?: string;
   code?: string;
   role: DepartmentRole;
+  /** Their title in this department. Empty only on a role from before it existed. */
+  designation?: string;
   /** The unit this department sits under. */
   unit?: { id: string; name?: string } | null;
 };
@@ -38,6 +40,8 @@ export type Session = {
   email: string;
   /** Empty only on an account made before the field existed. */
   phone: string;
+  /** What they do, e.g. "HR Executive". Empty only on older accounts. */
+  designation: string;
   role: Role;
   status: "active" | "invited" | "suspended";
   departments: Membership[];

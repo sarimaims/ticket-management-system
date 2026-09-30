@@ -375,6 +375,9 @@ export function SettingsForm() {
             <p className="mt-0.5 truncate text-[14px] leading-tight font-bold text-ink-900">
               {name || "Your account"}
             </p>
+            {session?.designation && (
+              <p className="truncate text-[12px] font-medium text-ink-600">{session.designation}</p>
+            )}
             <p className="truncate text-[11px] text-ink-400">{email}</p>
             {/* The number colleagues are given when a ticket has to be
                 chased off the thread. Yours to set and to change. */}
@@ -403,6 +406,10 @@ export function SettingsForm() {
                   className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ink-50 py-1 pr-1 pl-2 text-[11px] font-semibold text-ink-700"
                 >
                   {item.name ?? "Department"}
+                  {/* Their title in this one: it can differ from the next. */}
+                  {item.designation && (
+                    <span className="font-normal text-ink-500">· {item.designation}</span>
+                  )}
                   <RoleTag role={item.role} />
                 </span>
               ))

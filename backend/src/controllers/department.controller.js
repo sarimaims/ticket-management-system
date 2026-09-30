@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
+import { designation } from '../utils/designation.js';
 import { phoneNumber } from '../utils/phoneNumber.js';
 import { workEmail } from '../utils/workEmail.js';
 import Department from '../models/Department.js';
@@ -8,6 +9,7 @@ import Unit from '../models/Unit.js';
 import User, { DEPARTMENT_ROLES, MANAGER_ROLES } from '../models/User.js';
 import { presentUser, WITH_DEPARTMENTS } from './auth.controller.js';
 import { record } from '../services/activity.js';
+import { forgetUser } from '../middleware/auth.js';
 
 function assertObjectId(id, label = 'id') {
   if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest(`Invalid ${label}.`);
@@ -298,12 +300,40 @@ export async function updateDepartment(req, res) {
 
   const { name, description, isActive, unit } = req.body ?? {};
 
-  if (typeof name === 'string' && name.trim()) {
-    const clash = await Department.exists({ name: name.trim(), _id: { $ne: department._id } });
-    if (clash) throw ApiError.conflict('A department with this name already exists.');
-    department.name = name.trim();
+  /*
+   * An admin reshapes the org chart; a head runs one corner of it. So a head
+   * may say what the department they run is called and what it does - both
+   * are theirs to describe - but moving it between units or switching it off
+   * changes the chart for everyone, and stays with an admin.
+   */
+  if (!isManager(req.user)) {
+    if (req.user.roleInDepartment(department._id) !== 'head') {
+      throw ApiError.forbidden('Only a head of this department, or an admin, can edit it.');
+    }
+    if (isActive !== undefined || unit !== undefined) {
+      throw ApiError.forbidden('Moving a department to another unit needs an admin.');
+    }
   }
-  if (typeof description === 'string') department.description = description.trim();
+
+  const previousName = department.name;
+
+  if (name !== undefined) {
+    const next = typeof name === 'string' ? name.trim() : '';
+    if (!next) throw ApiError.badRequest('A department needs a name.');
+    if (next.length > 80) throw ApiError.badRequest('Keep the name under 80 characters.');
+    const clash = await Department.exists({
+      name: new RegExp(`^${next.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      _id: { $ne: department._id },
+    });
+    if (clash) throw ApiError.conflict('A department with this name already exists.');
+    department.name = next;
+  }
+  if (typeof description === 'string') {
+    if (description.trim().length > 300) {
+      throw ApiError.badRequest('Keep the description under 300 characters.');
+    }
+    department.description = description.trim();
+  }
   if (typeof isActive === 'boolean') department.isActive = isActive;
 
   if (unit !== undefined) {
@@ -323,6 +353,15 @@ export async function updateDepartment(req, res) {
   }
 
   await department.save();
+
+  if (department.name !== previousName) {
+    await record({
+      actor: req.user,
+      department,
+      action: 'department.renamed',
+      summary: `renamed ${previousName} to ${department.name}`,
+    });
+  }
 
   const counts = await countsByDepartment();
   await department.populate('unit', 'name code');
@@ -357,7 +396,7 @@ export async function addMember(req, res) {
   const department = await Department.findById(req.params.id);
   if (!department) throw ApiError.notFound('Department not found.');
 
-  const { name, email, phone, password, role } = req.body ?? {};
+  const { name, email, phone, designation: title, password, role } = req.body ?? {};
 
   if (!canManageMembers(req.user, department._id)) {
     throw ApiError.forbidden('Only a head of this department, or an admin, can add members.');
@@ -366,6 +405,11 @@ export async function addMember(req, res) {
   if (!DEPARTMENT_ROLES.includes(role)) {
     throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
   }
+  // What they are in *this* department. Asked whether the account is new or
+  // not: an existing person joining a second department is exactly the case
+  // where their title here can differ from the one they already have.
+  const job = designation(title);
+
   const normalisedEmail = email.trim().toLowerCase();
   let user = await User.findOne({ email: normalisedEmail });
 
@@ -378,7 +422,7 @@ export async function addMember(req, res) {
     if (user.roleInDepartment(department._id)) {
       throw ApiError.conflict('This user is already in the department.');
     }
-    user.memberships.push({ department: department._id, role });
+    user.memberships.push({ department: department._id, role, designation: job });
     await user.save({ validateBeforeSave: false });
   } else {
     if (!name?.trim()) throw ApiError.badRequest('Name is required for a new user.');
@@ -397,7 +441,7 @@ export async function addMember(req, res) {
       password,
       role: 'user',
       status: 'active',
-      memberships: [{ department: department._id, role }],
+      memberships: [{ department: department._id, role, designation: job }],
     });
   }
 
@@ -449,6 +493,91 @@ export async function updateMemberRole(req, res) {
 
   const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
   res.json({ success: true, member: { ...presentUser(populated), departmentRole: role } });
+}
+
+/**
+ * Corrects a member's details: their name, phone number and designation.
+ *
+ * A head adds people to their team, so a head must also be able to fix what
+ * they typed - a misspelt name, a wrong number, a title that changed with a
+ * promotion. They may do it for the team they run and nobody else: not a
+ * fellow head, and not themselves, whose name is an admin's to change and
+ * whose phone is theirs to change in Settings.
+ *
+ * What a person signs in with and what they may do - email, password, role
+ * and status - stays on the admin's Users page.
+ */
+export async function updateMemberDetails(req, res) {
+  assertObjectId(req.params.id, 'department id');
+  assertObjectId(req.params.userId, 'user id');
+
+  if (!canManageMembers(req.user, req.params.id)) {
+    throw ApiError.forbidden('Only a head of this department, or an admin, can edit its members.');
+  }
+
+  const user = await User.findOne({
+    _id: req.params.userId,
+    'memberships.department': req.params.id,
+  });
+  if (!user) throw ApiError.notFound('This user is not in that department.');
+
+  if (!isManager(req.user)) {
+    if (String(user._id) === String(req.user._id)) {
+      throw ApiError.forbidden('Change your own phone in Settings; your name is an admin\'s to change.');
+    }
+    if (user.roleInDepartment(req.params.id) === 'head') {
+      throw ApiError.forbidden('A head cannot edit a fellow head. Ask an admin.');
+    }
+  }
+
+  const { name, phone, designation: title } = req.body ?? {};
+  const changed = [];
+
+  if (name !== undefined) {
+    const next = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim() : '';
+    if (next.length < 2) throw ApiError.badRequest('Enter their full name.');
+    if (next.length > 80) throw ApiError.badRequest('Keep the name under 80 characters.');
+    if (next !== user.name) {
+      user.name = next;
+      changed.push('name');
+    }
+  }
+
+  if (phone !== undefined) {
+    const next = phoneNumber(phone);
+    if (next !== user.phone) {
+      user.phone = next;
+      changed.push('phone');
+    }
+  }
+
+  if (title !== undefined) {
+    const next = designation(title);
+    if (next !== user.designation) {
+      user.designation = next;
+      changed.push('designation');
+    }
+  }
+
+  if (changed.length > 0) {
+    // Only what was touched is validated: an older account with no number on
+    // it must still be able to have its name corrected.
+    await user.save({ validateModifiedOnly: true });
+    forgetUser(user._id);
+
+    await record({
+      actor: req.user,
+      department: req.params.id,
+      action: 'member.updated',
+      summary: `updated ${user.name}'s ${changed.join(', ')}`,
+    });
+  }
+
+  const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
+  res.json({
+    success: true,
+    member: { ...presentUser(populated), departmentRole: populated.roleInDepartment(req.params.id) },
+  });
 }
 
 export async function removeMember(req, res) {

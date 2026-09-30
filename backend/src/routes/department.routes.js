@@ -13,6 +13,7 @@ import {
   listMemberOptions,
   removeMember,
   updateDepartment,
+  updateMemberDetails,
   updateMemberRole,
 } from '../controllers/department.controller.js';
 
@@ -31,15 +32,19 @@ router.get('/:id', asyncHandler(getDepartment));
 // Reading the department itself stays restricted; this does not.
 router.get('/:id/members/options', asyncHandler(listMemberOptions));
 
-// Everything that changes the org chart needs management rights.
+// Everything that changes the org chart needs management rights - except a
+// head renaming their own department, which the controller allows and holds
+// to the name alone.
 router.post('/', requireAdmin, asyncHandler(createDepartment));
-router.patch('/:id', requireAdmin, asyncHandler(updateDepartment));
+router.patch('/:id', asyncHandler(updateDepartment));
 router.delete('/:id', requireAdmin, asyncHandler(deleteDepartment));
 
 // Membership is guarded inside the controller: a head may run its own team,
 // an admin may run any of them.
 router.post('/:id/members', asyncHandler(addMember));
 router.patch('/:id/members/:userId', asyncHandler(updateMemberRole));
+// A member's name, phone and designation: a head for their team, an admin for anyone.
+router.patch('/:id/members/:userId/details', asyncHandler(updateMemberDetails));
 router.delete('/:id/members/:userId', asyncHandler(removeMember));
 
 export default router;

@@ -7,7 +7,7 @@ import { Building, Check, ChevronUp, Layers, LogOut, Settings } from "lucide-rea
 import { Avatar } from "@/components/ui/avatar";
 import { RoleTag } from "@/components/ui/badge";
 import { useAuth } from "@/components/auth/auth-provider";
-import { avatarTone, initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
+import { avatarTone, DEPARTMENT_ROLE_LABEL, initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
 import { setActiveUnit } from "@/lib/active-unit";
 import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn } from "@/lib/utils";
@@ -67,18 +67,43 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
    */
   const viewing = units.find((unit) => unit.id === chosenUnit) ?? null;
 
-  // The second line says where they are working right now: the unit in view,
-  // then their rank, then where they work, then the address they signed in
-  // with - whichever of those is the first that exists.
-  const subtitle = viewing
-    ? viewing.name
+  /*
+   * Under the name, the two things a colleague asks first: what they do, and
+   * where. The designation leads - "Finance Manager" says more than a role -
+   * and when an account has none yet, their standing stands in for it.
+   *
+   * The department is the one they are working in: those in the unit in
+   * view, or all of them. Several read as the first and a count, and the
+   * unit rides along only when there is more than one to tell apart.
+   */
+  const here = viewing ? viewing.departments : departments;
+  const primary = here.find((item) => item.role === "head") ?? here[0];
+  // What they are in *that* department, when it says; otherwise what the
+  // account says about them in general.
+  const designation =
+    primary?.designation?.trim() || session.designation?.trim() || "";
+
+  const title = designation
+    ? designation
     : manager
       ? ROLE_LABEL[session.role]
-      : units.length === 1
-        ? units[0].name
-        : units.length > 1
-          ? `${units.length} units · ${departments.length} departments`
-          : session.email;
+      : primary
+        ? DEPARTMENT_ROLE_LABEL[primary.role]
+        : ROLE_LABEL[session.role];
+
+  const place = manager
+    ? designation
+      ? ROLE_LABEL[session.role]
+      : "Every unit and department"
+    : primary
+      ? [
+          primary.name ?? "Department",
+          here.length > 1 ? `+${here.length - 1}` : "",
+          units.length > 1 ? `· ${primary.unit?.name ?? ""}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : "Not in a department yet";
 
   return (
     <div ref={root} className="relative shrink-0 border-t border-line p-2.5">
@@ -96,11 +121,16 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
       >
         <Avatar initials={initials(name)} tone={avatarTone(session)} className="size-8 shrink-0" />
 
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0 flex-1" title={`${name} · ${title} · ${place}`}>
           <span className="block truncate text-[13px] leading-tight font-bold text-ink-900">
             {name}
           </span>
-          <span className="block truncate text-[11px] leading-tight text-ink-400">{subtitle}</span>
+          {/* What they do, then where: dark enough to read at a glance, quiet
+              enough not to compete with the name. */}
+          <span className="mt-0.5 block truncate text-[11px] leading-tight font-semibold text-ink-700">
+            {title}
+          </span>
+          <span className="block truncate text-[10.5px] leading-tight text-ink-400">{place}</span>
         </span>
 
         <ChevronUp
@@ -121,6 +151,11 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
               most of why the box was tall. */}
           <div className="border-b border-line px-2.5 py-2">
             <p className="truncate text-[13px] leading-tight font-semibold text-ink-900">{name}</p>
+            {designation && (
+              <p className="truncate text-[11px] leading-tight font-medium text-ink-600">
+                {designation}
+              </p>
+            )}
             <p className="truncate text-[11px] leading-tight text-ink-400">{session.email}</p>
           </div>
 
@@ -179,8 +214,15 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
                         key={membership.id}
                         className="flex items-center gap-1.5 py-0.5 pr-2.5 pl-[1.65rem] text-[11px]"
                       >
-                        <span className="min-w-0 flex-1 truncate text-ink-600">
-                          {membership.name ?? "Department"}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-ink-600">
+                            {membership.name ?? "Department"}
+                          </span>
+                          {membership.designation && (
+                            <span className="block truncate text-[10px] leading-tight text-ink-400">
+                              {membership.designation}
+                            </span>
+                          )}
                         </span>
                         <RoleTag role={membership.role} className="px-1 py-0 text-[9px]" />
                       </div>

@@ -8,6 +8,7 @@ import {
   EyeOff,
   Lock,
   Mail,
+  Pencil,
   Search,
   Trash2,
   UserPlus,
@@ -27,6 +28,9 @@ import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { Modal } from "@/components/ui/modal";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
+import { EditDetailsModal } from "@/components/ui/edit-details-modal";
+import { EditMemberModal } from "@/components/departments/edit-member-modal";
+import { listUnitOptions, type UnitOption } from "@/lib/units";
 import { TableCell, TableHead } from "@/components/ui/table";
 import { StatTiles } from "@/components/ui/stat-tiles";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -36,12 +40,13 @@ import type { Stat } from "@/lib/types";
 import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
 import {
   addMember,
+  type Department,
   getDepartment,
   listDepartments,
-  removeMember,
-  updateMemberRole,
-  type Department,
   type Member,
+  removeMember,
+  updateDepartment,
+  updateMemberRole,
 } from "@/lib/departments";
 import { updateUser, type MembershipInput } from "@/lib/users";
 import { cn, formatDate } from "@/lib/utils";
@@ -59,8 +64,13 @@ function Banner({ message }: { message: string }) {
 }
 
 export function DepartmentDetail({ departmentId }: { departmentId: string }) {
-  const { session } = useAuth();
+  const { session, refresh } = useAuth();
   const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  /** The member whose details are open. */
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
+  /** Where it may be moved to; only an admin is offered the choice. */
+  const [unitChoices, setUnitChoices] = useState<UnitOption[]>([]);
 
   /** An admin runs every department; a head runs the one it leads. */
   const myRole = session?.departments.find((item) => item.id === departmentId)?.role;
@@ -78,6 +88,15 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
   const [roleFilter, setRoleFilter] = useState<DepartmentRole | null>(null);
   /** The member waiting on a yes before they are taken out. */
   const [removing, setRemoving] = useState<Member | null>(null);
+
+  useEffect(() => {
+    if (!isHere) return;
+    const controller = new AbortController();
+    listUnitOptions(controller.signal)
+      .then(setUnitChoices)
+      .catch(() => setUnitChoices([]));
+    return () => controller.abort();
+  }, [isHere]);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -159,6 +178,15 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
           : []),
         { label: name },
       ]}
+      // Its name and description are the head's to change, as well as an admin's.
+      actions={
+        canManage && department ? (
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Pencil className="size-3.5" />
+            Edit
+          </Button>
+        ) : undefined
+      }
     />
   );
 
@@ -193,6 +221,41 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
   return (
     <>
       {header(department.name)}
+
+      <EditDetailsModal
+        open={editing}
+        title="Edit department"
+        hint="What it is called and what it handles. Everyone sees the change at once; the short code stays the same."
+        nameLabel="Department name"
+        current={{
+          name: department.name,
+          description: department.description ?? "",
+          unit: department.unit?.id,
+        }}
+        units={isHere && unitChoices.length > 0 ? unitChoices : undefined}
+        onClose={() => setEditing(false)}
+        onSave={async (changes) => {
+          const saved = await updateDepartment(department.id, changes);
+          setDepartment((current) => (current ? { ...current, ...saved } : current));
+          setEditing(false);
+          toast.success("Department updated", saved.name);
+          // The profile menu and the unit switcher read names off the session.
+          void refresh();
+        }}
+      />
+
+      <EditMemberModal
+        departmentId={department.id}
+        member={editingMember}
+        onClose={() => setEditingMember(null)}
+        onSaved={(saved) => {
+          setMembers((current) =>
+            current.map((item) => (item.id === saved.id ? { ...item, ...saved } : item)),
+          );
+          setEditingMember(null);
+          toast.success(`${saved.name} updated`, "Their details are saved.");
+        }}
+      />
 
       {error && <Banner message={error} />}
 
@@ -321,6 +384,20 @@ export function DepartmentDetail({ departmentId }: { departmentId: string }) {
                           <RoleTag role={member.departmentRole} />
                         )}
 
+                        {/* An admin edits anyone here; a head, the team they run. */}
+                        {(isHere ||
+                          (member.departmentRole === "team" && member.id !== session?.id)) && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingMember(member)}
+                            className="grid size-7 cursor-pointer place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                            aria-label={`Edit ${member.name}`}
+                            title="Edit details"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                        )}
+
                         {(isHere || member.departmentRole === "team") && (
                           <button
                             type="button"
@@ -399,6 +476,7 @@ function AddMemberModal({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [designation, setDesignation] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<DepartmentRole>("team");
   const [showPassword, setShowPassword] = useState(false);
@@ -424,6 +502,7 @@ function AddMemberModal({
     setName("");
     setEmail("");
     setPhone("");
+    setDesignation("");
     setPassword("");
     setRole("team");
     setShowPassword(false);
@@ -436,17 +515,25 @@ function AddMemberModal({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
+    // Every field is asked for, the same as the admin directory and a head's
+    // own team: an account made here must be as complete as one made there.
     if (!email.trim()) {
       setError("Email is required.");
       return;
     }
-    // Required for a new account, which the API decides; an email that
-    // already has one keeps the number already on it.
-    if (phone && !isPhone(phone)) {
+    if (!name.trim()) {
+      setError("Full name is required.");
+      return;
+    }
+    if (!isPhone(phone)) {
       setError(PHONE_HELP);
       return;
     }
-    if (password && password.length < 8) {
+    if (designation.trim().length < 2) {
+      setError("Designation is required.");
+      return;
+    }
+    if (password.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
     }
@@ -454,10 +541,11 @@ function AddMemberModal({
     setPending(true);
     try {
       const member = await addMember(departmentId, {
-        name: name.trim() || undefined,
+        name: name.trim(),
         email: email.trim(),
-        phone: phone ? toStoredPhone(phone) : undefined,
-        password: password || undefined,
+        phone: toStoredPhone(phone),
+        designation: designation.trim(),
+        password,
         role,
       });
 
@@ -465,9 +553,21 @@ function AddMemberModal({
         // Merge rather than replace: whatever the account already belonged to
         // stays, and the picked roles win where both name the same department.
         const merged = new Map<string, MembershipInput>(
-          member.departments.map((item) => [item.id, { department: item.id, role: item.role }]),
+          member.departments.map((item) => [
+            item.id,
+            { department: item.id, role: item.role, designation: item.designation ?? "" },
+          ]),
         );
-        extras.forEach((entry) => merged.set(entry.department, entry));
+        // Every role needs a title. The extra departments ticked here take the
+        // one typed for this department, unless the person already holds that
+        // department with a title of their own - which is kept. Each can be
+        // changed afterwards on the person's own record.
+        extras.forEach((entry) =>
+          merged.set(entry.department, {
+            ...entry,
+            designation: merged.get(entry.department)?.designation || designation.trim(),
+          }),
+        );
         await updateUser(member.id, { memberships: [...merged.values()] });
       }
 
@@ -513,12 +613,12 @@ function AddMemberModal({
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Full name" htmlFor="member-name">
+          <Field label="Full name" required htmlFor="member-name">
             <Input
               id="member-name"
               className="h-8"
               icon={<UserRound className="text-ink-500" />}
-              placeholder="New accounts only"
+              placeholder="Their full name"
               value={name}
               onChange={(event) => setName(event.target.value)}
               name="member-name"
@@ -528,7 +628,7 @@ function AddMemberModal({
             />
           </Field>
 
-          <Field label="Phone number" hint="(new accounts only)" htmlFor="member-phone">
+          <Field label="Phone number" required htmlFor="member-phone">
             <PhoneInput
               id="member-phone"
               className="h-8"
@@ -536,6 +636,26 @@ function AddMemberModal({
               value={phone}
               onChange={setPhone}
               name="member-phone"
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+            />
+          </Field>
+
+          <Field
+            label="Designation"
+            required
+            hint={`(in ${departmentName})`}
+            htmlFor="member-designation"
+          >
+            <Input
+              id="member-designation"
+              className="h-8"
+              placeholder="e.g. HR Executive"
+              maxLength={80}
+              value={designation}
+              onChange={(event) => setDesignation(event.target.value)}
+              name="member-designation"
               autoComplete="off"
               data-1p-ignore
               data-lpignore="true"
@@ -554,7 +674,7 @@ function AddMemberModal({
             </Select>
           </Field>
 
-          <Field label="Temporary password" htmlFor="member-password">
+          <Field label="Temporary password" required htmlFor="member-password">
             <Input
               id="member-password"
               type={showPassword ? "text" : "password"}
@@ -582,8 +702,8 @@ function AddMemberModal({
         </div>
 
         <p className="text-xs text-ink-400">
-          Name, phone and password are only used when the email is new. An email that already has an
-          account is simply added to this department.
+          If the email already has an account, that person is added to this department with the
+          designation above as their title here. Their name, phone and password stay as they are.
         </p>
 
         <div className="rounded-field border border-line">
@@ -609,7 +729,7 @@ function AddMemberModal({
               <DepartmentRolePicker
                 departments={departments}
                 lockedDepartmentId={departmentId}
-                value={[{ department: departmentId, role }, ...extras]}
+                value={[{ department: departmentId, role, designation }, ...extras]}
                 onChange={(next) =>
                   setExtras(next.filter((item) => item.department !== departmentId))
                 }

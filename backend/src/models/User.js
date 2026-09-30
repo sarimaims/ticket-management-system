@@ -31,6 +31,21 @@ const membershipSchema = new mongoose.Schema(
       enum: DEPARTMENT_ROLES,
       default: 'team',
     },
+    /**
+     * What this person does *in this department*. The same person can be the
+     * HR Executive in one unit and the Payroll Lead in another, so the title
+     * belongs to the role, not to the account.
+     *
+     * Required by the controllers whenever a role is written, not by the
+     * schema: roles from before the field existed have none, and a schema rule
+     * would refuse every save of those accounts until each was filled in.
+     */
+    designation: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: '',
+    },
   },
   { _id: false },
 );
@@ -66,6 +81,23 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Phone number is required'],
       trim: true,
       match: [PHONE_PATTERN, 'Enter a valid phone number'],
+    },
+    /**
+     * What this person does, for somebody who holds no department: an admin
+     * or the super admin. Everyone else carries a designation on each of their
+     * roles instead (see the membership above), because a title is per
+     * department once a person sits in more than one.
+     *
+     * Required by the controllers when an account is made, not by the schema:
+     * accounts from before the field existed have none, and a schema rule
+     * would refuse every later save of them - a status change, a new role -
+     * until somebody filled it in. The phone number made that mistake once.
+     */
+    designation: {
+      type: String,
+      trim: true,
+      maxlength: [80, 'Keep the designation under 80 characters'],
+      default: '',
     },
     // Never returned by a query unless explicitly selected.
     password: {

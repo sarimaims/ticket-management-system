@@ -7,7 +7,12 @@ export type DirectoryUser = Session & {
   lastActiveAt: string;
 };
 
-export type MembershipInput = { department: string; role: DepartmentRole };
+/**
+ * One role: a department, what they are in it, and their title there. The
+ * title is per role because the same person can be the HR Executive in one
+ * unit and the Payroll Lead in another; the API requires one on every role.
+ */
+export type MembershipInput = { department: string; role: DepartmentRole; designation: string };
 
 export function listUsers(
   filters: { role?: string; status?: string; department?: string } = {},
@@ -60,6 +65,7 @@ export function createUser(input: {
   name: string;
   email: string;
   phone: string;
+  designation: string;
   password: string;
   role?: Extract<Role, "admin" | "user">;
   /** Where they sit from day one. Ignored for an admin, who belongs nowhere. */
@@ -76,6 +82,8 @@ export function updateUser(
     name?: string;
     email?: string;
     phone?: string;
+    /** Once set it can be changed but not emptied; the API refuses "". */
+    designation?: string;
     password?: string;
     status?: DirectoryUser["status"];
     role?: Extract<Role, "admin" | "user">;

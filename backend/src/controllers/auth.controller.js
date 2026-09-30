@@ -13,6 +13,7 @@ export function presentUser(user) {
     email: user.email,
     /** Accounts made before the field existed have none until they are edited. */
     phone: user.phone ?? '',
+    designation: user.designation ?? '',
     role: user.role,
     status: user.status,
     departments: (user.memberships ?? []).map((membership) => {
@@ -26,6 +27,7 @@ export function presentUser(user) {
         name: populated ? department.name : undefined,
         code: populated ? department.code : undefined,
         role: membership.role,
+        designation: membership.designation ?? '',
         unit: unit
           ? { id: String(unitPopulated ? unit._id : unit), name: unitPopulated ? unit.name : undefined }
           : null,

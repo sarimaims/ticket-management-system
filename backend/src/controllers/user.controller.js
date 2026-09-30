@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 import ApiError from '../utils/ApiError.js';
 import { phoneNumber } from '../utils/phoneNumber.js';
+import { designation } from '../utils/designation.js';
 import { workEmail } from '../utils/workEmail.js';
 import { forgetUser } from '../middleware/auth.js';
 import Department from '../models/Department.js';
@@ -159,17 +160,33 @@ async function cleanMemberships(memberships) {
     if (seen.has(String(departmentId))) {
       const existing = cleaned.find((item) => String(item.department) === String(departmentId));
       existing.role = membershipRole;
+      existing.title = entry?.designation;
       continue;
     }
 
     seen.add(String(departmentId));
-    cleaned.push({ department: departmentId, role: membershipRole });
+    cleaned.push({ department: departmentId, role: membershipRole, title: entry?.designation });
   }
 
-  const found = await Department.countDocuments({ _id: { $in: [...seen] } });
-  if (found !== seen.size) throw ApiError.badRequest('One or more departments are invalid.');
+  const departments = await Department.find({ _id: { $in: [...seen] } }).select('name');
+  if (departments.length !== seen.size) {
+    throw ApiError.badRequest('One or more departments are invalid.');
+  }
+  const nameOf = new Map(departments.map((item) => [String(item._id), item.name]));
 
-  return cleaned;
+  // A title per role, and the error names the role that is missing one: with
+  // three rows on the form, "Designation is required" alone says nothing about
+  // which of them to fix.
+  return cleaned.map(({ department, role, title }) => {
+    let job;
+    try {
+      job = designation(title);
+    } catch (error) {
+      const reason = error.message.endsWith('.') ? error.message.slice(0, -1) : error.message;
+      throw ApiError.badRequest(`${reason} for ${nameOf.get(String(department))}.`);
+    }
+    return { department, role, designation: job };
+  });
 }
 
 /**
@@ -181,11 +198,21 @@ async function cleanMemberships(memberships) {
  * filed afterwards.
  */
 export async function createUser(req, res) {
-  const { name, email, phone, password, role = 'admin', memberships } = req.body ?? {};
+  const {
+    name,
+    email,
+    phone,
+    designation: title,
+    password,
+    role = 'admin',
+    memberships,
+  } = req.body ?? {};
 
   if (!name?.trim()) throw ApiError.badRequest('Name is required.');
   if (!email?.trim()) throw ApiError.badRequest('Email is required.');
   const number = phoneNumber(phone);
+  // A manager holds no role to hang a title on, so theirs is on the account.
+  const job = MANAGER_ROLES.includes(role) ? designation(title) : '';
   if (!password || password.length < 8) {
     throw ApiError.badRequest('Password must be at least 8 characters.');
   }
@@ -206,6 +233,7 @@ export async function createUser(req, res) {
     name: name.trim(),
     email: normalisedEmail,
     phone: number,
+    designation: job,
     password,
     role,
     status: 'active',
@@ -234,7 +262,23 @@ export async function updateUser(req, res) {
   if (!user) throw ApiError.notFound('User not found.');
   assertVisible(user, req.user);
 
-  const { name, email, phone, password, status, role, memberships } = req.body ?? {};
+  const {
+    name,
+    email,
+    phone,
+    designation: title,
+    password,
+    status,
+    role,
+    memberships,
+  } = req.body ?? {};
+
+  // Only a manager's title lives on the account; a member's lives on each of
+  // their roles, and arrives with `memberships` below. Once set it can be
+  // changed but not emptied - the same rule the phone number follows.
+  if (title !== undefined && MANAGER_ROLES.includes(user.role)) {
+    user.designation = designation(title);
+  }
   const isSelf = String(user._id) === String(req.user._id);
 
   if (typeof name === 'string') {

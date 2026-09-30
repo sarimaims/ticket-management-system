@@ -181,11 +181,18 @@ export async function updateUnit(req, res) {
   if (!unit) throw ApiError.notFound('Unit not found.');
 
   const { name, description, isActive } = req.body ?? {};
+  const previousName = unit.name;
 
-  if (typeof name === 'string' && name.trim()) {
-    const clash = await Unit.exists({ name: name.trim(), _id: { $ne: unit._id } });
+  if (name !== undefined) {
+    const next = typeof name === 'string' ? name.trim() : '';
+    if (!next) throw ApiError.badRequest('A unit needs a name.');
+    if (next.length > 80) throw ApiError.badRequest('Keep the name under 80 characters.');
+    const clash = await Unit.exists({
+      name: new RegExp(`^${next.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      _id: { $ne: unit._id },
+    });
     if (clash) throw ApiError.conflict('A unit with this name already exists.');
-    unit.name = name.trim();
+    unit.name = next;
   }
   if (typeof description === 'string') unit.description = description.trim();
   if (typeof isActive === 'boolean') unit.isActive = isActive;
@@ -195,8 +202,13 @@ export async function updateUnit(req, res) {
   await record({
     actor: req.user,
     department: null,
-    action: 'unit.updated',
-    summary: `updated the unit ${unit.name}`,
+    // A rename says what it was called before, so the log still makes sense
+    // to someone who only knew the old name.
+    action: unit.name !== previousName ? 'unit.renamed' : 'unit.updated',
+    summary:
+      unit.name !== previousName
+        ? `renamed the unit ${previousName} to ${unit.name}`
+        : `updated the unit ${unit.name}`,
   });
 
   const counts = await tallies();
