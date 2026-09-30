@@ -562,10 +562,18 @@ export async function updateMemberDetails(req, res) {
     }
   }
 
+  /*
+   * A designation belongs to the role, not the account - the HR Executive here
+   * can be the Payroll Lead in another unit - so it is written onto their
+   * membership of *this* department.
+   */
   if (title !== undefined) {
     const next = designation(title);
-    if (next !== user.designation) {
-      user.designation = next;
+    const membership = user.memberships.find(
+      (item) => String(item.department) === String(req.params.id),
+    );
+    if (membership && next !== (membership.designation ?? '')) {
+      membership.designation = next;
       changed.push('designation');
     }
   }
