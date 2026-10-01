@@ -59,6 +59,11 @@ export type Stat = {
   label: string;
   value: number;
   caption: string;
+  /**
+   * A tile that counts two things at once shows each of them, not only the
+   * sum: `value` is what a click filters to, the parts are what it is made of.
+   */
+  parts?: { label: string; value: number }[];
   tone:
     | "new"
     | "progress"

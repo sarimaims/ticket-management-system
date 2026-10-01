@@ -914,9 +914,24 @@ export function TicketForm() {
           </Field>
 
           <div>
-            <Label hint="Images, video or documents · up to 25MB, video 200MB">Attachments</Label>
+            {/* A one-line label, like the box beside it, so the two controls
+                start on the same line; the limits sit underneath instead. */}
+            <Label>Attachments</Label>
 
             <div
+              role={features.attachments ? "button" : undefined}
+              tabIndex={features.attachments ? 0 : undefined}
+              aria-label={features.attachments ? "Add attachments" : undefined}
+              onClick={() => {
+                if (features.attachments) fileInput.current?.click();
+              }}
+              onKeyDown={(event) => {
+                if (!features.attachments) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  fileInput.current?.click();
+                }
+              }}
               onDragOver={(event) => {
                 event.preventDefault();
                 setDragging(true);
@@ -930,7 +945,9 @@ export function TicketForm() {
               className={cn(
                 // The same height as the box beside it: the two halves of this
                 // step are one question each and should look like it.
-                "flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 text-center text-[12px] transition-colors",
+                "flex h-8 items-center gap-1.5 rounded-md border border-dashed px-3 text-[12px] transition-colors",
+                "focus-visible:border-brand-400 focus-visible:ring-2 focus-visible:ring-brand-500/10 focus-visible:outline-none",
+                features.attachments && "cursor-pointer hover:border-ink-400 hover:bg-ink-50/60",
                 dragging ? "border-brand-400 bg-brand-50" : "border-line-strong bg-surface",
               )}
             >
@@ -939,13 +956,7 @@ export function TicketForm() {
                 {features.attachments ? (
                   <>
                     Drag files here or{" "}
-                    <button
-                      type="button"
-                      onClick={() => fileInput.current?.click()}
-                      className="font-semibold text-brand-600 underline underline-offset-2 hover:text-brand-700"
-                    >
-                      browse
-                    </button>
+                    <span className="font-semibold text-brand-600">browse</span>
                   </>
                 ) : (
                   "File storage is not configured yet"
@@ -957,9 +968,18 @@ export function TicketForm() {
                 multiple
                 className="hidden"
                 accept={TICKET_FILE_LIMITS.accept}
+                // Its own click would bubble to the zone and ask for the
+                // picker a second time.
+                onClick={(event) => event.stopPropagation()}
                 onChange={(event) => addFiles(event.target.files)}
               />
             </div>
+
+            {features.attachments && (
+              <p className="mt-1 text-[11px] text-ink-400">
+                Images, video or documents · up to 25MB, video 200MB
+              </p>
+            )}
 
             {files.length > 0 && (
               <ul className="mt-2 space-y-1.5">

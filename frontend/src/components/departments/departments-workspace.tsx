@@ -324,12 +324,7 @@ export function DepartmentsWorkspace() {
                     className="cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-ink-50/70"
                   >
                     <TableCell>
-                      <span className="flex items-center gap-2">
-                        <span className="font-semibold text-ink-900">{department.name}</span>
-                        <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-bold text-ink-500">
-                          {department.code}
-                        </span>
-                      </span>
+                      <span className="font-semibold text-ink-900">{department.name}</span>
                     </TableCell>
                     <TableCell>
                       {department.unit ? (
@@ -403,7 +398,7 @@ export function DepartmentsWorkspace() {
         onCreated={(department) => {
           setDepartments((current) => [...current, department].sort((a, b) => a.name.localeCompare(b.name)));
           setCreateOpen(false);
-          toast.success(`${department.name} created`, `Short code ${department.code}`);
+          toast.success(`${department.name} created`);
         }}
       />
 
@@ -502,7 +497,7 @@ function CreateDepartmentModal({
       open={open}
       onClose={close}
       title="New Department"
-      description="Every department lives inside a unit. The short code is generated for you."
+      description="Every department lives inside a unit."
     >
       <form className="space-y-4" onSubmit={submit} noValidate>
         {error && <Banner message={error} />}

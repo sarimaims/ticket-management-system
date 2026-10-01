@@ -3,37 +3,46 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Field, Input } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { errorMessage } from "@/lib/api";
-import { updateMemberDetails, type Member } from "@/lib/departments";
+import type { DepartmentRole } from "@/lib/auth";
+import { updateMemberDetails, updateMemberRole, type Member } from "@/lib/departments";
 import { isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 
 /**
  * A member's details, as the department that has them sees them: the name
  * they go by, the number to reach them on, and what they do.
  *
- * What they sign in with and what they may do - email, password, role and
- * status - is not here. That stays on the admin's Users page.
+ * An admin also sets their role here - head or user - which the API allows
+ * no one else. What they sign in with - email, password and status - stays
+ * on the admin's Users page.
  */
 export function EditMemberModal({
   departmentId,
   member,
+  canChangeRole,
   onClose,
   onSaved,
 }: {
   departmentId: string;
   member: Member | null;
+  /** Admins only: the API refuses a role change from anyone else. */
+  canChangeRole: boolean;
   onClose: () => void;
-  onSaved: (member: Member) => void;
+  onSaved: (member: Member, roleChanged: boolean) => void;
 }) {
   return (
     <Modal
       open={member !== null}
       onClose={onClose}
       title="Edit member"
-      description="Their name, phone and designation. Email, password and role are changed by an admin."
+      description={
+        canChangeRole
+          ? "Their name, phone, designation and role in this department."
+          : "Their name, phone and designation. Email, password and role are changed by an admin."
+      }
       className="max-w-md"
     >
       {member && (
@@ -41,6 +50,7 @@ export function EditMemberModal({
           key={member.id}
           departmentId={departmentId}
           member={member}
+          canChangeRole={canChangeRole}
           onClose={onClose}
           onSaved={onSaved}
         />
@@ -52,13 +62,15 @@ export function EditMemberModal({
 function MemberForm({
   departmentId,
   member,
+  canChangeRole,
   onClose,
   onSaved,
 }: {
   departmentId: string;
   member: Member;
+  canChangeRole: boolean;
   onClose: () => void;
-  onSaved: (member: Member) => void;
+  onSaved: (member: Member, roleChanged: boolean) => void;
 }) {
   // Their title here: it belongs to the role in this department, so that is
   // where it is read from - the account's own is only a fallback.
@@ -69,6 +81,7 @@ function MemberForm({
   const [name, setName] = useState(member.name);
   const [phone, setPhone] = useState(member.phone ?? "");
   const [title, setTitle] = useState(current);
+  const [role, setRole] = useState<DepartmentRole>(member.departmentRole);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -82,11 +95,20 @@ function MemberForm({
     if (name.trim() !== member.name) changes.name = name.trim();
     if (toStoredPhone(phone) !== (member.phone ?? "")) changes.phone = toStoredPhone(phone);
     if (title.trim() !== current) changes.designation = title.trim();
-    if (Object.keys(changes).length === 0) return onClose();
+    const roleChanged = canChangeRole && role !== member.departmentRole;
+    if (Object.keys(changes).length === 0 && !roleChanged) return onClose();
 
     setPending(true);
     try {
-      onSaved(await updateMemberDetails(departmentId, member.id, changes));
+      let saved = member;
+      if (Object.keys(changes).length > 0) {
+        saved = await updateMemberDetails(departmentId, member.id, changes);
+      }
+      if (roleChanged) {
+        await updateMemberRole(departmentId, member.id, role);
+        saved = { ...saved, departmentRole: role };
+      }
+      onSaved(saved, roleChanged);
     } catch (caught) {
       setError(errorMessage(caught));
       setPending(false);
@@ -144,6 +166,22 @@ function MemberForm({
           />
         </Field>
       </div>
+
+      {canChangeRole && (
+        <Field label="Role in this department" required htmlFor="member-edit-role">
+          <Select
+            id="member-edit-role"
+            value={role}
+            onChange={(event) => {
+              setRole(event.target.value as DepartmentRole);
+              setError("");
+            }}
+          >
+            <option value="head">Head</option>
+            <option value="team">User</option>
+          </Select>
+        </Field>
+      )}
 
       <div className="flex justify-end gap-2 border-t border-line pt-3.5">
         <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>

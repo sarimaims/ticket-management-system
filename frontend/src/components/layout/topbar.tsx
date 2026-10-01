@@ -6,6 +6,14 @@ import { ArrowLeft, ChevronRight, Menu, Plus } from "lucide-react";
 
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { usePageMeta } from "@/components/layout/page-title";
+import { TodayIsland } from "@/components/layout/today-island";
+import { cn } from "@/lib/utils";
+
+/**
+ * The "Today" island in the middle of the bar. Parked for now - flip back to
+ * true to bring it back; the component is complete and untouched.
+ */
+const SHOW_TODAY_ISLAND = false;
 
 /**
  * One bar for the whole of "where am I": the trail, ending in the page name.
@@ -41,7 +49,15 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         </>
       )}
 
-      <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+      {/* With the island showing, the trail stops short of the middle on wide
+          screens, where it sits. */}
+      <nav
+        aria-label="Breadcrumb"
+        className={cn(
+          "min-w-0 flex-1",
+          SHOW_TODAY_ISLAND && "xl:max-w-[calc(50%-11rem)] 2xl:max-w-[calc(50%-13rem)]",
+        )}
+      >
         <ol className="flex min-w-0 items-center gap-1 text-[12px]">
           {trail.map((crumb, index) => {
             const last = index === trail.length - 1;
@@ -72,6 +88,15 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         </ol>
       </nav>
 
+      {/* Today, in the middle of the bar. Only where there is room for it
+          beside the trail and the actions - on a narrower screen the bell
+          already carries the same news. */}
+      {SHOW_TODAY_ISLAND && (
+        <div className="absolute top-1/2 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-1/2 xl:block">
+          <TodayIsland />
+        </div>
+      )}
+
       {/* Each page portals its actions in here, so a page never needs a
           header row of its own. */}
       <div id="page-actions" className="ml-auto flex shrink-0 items-center gap-2" />
@@ -81,11 +106,11 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
       {pathname !== "/create-ticket" && (
         <Link
           href="/create-ticket"
-          aria-label="Raise ticket"
+          aria-label="Create ticket"
           className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-brand-600 px-2 text-[12px] font-semibold text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700 sm:px-2.5"
         >
           <Plus className="size-3.5" strokeWidth={2.5} />
-          <span className="hidden sm:inline">Raise Ticket</span>
+          <span className="hidden sm:inline">Create Ticket</span>
         </Link>
       )}
 
