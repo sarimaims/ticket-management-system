@@ -1225,6 +1225,39 @@ function relationOf(ticket, { meId, asked, headed }) {
 /** How many lines of the feed the dashboard carries. */
 const FEED_SIZE = 40;
 
+/** How many of today's chat messages the dashboard carries. */
+const TODAY_MESSAGES = 30;
+
+/**
+ * Where "today" starts for the reader. The browser sends its own midnight,
+ * since the server's clock need not be in the reader's timezone; anything
+ * missing or more than a day and a half off falls back to the server's.
+ */
+function startOfDayFrom(value) {
+  const asked = value ? new Date(String(value)) : null;
+  const fallback = new Date(new Date().toDateString());
+  if (!asked || Number.isNaN(asked.getTime())) return fallback;
+  return Math.abs(Date.now() - asked.getTime()) > 36 * 3_600_000 ? fallback : asked;
+}
+
+/** One line of a chat, short enough for a dashboard row. */
+function presentChatLine(message, ticket, meId) {
+  const body = message.body ?? '';
+  return {
+    id: String(message._id),
+    ticketId: String(message.ticket),
+    ticketNumber: ticket?.number ?? '',
+    ticketSubject: ticket?.subject ?? '',
+    author: { name: message.authorName, isMe: idOf(message.author) === meId },
+    side: message.side,
+    body: body.length > 160 ? `${body.slice(0, 157)}…` : body,
+    attachment: message.attachment
+      ? { kind: message.attachment.kind, filename: message.attachment.filename ?? '' }
+      : null,
+    createdAt: message.createdAt,
+  };
+}
+
 /**
  * The dashboard, shaped by who is asking - one call for the whole page.
  *
@@ -1266,17 +1299,32 @@ export async function getDashboard(req, res) {
 
   // The feed follows the tickets: a line about a ticket outside this reach is
   // somebody else's business. A manager reads every ticket line there is.
+  const reachIds = manager ? null : await Ticket.find(filter).distinct('_id');
   const feedFilter = manager
     ? { ticketNumber: { $ne: '' } }
     : { ticketNumber: { $in: await Ticket.find(filter).distinct('number') } };
 
-  const [ticketTag, newestLine] = await Promise.all([
+  // Today's conversation on the same tickets: people's own lines, not the
+  // system's, and not the ones taken back.
+  const since = startOfDayFrom(req.query.since);
+  const chatFilter = {
+    // Older lines carry no kind at all, so "not a system line" rather than
+    // "a text line".
+    kind: { $ne: 'system' },
+    deletedAt: null,
+    createdAt: { $gte: since },
+    ...(reachIds ? { ticket: { $in: reachIds } } : {}),
+  };
+
+  const [ticketTag, newestLine, newestMessage] = await Promise.all([
     fingerprint(filter),
     Activity.findOne(feedFilter).sort({ createdAt: -1 }).select('_id').lean(),
+    Message.findOne(chatFilter).sort({ updatedAt: -1 }).select('updatedAt').lean(),
   ]);
-  // Tickets, the newest line of the feed, and the asks waiting on this person:
-  // any of the three moving is a different page.
-  const tag = `${ticketTag.slice(0, -1)}-${newestLine?._id ?? 0}-${askedIds.length}-${lens}"`;
+  // Tickets, the newest line of the feed, today's chat, and the asks waiting
+  // on this person: any of them moving is a different page.
+  const chatTag = newestMessage ? new Date(newestMessage.updatedAt).getTime() : 0;
+  const tag = `${ticketTag.slice(0, -1)}-${newestLine?._id ?? 0}-${chatTag}-${since.getTime()}-${askedIds.length}-${lens}"`;
   res.set('ETag', tag);
   res.set('Cache-Control', 'private, no-cache');
 
@@ -1286,9 +1334,10 @@ export async function getDashboard(req, res) {
     return;
   }
 
-  const [tickets, lines, headOf] = await Promise.all([
+  const [tickets, lines, chat, headOf] = await Promise.all([
     Ticket.find(filter).sort({ createdAt: -1 }).lean(),
     Activity.find(feedFilter).sort({ createdAt: -1 }).limit(FEED_SIZE).lean(),
+    Message.find(chatFilter).sort({ createdAt: -1 }).limit(TODAY_MESSAGES).lean(),
     headedIds.length > 0
       ? Department.find({ _id: { $in: headedIds } }).select('name code').lean()
       : [],
@@ -1303,6 +1352,7 @@ export async function getDashboard(req, res) {
   }));
 
   const byNumber = new Map(presented.map((ticket) => [ticket.number, ticket]));
+  const byTicketId = new Map(presented.map((ticket) => [ticket.id, ticket]));
 
   res.json({
     success: true,
@@ -1313,6 +1363,9 @@ export async function getDashboard(req, res) {
       code: department.code ?? '',
     })),
     tickets: presented,
+    messages: chat.map((message) =>
+      presentChatLine(message, byTicketId.get(String(message.ticket)), meId),
+    ),
     activity: lines.map((line) => {
       const ticket = byNumber.get(line.ticketNumber);
       return {

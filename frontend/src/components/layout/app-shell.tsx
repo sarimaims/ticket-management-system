@@ -7,6 +7,8 @@ import { PageTitleProvider } from "@/components/layout/page-title";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { UserProfileProvider } from "@/components/users/user-profile";
+import { SpotlightProvider } from "@/components/search/spotlight";
+import { ScrollLock } from "@/components/layout/scroll-lock";
 import { ApprovalBanner } from "@/components/tickets/approval-banner";
 import { QuickTodoButton } from "@/components/todos/quick-todo-button";
 
@@ -18,6 +20,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <NotificationProvider>
       {/* One profile card for the whole app: any name, anywhere, opens it. */}
       <UserProfileProvider>
+      {/* One search for the whole app: the header box, ⌘K / Ctrl+K, or "/". */}
+      <SpotlightProvider>
+      {/* The page holds still behind any dialog or covering sheet. */}
+      <ScrollLock />
       <div className="min-h-screen">
         <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
         <div className="flex min-h-screen min-w-0 flex-col lg:pl-52">
@@ -29,6 +35,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* A to-do is one click away from every page. */}
         <QuickTodoButton />
       </div>
+      </SpotlightProvider>
       </UserProfileProvider>
       </NotificationProvider>
       </PageTitleProvider>

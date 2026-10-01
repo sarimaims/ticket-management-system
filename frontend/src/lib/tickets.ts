@@ -388,17 +388,39 @@ export type DashboardUpdate = {
   createdAt: string;
 };
 
+/** One of today's chat lines on a ticket in the reader's reach. */
+export type DashboardMessage = {
+  id: string;
+  ticketId: string;
+  ticketNumber: string;
+  ticketSubject: string;
+  author: { name: string; isMe: boolean };
+  side: "raiser" | "department";
+  /** Cut to a row's length. Empty for a line that is only an attachment. */
+  body: string;
+  attachment: { kind: "image" | "video" | "file" | "voice"; filename: string } | null;
+  createdAt: string;
+};
+
 export type DashboardData = {
   lens: DashboardLens;
   /** The departments the reader runs. Empty unless they are a head. */
   headOf: { id: string; name: string; code: string }[];
   tickets: DashboardTicket[];
+  /** Today's chat, newest first. */
+  messages: DashboardMessage[];
   activity: DashboardUpdate[];
 };
 
 /** The dashboard, conditionally: an unchanged page answers 304. */
 export function revalidateDashboard(etag: string | null, signal?: AbortSignal) {
-  return apiRevalidate<DashboardData>("/tickets/dashboard", etag, signal);
+  // "Today" is the reader's day, so their own midnight goes up with the ask.
+  const since = new Date(new Date().toDateString()).toISOString();
+  return apiRevalidate<DashboardData>(
+    `/tickets/dashboard?since=${encodeURIComponent(since)}`,
+    etag,
+    signal,
+  );
 }
 
 /**

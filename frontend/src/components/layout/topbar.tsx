@@ -7,6 +7,7 @@ import { ArrowLeft, ChevronRight, Menu, Plus } from "lucide-react";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { usePageMeta } from "@/components/layout/page-title";
 import { TodayIsland } from "@/components/layout/today-island";
+import { SpotlightTrigger } from "@/components/search/spotlight";
 import { cn } from "@/lib/utils";
 
 /**
@@ -97,9 +98,12 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         </div>
       )}
 
+      {/* Search everything in reach, from any page. */}
+      <SpotlightTrigger />
+
       {/* Each page portals its actions in here, so a page never needs a
           header row of its own. */}
-      <div id="page-actions" className="ml-auto flex shrink-0 items-center gap-2" />
+      <div id="page-actions" className="flex shrink-0 items-center gap-2 empty:hidden" />
 
       {/* Raising a ticket is one click from anywhere - except the form itself,
           where the button would only lead back to where you are, and the

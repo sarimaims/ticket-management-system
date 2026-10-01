@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleSlash,
   Download,
+  FileText,
   History,
   MessagesSquare,
   Paperclip,
@@ -297,7 +298,10 @@ function Tabs({
         onClick={() => onTab("details")}
         className={style("details")}
       >
-        Details
+        <span className="inline-flex items-center justify-center gap-1.5">
+          <FileText className="size-3.5" />
+          Details
+        </span>
       </button>
       <button
         type="button"
@@ -593,6 +597,8 @@ export function TicketDetailSheet({
           className="fixed inset-0 z-40 bg-ink-900/30 xl:hidden"
           onClick={onClose}
           aria-hidden="true"
+          // Below xl the sheet covers the list, so the page holds still.
+          data-scroll-lock
         />
       )}
 
@@ -1057,7 +1063,7 @@ function SheetBody({
       )}
       {tab === "history" && <TicketHistory ticket={ticket} />}
 
-      <div className={cn("flex-1 overflow-y-auto px-3 py-2.5", tab !== "details" && "hidden")}>
+      <div className={cn("flex-1 overflow-y-auto overscroll-contain px-3 py-2.5", tab !== "details" && "hidden")}>
         {readOnly && (
           <p className="mb-2.5 rounded-md border border-royal-100 bg-royal-50 px-2.5 py-1.5 text-[11px] font-medium text-royal-700">
             {readOnly}

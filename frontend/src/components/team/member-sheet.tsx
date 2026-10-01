@@ -47,7 +47,7 @@ export function MemberSheet({
   return (
     <>
       {open && (
-        <div className="fixed inset-0 z-40 bg-ink-900/30" onClick={onClose} aria-hidden="true" />
+        <div className="fixed inset-0 z-40 bg-ink-900/30" onClick={onClose} aria-hidden="true" data-scroll-lock />
       )}
 
       <aside
@@ -87,7 +87,7 @@ export function MemberSheet({
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {/* How to reach them first: it is what this is most often opened for. */}
               <section className="border-b border-line px-3.5 py-1.5">
                 <Contact
