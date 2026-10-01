@@ -96,6 +96,7 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
           className="fixed inset-0 z-40 bg-ink-900/30"
           onClick={onClose}
           aria-hidden="true"
+          data-scroll-lock
         />
       )}
 
@@ -197,7 +198,7 @@ export function NotificationSheet({ open, onClose }: { open: boolean; onClose: (
           })}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-contain">
           {groups.length === 0 ? (
             <div className="px-4 py-14 text-center">
               <span className="mx-auto grid size-9 place-items-center rounded-full bg-brand-50">

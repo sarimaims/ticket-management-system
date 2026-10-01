@@ -81,7 +81,6 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
 import { Designation } from "@/components/users/designation";
 import { isAdmin } from "@/lib/auth";
-import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import {
   isClosed,
@@ -161,20 +160,6 @@ function deleteHint(ticket: TicketRecord) {
 
 /** How long a row arrived at from a notification keeps its outline. */
 const FLASH_MS = 4000;
-
-/**
- * A ticket counts as belonging to a unit when either end of it does: the
- * department working it, or a department it was raised on behalf of.
- *
- * Matching only the receiving end would hide your own request the moment you
- * switched to the unit you raised it from, which is exactly when you would go
- * looking for it.
- */
-function inUnit(ticket: TicketRecord, unitId: string) {
-  if (!unitId) return true;
-  if (departmentsOf(ticket).some((item) => item.unit?.id === unitId)) return true;
-  return ticket.fromDepartments.some((item) => item.unit?.id === unitId);
-}
 
 /**
  * Filters that are not a status, reachable from a tile or a dashboard card
@@ -1002,12 +987,6 @@ export function TicketsWorkspace({
   const [created, setCreated] = useState<Range>(NO_RANGE);
   const [due, setDue] = useState<Range>(NO_RANGE);
 
-  /**
-   * The unit chosen on the profile menu. It scopes the list rather than the
-   * request: the server already decided what this person may read, and this
-   * only narrows what is shown of it.
-   */
-  const unit = useActiveUnit();
   const [viewing, setViewing] = useState<TicketRecord | null>(null);
   // Which pane the sheet opens on. Held here rather than inside the sheet, so
   // the chat icon on a row can go straight to the conversation.
@@ -1118,8 +1097,12 @@ export function TicketsWorkspace({
     return counts;
   }, [feed]);
 
-  /** Everything the unit in view holds, which is what the numbers count. */
-  const inScope = useMemo(() => tickets.filter((ticket) => inUnit(ticket, unit)), [tickets, unit]);
+  /**
+   * Everything this page holds, which is what the numbers count - across every
+   * unit the reader belongs to. (There is no unit switch any more; narrowing
+   * to a unit is a filter like any other, under More filters.)
+   */
+  const inScope = tickets;
 
   /**
    * The departments actually present, so the filter only ever offers a choice
@@ -1217,12 +1200,6 @@ export function TicketsWorkspace({
     setMineOnly(false);
     setView(null);
   };
-
-  /** The unit in view, named, so the bar can say what is being left out. */
-  const unitName = useMemo(
-    () => (session?.departments ?? []).find((item) => item.unit?.id === unit)?.unit?.name ?? "",
-    [session, unit],
-  );
 
   /** What the tiles and the non-status filters are decided against. */
   const viewContext = useMemo<ViewContext>(() => ({ unread: unreadByTicket }), [unreadByTicket]);
@@ -2118,8 +2095,6 @@ export function TicketsWorkspace({
                     <p className="mt-0.5 text-sm text-ink-400">
                       {scope === "escalated"
                         ? "When somebody escalates a ticket to you, it lands here with their reason."
-                        : unitName && tickets.length > 0
-                        ? `Nothing in ${unitName}. Switch units on your profile to see the rest.`
                         : mineOnly || scope === "assigned"
                           ? "Work handed to you by name shows here. Your department's whole queue is under All Tickets."
                           : scope === "mine"

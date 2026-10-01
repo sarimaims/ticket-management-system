@@ -1172,7 +1172,7 @@ export function TicketChat({
       <div
         ref={scroller}
         onScroll={onScroll}
-        className="flex-1 space-y-3 overflow-y-auto px-3 py-2.5"
+        className="flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-2.5"
       >
         <RequestCard ticket={ticket} />
 

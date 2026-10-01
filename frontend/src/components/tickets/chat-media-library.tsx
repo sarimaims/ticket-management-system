@@ -171,7 +171,7 @@ export function ChatMediaLibrary({
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-2">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-3 py-2">
         {error && (
           <p role="alert" className="py-6 text-center text-[12px] text-brand-600">
             {error}

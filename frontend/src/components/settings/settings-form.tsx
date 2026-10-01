@@ -652,6 +652,42 @@ function ProfileForm({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * One value on a membership row. On a phone the column heading is gone, so
+ * each value carries its own small label; on a wide screen the heading above
+ * says it once.
+ */
+function MembershipCell({
+  label,
+  strong = false,
+  className,
+  children,
+}: {
+  label: string;
+  strong?: boolean;
+  /** Where it sits in the row's grid. */
+  className?: string;
+  children: React.ReactNode;
+}) {
+  // Written out in full: a title cut to "Digital Marketing Mana..." says less
+  // than the two lines it would take to show it.
+  return (
+    <span className={cn("min-w-0", className)}>
+      <span className="block text-[9.5px] font-semibold tracking-[0.06em] text-ink-400 uppercase sm:hidden">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "block text-[12.5px] leading-snug break-words",
+          strong ? "font-semibold text-ink-900" : "font-medium text-ink-700",
+        )}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
 export function SettingsForm() {
   const { session } = useAuth();
   // Which tab the account modal opens on, or null while it is closed.
@@ -746,28 +782,59 @@ export function SettingsForm() {
             {!manager && <span className="text-[10px] text-ink-300">set by your head</span>}
           </div>
 
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {memberships.length === 0 ? (
-              <span className="text-[12px] text-ink-400">
-                {/* A manager sits above the departments rather than in one. */}
-                {manager ? "Works across every department" : "Not in a department yet"}
-              </span>
-            ) : (
-              memberships.map((item) => (
-                <span
-                  key={item.id}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ink-50 py-1 pr-1 pl-2 text-[11px] font-semibold text-ink-700"
-                >
-                  {item.name ?? "Department"}
-                  {/* Their title in this one: it can differ from the next. */}
-                  {item.designation && (
-                    <span className="font-normal text-ink-500">· {item.designation}</span>
-                  )}
-                  <RoleTag role={item.role} />
-                </span>
-              ))
-            )}
-          </div>
+          {memberships.length === 0 ? (
+            <p className="mt-1.5 text-[12px] text-ink-400">
+              {/* A manager sits above the departments rather than in one. */}
+              {manager ? "Works across every department" : "Not in a department yet"}
+            </p>
+          ) : (
+            // One row per role: where it sits, what they are there, and their
+            // standing. Laid out like a table so the three read down as
+            // columns, without being one.
+            <div className="mt-2 overflow-hidden rounded-lg border border-line">
+              <div className="hidden grid-cols-[1fr_1.15fr_1.25fr_4.5rem] gap-3 border-b border-line bg-ink-50 px-3 py-1.5 text-[10px] font-semibold tracking-[0.06em] text-ink-400 uppercase sm:grid">
+                <span>Unit</span>
+                <span>Department</span>
+                <span>Designation</span>
+                <span className="text-right">Role</span>
+              </div>
+              <ul className="divide-y divide-line">
+                {memberships.map((item) => (
+                  <li
+                    key={item.id}
+                    className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5 px-3 py-2.5 sm:grid-cols-[1fr_1.15fr_1.25fr_4.5rem] sm:items-start"
+                  >
+                    {/* Pinned to their columns: on a phone the role rides on
+                        the unit's line and the rest stack under it; on a wide
+                        screen all four share one line. */}
+                    <MembershipCell
+                      label="Unit"
+                      className="col-start-1 row-start-1 sm:col-start-1"
+                    >
+                      {item.unit?.name ?? "No unit"}
+                    </MembershipCell>
+                    <span className="col-start-2 row-start-1 justify-self-end sm:col-start-4">
+                      <RoleTag role={item.role} />
+                    </span>
+                    <MembershipCell
+                      label="Department"
+                      strong
+                      className="col-span-2 row-start-2 sm:col-span-1 sm:col-start-2 sm:row-start-1"
+                    >
+                      {item.name ?? "Department"}
+                    </MembershipCell>
+                    {/* Their title in this one: it can differ from the next. */}
+                    <MembershipCell
+                      label="Designation"
+                      className="col-span-2 row-start-3 sm:col-span-1 sm:col-start-3 sm:row-start-1"
+                    >
+                      {item.designation || "Not set"}
+                    </MembershipCell>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         <p className="border-t border-line px-3.5 py-2 text-[11px] text-ink-400">

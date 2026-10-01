@@ -329,6 +329,7 @@ export function Sidebar({
           className="fixed inset-0 z-40 bg-ink-900/40 lg:hidden"
           onClick={onClose}
           aria-hidden="true"
+          data-scroll-lock
         />
       )}
 

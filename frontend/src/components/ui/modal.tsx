@@ -34,7 +34,7 @@ export function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain p-4 sm:p-6">
       <div className="fixed inset-0 bg-ink-900/40" onClick={onClose} aria-hidden="true" />
 
       <div

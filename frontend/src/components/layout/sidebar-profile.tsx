@@ -2,14 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, Check, ChevronUp, Layers, LogOut, UserRound } from "lucide-react";
+import { Building, ChevronUp, LogOut, UserRound } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { RoleTag } from "@/components/ui/badge";
 import { useAuth } from "@/components/auth/auth-provider";
 import { avatarTone, DEPARTMENT_ROLE_LABEL, initials, isAdmin, ROLE_LABEL } from "@/lib/auth";
-import { setActiveUnit } from "@/lib/active-unit";
-import { useActiveUnit } from "@/lib/use-active-unit";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,7 +19,6 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
   const { session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const chosenUnit = useActiveUnit();
 
   useEffect(() => {
     if (!open) return;
@@ -60,23 +57,16 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
   }
   const units = [...byUnit.values()];
 
-  /**
-   * The unit they are working in. A stored choice only counts while they are
-   * still in that unit - an admin moving them somewhere else must not leave
-   * them looking at a unit they have left.
-   */
-  const viewing = units.find((unit) => unit.id === chosenUnit) ?? null;
-
   /*
    * Under the name, one line: their standing as a badge, then what they do.
    * The badge is the system role for a manager and the department role for
    * everyone else, so the same words never appear twice on the button.
    *
-   * The department is the one they are working in: those in the unit in
-   * view, or all of them. Several read as the first and a count, and the
-   * unit rides along only when there is more than one to tell apart.
+   * The department leads with the one they head, across every unit. Several
+   * read as the first and a count, and the unit rides along only when there
+   * is more than one to tell apart.
    */
-  const here = viewing ? viewing.departments : departments;
+  const here = departments;
   const primary = here.find((item) => item.role === "head") ?? here[0];
   // What they are in *that* department, when it says; otherwise what the
   // account says about them in general.
@@ -176,83 +166,41 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
             </div>
           </div>
 
-          {/* Which unit they are working in. Picking one narrows what they
-              look at; it never widens what they may read, because every unit
-              here is already one they belong to. */}
+          {/* Where they sit: each unit, the departments in it, and what they are
+              in each. Read-only - every list shows all of their units. */}
           {units.length > 0 && (
-            <div className="border-b border-line py-1">
+            <div className="max-h-56 overflow-y-auto border-b border-line py-1">
               <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold tracking-wide text-ink-400 uppercase">
-                Working in
+                Departments
               </p>
 
-              {units.length > 1 && (
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={viewing === null}
-                  onClick={() => setActiveUnit("")}
-                  className={cn(
-                    "flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[12px] font-semibold transition-colors",
-                    viewing === null ? "text-brand-700" : "text-ink-700 hover:bg-ink-50",
-                  )}
-                >
-                  <Layers className="size-3.5 shrink-0 text-ink-400" />
-                  <span className="min-w-0 flex-1 truncate">All units</span>
-                  {viewing === null && <Check className="size-3.5 shrink-0 text-brand-600" />}
-                </button>
-              )}
+              {units.map((unit) => (
+                <div key={unit.id} className="pb-0.5">
+                  <p className="flex h-7 items-center gap-1.5 px-2.5 text-[12px] font-semibold text-ink-900">
+                    <Building className="size-3.5 shrink-0 text-ink-400" />
+                    <span className="min-w-0 flex-1 truncate">{unit.name}</span>
+                  </p>
 
-              {units.map((unit) => {
-                const current = viewing?.id === unit.id;
-                return (
-                  <div key={unit.id} className="pb-0.5">
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={current}
-                      onClick={() => setActiveUnit(current && units.length > 1 ? "" : unit.id)}
-                      className={cn(
-                        "flex h-7 w-full items-center gap-1.5 px-2.5 text-left text-[12px] font-semibold transition-colors",
-                        current ? "bg-brand-50/60 text-brand-700" : "text-ink-900 hover:bg-ink-50",
-                      )}
+                  {unit.departments.map((membership) => (
+                    <div
+                      key={membership.id}
+                      className="flex items-center gap-1.5 py-0.5 pr-2.5 pl-[1.65rem] text-[11px]"
                     >
-                      <Building
-                        className={cn(
-                          "size-3.5 shrink-0",
-                          current ? "text-brand-600" : "text-ink-400",
-                        )}
-                      />
-                      <span className="min-w-0 flex-1 truncate">{unit.name}</span>
-                      {current && <Check className="size-3.5 shrink-0 text-brand-600" />}
-                    </button>
-
-                    {unit.departments.map((membership) => (
-                      <div
-                        key={membership.id}
-                        className="flex items-center gap-1.5 py-0.5 pr-2.5 pl-[1.65rem] text-[11px]"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-ink-600">
-                            {membership.name ?? "Department"}
-                          </span>
-                          {membership.designation && (
-                            <span className="block truncate text-[10px] leading-tight text-ink-400">
-                              {membership.designation}
-                            </span>
-                          )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-ink-600">
+                          {membership.name ?? "Department"}
                         </span>
-                        <RoleTag role={membership.role} className="px-1 py-0 text-[9px]" />
-                      </div>
-                    ))}
-                  </div>
-                );
-              })}
-
-              {units.length > 1 && (
-                <p className="px-2.5 pt-0.5 pb-1 text-[10px] leading-snug text-ink-400">
-                  My Requests and Assigned to Me follow this.
-                </p>
-              )}
+                        {membership.designation && (
+                          <span className="block truncate text-[10px] leading-tight text-ink-400">
+                            {membership.designation}
+                          </span>
+                        )}
+                      </span>
+                      <RoleTag role={membership.role} className="px-1 py-0 text-[9px]" />
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
           )}
 

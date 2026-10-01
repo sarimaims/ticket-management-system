@@ -190,7 +190,7 @@ export function TicketHistory({ ticket }: { ticket: TicketRecord }) {
   }, [ticket.id, ticket.updatedAt]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-3 py-2.5">
+    <div className="flex-1 overflow-y-auto overscroll-contain px-3 py-2.5">
       <p className="flex items-center justify-between gap-3 rounded-md bg-ink-50 px-2.5 py-1.5">
         <span className="text-xs font-semibold tracking-wide text-ink-400 uppercase">
           Sitting with
