@@ -32,12 +32,22 @@ function Banner({ message }: { message: string }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+/** A count under the unit's name: small, so the name stays the loudest thing. */
+function CountPill({
+  icon,
+  value,
+  label,
+}: {
+  icon: React.ReactNode;
+  value: number;
+  label: string;
+}) {
   return (
-    <div className="rounded-field bg-ink-50 px-3.5 py-2.5">
-      <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">{label}</p>
-      <p className="text-lg leading-tight font-bold text-ink-900">{value}</p>
-    </div>
+    <span className="inline-flex items-center gap-1 rounded-full border border-line bg-ink-50 px-2 py-0.5 text-[11px] text-ink-500 [&_svg]:size-3 [&_svg]:text-ink-400">
+      {icon}
+      <span className="font-bold text-ink-800 tabular-nums">{value}</span>
+      {label}
+    </span>
   );
 }
 
@@ -150,27 +160,28 @@ export function UnitDetail({ unitId }: { unitId: string }) {
 
       {unit && (
         <Card className="mb-4 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600">
-                <Building className="size-5" />
-              </span>
-              <div className="min-w-0">
-                <p className="flex items-center gap-2">
-                  <span className="text-base font-bold text-ink-900">{unit.name}</span>
-                  <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-bold text-ink-500">
-                    {unit.code}
-                  </span>
-                </p>
-                <p className="mt-0.5 text-sm text-ink-500">
-                  {unit.description || "No description."}
-                </p>
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600">
+              <Building className="size-5" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-base font-bold text-ink-900">{unit.name}</p>
+              {/* Nothing written is nothing shown, not a line saying so. */}
+              {unit.description?.trim() && (
+                <p className="mt-0.5 text-sm text-ink-500">{unit.description}</p>
+              )}
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                <CountPill
+                  icon={<Building2 />}
+                  value={unit.departmentCount}
+                  label={unit.departmentCount === 1 ? "department" : "departments"}
+                />
+                <CountPill
+                  icon={<Users />}
+                  value={unit.memberCount}
+                  label={unit.memberCount === 1 ? "member" : "members"}
+                />
               </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Stat label="Departments" value={unit.departmentCount} />
-              <Stat label="Members" value={unit.memberCount} />
             </div>
           </div>
         </Card>
@@ -221,12 +232,7 @@ export function UnitDetail({ unitId }: { unitId: string }) {
                     className="cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-ink-50/70"
                   >
                     <TableCell>
-                      <span className="flex items-center gap-2">
-                        <span className="font-semibold text-ink-900">{department.name}</span>
-                        <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-bold text-ink-500">
-                          {department.code}
-                        </span>
-                      </span>
+                      <span className="font-semibold text-ink-900">{department.name}</span>
                     </TableCell>
                     <TableCell className="max-w-[300px] truncate whitespace-normal text-ink-500">
                       {department.description || "—"}

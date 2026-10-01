@@ -176,9 +176,6 @@ export function UnitsWorkspace() {
                           <Building className="size-4" />
                         </span>
                         <span className="font-semibold text-ink-900">{unit.name}</span>
-                        <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-bold text-ink-500">
-                          {unit.code}
-                        </span>
                       </span>
                     </TableCell>
                     <TableCell className="max-w-[320px] truncate whitespace-normal text-ink-500">
@@ -237,7 +234,7 @@ export function UnitsWorkspace() {
         onCreated={(unit) => {
           setUnits((current) => [...current, unit].sort((a, b) => a.name.localeCompare(b.name)));
           setCreateOpen(false);
-          toast.success(`${unit.name} created`, `Short code ${unit.code}`);
+          toast.success(`${unit.name} created`);
         }}
       />
 
@@ -322,7 +319,7 @@ function CreateUnitModal({
       open={open}
       onClose={close}
       title="New Unit"
-      description="Departments are created inside a unit. The short code is generated for you."
+      description="Departments are created inside a unit."
     >
       <form className="space-y-4" onSubmit={submit} noValidate>
         {error && <Banner message={error} />}
