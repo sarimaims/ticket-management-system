@@ -1,7 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Lock, Mail, Pencil, Phone, ShieldCheck } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  KeyRound,
+  Lock,
+  Mail,
+  Pencil,
+  Phone,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -26,35 +36,10 @@ import {
 } from "@/lib/auth";
 import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { errorMessage } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 /** The same floor the API enforces, said out loud before it is hit. */
 const MIN_PASSWORD = 8;
-
-/**
- * The head of a card: what it is, and one line on why.
- *
- * A small capitalised label rather than a heading in a tinted icon tile - on a
- * page of three cards the tiles were the loudest thing on screen, and none of
- * them was the point.
- */
-function CardHead({
-  title,
-  children,
-}: {
-  title: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="border-b border-line px-3.5 py-2.5">
-      <h2 className="text-[10px] font-semibold tracking-[0.08em] text-ink-400 uppercase">
-        {title}
-      </h2>
-      {children && (
-        <p className="mt-1 text-[11px] leading-snug text-ink-500">{children}</p>
-      )}
-    </div>
-  );
-}
 
 /** A label above a group of things, at the size of a card's own. */
 function Eyebrow({ children }: { children: React.ReactNode }) {
@@ -62,28 +47,6 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
     <p className="text-[10px] font-semibold tracking-[0.08em] text-ink-400 uppercase">
       {children}
     </p>
-  );
-}
-
-/** A footer holding one action, and the one caveat worth printing beside it. */
-function CardFoot({
-  note,
-  children,
-}: {
-  note?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-t border-line px-3.5 py-2.5">
-      {note ? (
-        <p className="flex items-center gap-1.5 text-[11px] text-ink-400">
-          {note}
-        </p>
-      ) : (
-        <span />
-      )}
-      {children}
-    </div>
   );
 }
 
@@ -146,7 +109,7 @@ function SecretField({
  * made, so the only errors the API adds are the ones only it can know - chiefly
  * that the current password is wrong.
  */
-function PasswordCard() {
+function PasswordForm({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -185,14 +148,11 @@ function PasswordCard() {
     setPending(true);
     try {
       await changePassword(current, next);
-      setCurrent("");
-      setNext("");
-      setConfirm("");
-      setErrors({});
       toast.success(
         "Password changed",
         "Use the new one the next time you sign in.",
       );
+      onClose();
     } catch (caught) {
       const message = errorMessage(caught);
       // The API only rejects the current password once it has checked the
@@ -200,65 +160,58 @@ function PasswordCard() {
       setErrors(/current password/i.test(message) ? { current: message } : {});
       if (!/current password/i.test(message))
         toast.error("Could not change your password", message);
-    } finally {
       setPending(false);
     }
   };
 
   return (
-    <Card className="overflow-hidden">
-      <CardHead title="Password">
-        Your current one is asked for as well, so an unattended screen cannot
-        lock you out.
-      </CardHead>
+    <form className="space-y-3.5" onSubmit={submit} noValidate>
+      <SecretField
+        id="current-password"
+        label="Current password"
+        autoComplete="current-password"
+        value={current}
+        onChange={edit(setCurrent, "current")}
+        error={errors.current}
+      />
 
-      <form onSubmit={submit}>
-        {/* Three boxes on one line on a wide screen: they are filled in one
-            pass, and stacking them made a short form look like a long one. */}
-        <div className="grid gap-x-3 gap-y-2.5 px-3.5 py-3 lg:grid-cols-3">
-          <SecretField
-            id="current-password"
-            label="Current password"
-            autoComplete="current-password"
-            value={current}
-            onChange={edit(setCurrent, "current")}
-            error={errors.current}
-          />
+      {/* The new one and its repeat side by side: they are typed as a pair. */}
+      <div className="grid gap-3.5 sm:grid-cols-2">
+        <SecretField
+          id="new-password"
+          label="New password"
+          hint={`(min ${MIN_PASSWORD})`}
+          autoComplete="new-password"
+          value={next}
+          onChange={edit(setNext, "next")}
+          error={errors.next}
+        />
 
-          <SecretField
-            id="new-password"
-            label="New password"
-            hint={`(min ${MIN_PASSWORD})`}
-            autoComplete="new-password"
-            value={next}
-            onChange={edit(setNext, "next")}
-            error={errors.next}
-          />
+        <SecretField
+          id="confirm-password"
+          label="Confirm new password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={edit(setConfirm, "confirm")}
+          error={errors.confirm}
+        />
+      </div>
 
-          <SecretField
-            id="confirm-password"
-            label="Confirm new password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={edit(setConfirm, "confirm")}
-            error={errors.confirm}
-          />
-        </div>
-
-        <CardFoot
-          note={
-            <>
-              <ShieldCheck className="size-3.5 shrink-0" />
-              You stay signed in on this device.
-            </>
-          }
-        >
-          <Button type="submit" size="sm" disabled={pending}>
-            {pending ? "Changing..." : "Change password"}
+      <div className="flex items-center justify-between gap-3 border-t border-line pt-3.5">
+        <p className="flex items-center gap-1.5 text-[11px] text-ink-400">
+          <ShieldCheck className="size-3.5 shrink-0" />
+          You stay signed in on this device.
+        </p>
+        <div className="flex shrink-0 gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
+            Cancel
           </Button>
-        </CardFoot>
-      </form>
-    </Card>
+          <Button type="submit" size="sm" disabled={pending}>
+            {pending ? "Changing…" : "Change password"}
+          </Button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -472,6 +425,90 @@ function NameLine() {
   );
 }
 
+type AccountTab = "profile" | "password";
+
+const ACCOUNT_TABS: Record<AccountTab, { label: string; title: string; description: string }> = {
+  profile: {
+    label: "Profile",
+    title: "Edit profile",
+    description: "How you appear on every ticket, and the address you sign in with.",
+  },
+  password: {
+    label: "Password",
+    title: "Change password",
+    description:
+      "Your current one is asked for as well, so an unattended screen cannot lock you out.",
+  },
+};
+
+/**
+ * Everything about your own account that is yours to change, in one place.
+ *
+ * The super admin edits their whole profile here - name, designation, email
+ * and phone - with the password one tab along. Everybody else edits their
+ * name and number in place on the page, so for them this opens on the
+ * password alone and shows no tabs at all: a tab strip with one tab in it is
+ * a label pretending to be a choice.
+ *
+ * Mounted fresh on every open, so a half-typed password never waits in a
+ * closed modal for the next person at the screen.
+ */
+function AccountModal({
+  start,
+  withProfile,
+  onClose,
+}: {
+  start: AccountTab;
+  withProfile: boolean;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<AccountTab>(withProfile ? start : "password");
+  const tabs: AccountTab[] = withProfile ? ["profile", "password"] : ["password"];
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={ACCOUNT_TABS[tab].title}
+      description={ACCOUNT_TABS[tab].description}
+      className="max-w-md"
+    >
+      {tabs.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="Account"
+          className="mb-3.5 grid grid-cols-2 gap-0.5 rounded-lg bg-ink-100 p-0.5"
+        >
+          {tabs.map((item) => (
+            <button
+              key={item}
+              type="button"
+              role="tab"
+              aria-selected={tab === item}
+              onClick={() => setTab(item)}
+              className={cn(
+                "inline-flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-semibold transition-colors",
+                tab === item
+                  ? "bg-surface text-ink-900 shadow-sm"
+                  : "text-ink-500 hover:text-ink-800",
+              )}
+            >
+              {item === "profile" ? (
+                <UserRound className="size-3.5" />
+              ) : (
+                <KeyRound className="size-3.5" />
+              )}
+              {ACCOUNT_TABS[item].label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === "profile" ? <ProfileForm onClose={onClose} /> : <PasswordForm onClose={onClose} />}
+    </Modal>
+  );
+}
+
 /**
  * The super admin's whole profile in one form: name, designation, email and
  * phone. Everybody else has some of these set by an admin; the super admin has
@@ -480,20 +517,6 @@ function NameLine() {
  * The current password is asked for only once the email is changed - that is
  * what the account signs in with - and not for a new title or number.
  */
-function ProfileModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Edit profile"
-      description="How you appear on every ticket, and the address you sign in with."
-      className="max-w-md"
-    >
-      {open && <ProfileForm onClose={onClose} />}
-    </Modal>
-  );
-}
-
 function ProfileForm({ onClose }: { onClose: () => void }) {
   const { session, setSession } = useAuth();
   const toast = useToast();
@@ -631,7 +654,8 @@ function ProfileForm({ onClose }: { onClose: () => void }) {
 
 export function SettingsForm() {
   const { session } = useAuth();
-  const [editingProfile, setEditingProfile] = useState(false);
+  // Which tab the account modal opens on, or null while it is closed.
+  const [account, setAccount] = useState<AccountTab | null>(null);
   const owner = isSuperAdmin(session);
   const manager = isAdmin(session);
 
@@ -700,10 +724,17 @@ export function SettingsForm() {
                 {ROLE_LABEL[session.role]}
               </span>
             )}
-            {owner && (
-              <Button size="sm" variant="outline" onClick={() => setEditingProfile(true)}>
+            {owner ? (
+              <Button size="sm" variant="outline" onClick={() => setAccount("profile")}>
                 <Pencil className="size-3.5" />
                 Edit profile
+              </Button>
+            ) : (
+              // Name and number edit in place; the password is the one thing
+              // here that needs a form of its own.
+              <Button size="sm" variant="outline" onClick={() => setAccount("password")}>
+                <KeyRound className="size-3.5" />
+                Change password
               </Button>
             )}
           </div>
@@ -748,9 +779,14 @@ export function SettingsForm() {
         </p>
       </Card>
 
-      <PasswordCard />
-
-      {owner && <ProfileModal open={editingProfile} onClose={() => setEditingProfile(false)} />}
+      {account && (
+        <AccountModal
+          key={account}
+          start={account}
+          withProfile={owner}
+          onClose={() => setAccount(null)}
+        />
+      )}
     </div>
   );
 }

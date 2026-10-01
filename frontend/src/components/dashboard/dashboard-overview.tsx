@@ -3,17 +3,11 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import Link from "next/link";
 import {
-  AlarmClock,
   ArrowUpRight,
-  CalendarClock,
   CheckCircle2,
-  Hourglass,
   Inbox,
   RefreshCw,
   Send,
-  Siren,
-  UserRound,
-  UserX,
 } from "lucide-react";
 
 import { useAuth } from "@/components/auth/auth-provider";
@@ -138,46 +132,78 @@ type Metric = {
   label: string;
   value: number;
   caption: string;
-  href: string;
-  icon: ComponentType<{ className?: string }>;
-  tone: "rose" | "amber" | "slate" | "royal" | "violet";
+  /** Where the count can be followed. Absent when no single page holds exactly it. */
+  href?: string;
+  tone:
+    | "rose"
+    | "amber"
+    | "slate"
+    | "royal"
+    | "violet"
+    | "progress"
+    | "completed"
+    | "due"
+    | "admin";
 };
 
+/** One tint per tile, from the same status tokens the ticket pages use. */
 const TONES: Record<Metric["tone"], string> = {
   rose: "bg-status-overdue-bg text-status-overdue-fg",
   amber: "bg-status-waiting-bg text-status-waiting-fg",
   slate: "bg-ink-100 text-ink-600",
   royal: "bg-royal-50 text-royal-700",
   violet: "bg-status-resolved-bg text-status-resolved-fg",
+  progress: "bg-status-progress-bg text-status-progress-fg",
+  completed: "bg-status-completed-bg text-status-completed-fg",
+  due: "bg-status-accepted-bg text-status-accepted-fg",
+  admin: "bg-tile-admin-bg text-tile-admin-fg",
 };
 
 /**
- * One number worth acting on, and the page that acts on it.
+ * One number in the row: a label and a count on its own tint, the caption
+ * kept for hover.
  *
- * Every tile here is a link: a count nobody can follow is a poster, not a
- * dashboard. Totals and completion rates are deliberately absent - they read
- * well and change nothing about what to do next.
+ * A tile is a link wherever a page lists exactly what it counts. The totals
+ * for a head or a member are the exception: they span tickets in both
+ * directions, which no single list holds, so they are plain counts rather
+ * than links that would open on a different number.
  */
-function MetricCard({ metric }: { metric: Metric }) {
-  const Icon = metric.icon;
+function MetricTile({ metric }: { metric: Metric }) {
+  const body = (
+    <>
+      <p className="truncate text-[10px] font-semibold whitespace-nowrap opacity-80">
+        {metric.label}
+      </p>
+      <p className="mt-0.5 text-base leading-none font-bold tabular-nums">{metric.value}</p>
+    </>
+  );
+  const tile = cn(
+    "min-w-24 flex-1 shrink-0 basis-0 rounded-lg px-2.5 py-1.5",
+    TONES[metric.tone],
+  );
+
+  if (!metric.href) {
+    return (
+      <div className={tile} title={metric.caption}>
+        {body}
+      </div>
+    );
+  }
 
   return (
     <Link
       href={metric.href as "/"}
-      className="group rounded-xl border border-line bg-surface px-3.5 py-3 transition-colors hover:border-royal-200 hover:bg-royal-50/40"
+      title={metric.caption}
+      // Hover deepens the tile's own tint, as on the ticket pages: a wash of
+      // its text colour laid under the content.
+      className={cn(
+        tile,
+        "relative isolate focus-visible:outline-none",
+        "before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-current",
+        "before:opacity-0 before:transition-opacity hover:before:opacity-[0.08] focus-visible:before:opacity-[0.1]",
+      )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[11px] font-semibold tracking-[0.04em] text-ink-500 uppercase">
-          {metric.label}
-        </p>
-        <span className={cn("grid size-6 shrink-0 place-items-center rounded-md", TONES[metric.tone])}>
-          <Icon className="size-3.5" />
-        </span>
-      </div>
-      <p className="mt-1.5 text-[26px] leading-none font-bold tracking-tight text-ink-900 tabular-nums">
-        {metric.value}
-      </p>
-      <p className="mt-1.5 truncate text-[11px] text-ink-400">{metric.caption}</p>
+      {body}
     </Link>
   );
 }
@@ -759,15 +785,13 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
         value: onMe.length,
         caption: onMe.length ? "open and assigned to you" : "nothing on your desk",
         href: desk,
-        icon: UserRound,
-        tone: "royal",
+        tone: "admin",
       },
       {
         label: "Past due",
         value: overdue.length,
         caption: overdue.length ? "yours, date gone" : "nothing of yours is late",
         href: `${desk}?view=past`,
-        icon: AlarmClock,
         tone: "rose",
       },
       {
@@ -775,8 +799,7 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
         value: today.length,
         caption: today.length ? "finish or re-commit" : "nothing due today",
         href: `${desk}?view=today`,
-        icon: CalendarClock,
-        tone: "amber",
+        tone: "due",
       },
       {
         label: "My requests",
@@ -787,8 +810,7 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
             ? "open requests you raised"
             : "nothing you asked for is open",
         href: approvals.length ? "/my-requests?view=approval" : "/my-requests",
-        icon: Send,
-        tone: approvals.length ? "violet" : "slate",
+        tone: approvals.length ? "violet" : "amber",
       },
     ];
   } else {
@@ -800,7 +822,6 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
         value: overdue.length,
         caption: overdue.length ? "date gone, still open" : "nothing is late",
         href: `${board}?view=past`,
-        icon: AlarmClock,
         tone: "rose",
       },
       {
@@ -808,16 +829,14 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
         value: today.length,
         caption: today.length ? "finish or re-commit" : "nothing due today",
         href: `${board}?view=today`,
-        icon: CalendarClock,
-        tone: "amber",
+        tone: "due",
       },
       {
         label: "Not picked up",
         value: unassigned.length,
         caption: unassigned.length ? "waiting for an owner" : "everything has an owner",
         href: `${board}?view=unassigned`,
-        icon: UserX,
-        tone: "slate",
+        tone: "amber",
       },
       lens === "head"
         ? {
@@ -825,7 +844,6 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
             value: teamRaised.filter(isOpen).length,
             caption: "your people's open requests",
             href: "#team-requests",
-            icon: Send,
             tone: "violet",
           }
         : {
@@ -833,7 +851,6 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
             value: open.filter(isAwaitingApproval).length,
             caption: "done, waiting on the requester",
             href: `${board}?view=approval`,
-            icon: Hourglass,
             tone: "violet",
           },
       session?.role === "superadmin"
@@ -842,19 +859,66 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
             value: open.filter((ticket) => ticket.escalation?.status === "open").length,
             caption: "waiting on your decision",
             href: "/escalations",
-            icon: Siren,
-            tone: "rose",
+            tone: "admin",
           }
         : {
             label: "On me",
             value: onMe.length,
             caption: onMe.length ? "open and assigned to you" : "nothing on your desk",
             href: desk,
-            icon: UserRound,
-            tone: "royal",
+            tone: "admin",
           },
     ];
   }
+
+  /*
+   * The whole of what this reader can see, by where it stands. The server has
+   * already drawn the line: every ticket for a manager; for a head, their own
+   * and everything to or from the departments they run; for a member, what
+   * they raised, hold, or have been asked to take.
+   *
+   * Only a manager's totals are exactly what All Tickets lists, so only theirs
+   * link there. A head's All Tickets is incoming work alone, and a member has
+   * no single page for all of theirs.
+   */
+  const byStatus = (status: TicketStatus) =>
+    tickets.filter((ticket) => ticket.status === status).length;
+  const linked = lens === "manager";
+  const totals: Metric[] = [
+    {
+      label: "All tickets",
+      value: tickets.length,
+      caption:
+        lens === "manager"
+          ? "every ticket in the workspace"
+          : lens === "head"
+            ? "yours and your departments'"
+            : "raised by, on or asked of you",
+      href: linked ? "/all-tickets?status=all" : undefined,
+      tone: "royal",
+    },
+    {
+      label: "In progress",
+      value: byStatus("In Progress"),
+      caption: "being worked on",
+      href: linked ? "/all-tickets?status=In%20Progress" : undefined,
+      tone: "progress",
+    },
+    {
+      label: "Completed",
+      value: byStatus("Completed"),
+      caption: "done and signed off",
+      href: linked ? "/all-tickets?status=Completed" : undefined,
+      tone: "completed",
+    },
+    {
+      label: "Cancelled",
+      value: byStatus("Cancelled"),
+      caption: "called off",
+      href: linked ? "/all-tickets?status=Cancelled" : undefined,
+      tone: "slate",
+    },
+  ];
 
   const attention = attentionList({
     asked,
@@ -869,6 +933,7 @@ function shape(data: DashboardData, session: ReturnType<typeof useAuth>["session
 
   return {
     lens,
+    totals,
     metrics,
     attention,
     openCount: open.length,
@@ -887,9 +952,9 @@ function DashboardSkeleton() {
   return (
     <div className="space-y-3">
       <Skeleton className="h-14 rounded-xl" />
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-        {Array.from({ length: 5 }, (_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
+      <div className="flex gap-1.5 overflow-hidden">
+        {Array.from({ length: 9 }, (_, index) => (
+          <Skeleton key={index} className="h-12 min-w-24 flex-1 basis-0 rounded-lg" />
         ))}
       </div>
       <div className="grid gap-3 xl:grid-cols-12">
@@ -1012,15 +1077,15 @@ export function DashboardOverview() {
         </p>
       )}
 
+      {/* Totals, then what needs doing, on one line: they share the width on
+          a desktop and scroll sideways on a phone rather than wrapping into a
+          second row that reads as a separate set of numbers. */}
       <section
-        aria-label="What needs doing"
-        className={cn(
-          "grid grid-cols-2 gap-3 md:grid-cols-3",
-          view.metrics.length === 4 ? "xl:grid-cols-4" : "xl:grid-cols-5",
-        )}
+        aria-label="Ticket counts"
+        className="flex gap-1.5 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden"
       >
-        {view.metrics.map((metric) => (
-          <MetricCard key={metric.label} metric={metric} />
+        {[...view.totals, ...view.metrics].map((metric) => (
+          <MetricTile key={metric.label} metric={metric} />
         ))}
       </section>
 

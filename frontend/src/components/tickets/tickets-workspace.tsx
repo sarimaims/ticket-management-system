@@ -267,7 +267,7 @@ function rangeLabel(range: { from: string; to: string }) {
 
 const isView = (value: string | null): value is View => value !== null && value in VIEWS;
 
-/** Still going: what Assigned to Me and My Requests open on. */
+/** Still going: what Assigned to Me, My Requests and All Tickets open on. */
 const LIVE_STATUSES: string[] = ["New", "In Progress", "Resolved", "Overdue"];
 const NO_STATUSES: string[] = [];
 
@@ -969,18 +969,20 @@ export function TicketsWorkspace({
   // A link can arrive already filtered: a dashboard card, or `?status=`.
   const params = useSearchParams();
   /*
-   * Your own desk and your own requests open on what is still going: New, In
-   * Progress, Awaiting Approval and Overdue are ticked, Completed and
-   * Cancelled are not. Unticked rather than hidden - the filter shows exactly
+   * Your own desk, your own requests and All Tickets open on what is still
+   * going: New, In Progress, Awaiting Approval and Overdue are ticked,
+   * Completed and Cancelled are not. Unticked rather than hidden - the filter shows exactly
    * what is left out, and ticking them brings them back.
    *
    * A link that names a status or a view has said what it wants instead.
    */
-  const liveByDefault = scope === "assigned" || scope === "mine";
+  const liveByDefault = scope === "assigned" || scope === "mine" || scope === "all";
   const defaultStatuses = liveByDefault ? LIVE_STATUSES : NO_STATUSES;
   const [statuses, setStatuses] = useState<string[]>(() => {
     const named = params.get("status");
     if (isStatus(named)) return [named];
+    // `?status=all` - the dashboard's total - asks for nothing to be left out.
+    if (named === "all") return [];
     if (isView(params.get("view"))) return [];
     return defaultStatuses;
   });
