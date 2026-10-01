@@ -8,6 +8,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { UserProfileProvider } from "@/components/users/user-profile";
 import { ApprovalBanner } from "@/components/tickets/approval-banner";
+import { QuickTodoButton } from "@/components/todos/quick-todo-button";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
@@ -25,6 +26,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <ApprovalBanner />
           <main className="min-w-0 flex-1 px-2.5 py-2.5 sm:px-3 lg:px-4 lg:py-3">{children}</main>
         </div>
+        {/* A to-do is one click away from every page. */}
+        <QuickTodoButton />
       </div>
       </UserProfileProvider>
       </NotificationProvider>
