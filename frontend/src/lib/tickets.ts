@@ -357,6 +357,50 @@ export function revalidateTickets(scope: TicketScope, etag: string | null, signa
   return apiRevalidate<{ tickets: TicketRecord[] }>(`/tickets?scope=${scope}`, etag, signal);
 }
 
+/* ---------------------------------------------------------------- dashboard */
+
+/** Whose dashboard it is: someone on tickets, someone running a team, or a manager. */
+export type DashboardLens = "member" | "head" | "manager";
+
+/**
+ * How a ticket touches the reader. `mine` is their own part in it; `team` is
+ * a head's - it sits in a queue they run, or one of their people raised it.
+ */
+export type TicketRelation = {
+  mine: ("raised" | "assigned" | "asked")[];
+  team: ("queue" | "raised")[];
+};
+
+export type DashboardTicket = TicketRecord & { relation: TicketRelation };
+
+/** One line of the feed, scoped by the server to the reader's reach. */
+export type DashboardUpdate = {
+  id: string;
+  department: { id: string; name: string } | null;
+  actor: { name: string; role: "superadmin" | "admin" | "user"; isMe: boolean };
+  action: string;
+  summary: string;
+  ticketNumber: string;
+  /** Null once the ticket is gone: still readable, no longer openable. */
+  ticketId: string | null;
+  /** About a ticket that is the reader's own, not just their team's. */
+  mine: boolean;
+  createdAt: string;
+};
+
+export type DashboardData = {
+  lens: DashboardLens;
+  /** The departments the reader runs. Empty unless they are a head. */
+  headOf: { id: string; name: string; code: string }[];
+  tickets: DashboardTicket[];
+  activity: DashboardUpdate[];
+};
+
+/** The dashboard, conditionally: an unchanged page answers 304. */
+export function revalidateDashboard(etag: string | null, signal?: AbortSignal) {
+  return apiRevalidate<DashboardData>("/tickets/dashboard", etag, signal);
+}
+
 /**
  * Two sides send this. The department works the ticket - status, assignee,
  * the date it commits to - and the person who raised it edits the request

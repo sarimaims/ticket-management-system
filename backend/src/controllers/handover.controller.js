@@ -12,7 +12,13 @@ import {
   notifyHandoverAsked,
   notifyTicketUpdated,
 } from '../services/notify.js';
-import { canWorkOn, departmentIdsOf, inTicketDepartments, visibilityFilter } from '../services/ticketAccess.js';
+import {
+  canWorkOn,
+  departmentIdsOf,
+  inTicketDepartments,
+  oversightFilter,
+  visibilityFilter,
+} from '../services/ticketAccess.js';
 
 /**
  * Who may move a ticket without being asked.
@@ -32,10 +38,13 @@ export function assignsDirectly(user, ticket) {
   return departmentIdsOf(ticket).some((id) => user.roleInDepartment(id) === 'head');
 }
 
-async function readableTicket(req) {
+async function readableTicket(req, { oversee = false } = {}) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) });
+  // Only listing asks may look with a head's oversight; making or answering
+  // one still takes the ordinary right to the ticket.
+  const access = oversee ? oversightFilter(req.user) : visibilityFilter(req.user);
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...access });
   if (!ticket) throw ApiError.notFound('Ticket not found.');
   return ticket;
 }
@@ -62,7 +71,7 @@ function present(request) {
 
 /** Every ask on this ticket, newest first. Reading it is the right to read the ticket. */
 export async function listHandovers(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
   const requests = await HandoverRequest.find({ ticket: ticket._id }).sort({ createdAt: -1 });
 
   res.json({ success: true, handovers: requests.map(present) });

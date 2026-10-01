@@ -535,10 +535,17 @@ export function TicketDetailSheet({
   onTab,
   onClose,
   onSaved,
+  readOnly,
 }: {
   ticket: TicketRecord | null;
   canWork: boolean;
   canEdit?: boolean;
+  /**
+   * Opened to follow rather than to take part - a head looking in on what
+   * their team asked of another department. Says so, and keeps the chat to
+   * reading.
+   */
+  readOnly?: string;
   /** Which pane is open. Held by the list, so a row can open straight to the
       conversation and switching tickets does not land on the wrong one. */
   tab: SheetTab;
@@ -612,6 +619,7 @@ export function TicketDetailSheet({
             onTab={onTab}
             onClose={onClose}
             onSaved={onSaved}
+            readOnly={readOnly}
           />
         )}
       </aside>
@@ -666,6 +674,7 @@ function SheetBody({
   onTab,
   onClose,
   onSaved,
+  readOnly,
 }: {
   ticket: TicketRecord;
   canWork: boolean;
@@ -674,6 +683,7 @@ function SheetBody({
   onTab: (tab: SheetTab) => void;
   onClose: () => void;
   onSaved: (ticket: TicketRecord) => void;
+  readOnly?: string;
 }) {
   const [status, setStatus] = useState<TicketStatus>(ticket.status);
   // The requested date is not ours to touch; the commitment is.
@@ -1042,10 +1052,17 @@ function SheetBody({
       {/* Mounted only while it is being read, so a closed thread costs no
           polling. The details below are hidden rather than unmounted, so an
           edit in progress survives a look at the conversation. */}
-      {tab === "chat" && <TicketChat ticket={ticket} onCount={setChatCount} />}
+      {tab === "chat" && (
+        <TicketChat ticket={ticket} onCount={setChatCount} readOnly={readOnly} />
+      )}
       {tab === "history" && <TicketHistory ticket={ticket} />}
 
       <div className={cn("flex-1 overflow-y-auto px-3 py-2.5", tab !== "details" && "hidden")}>
+        {readOnly && (
+          <p className="mb-2.5 rounded-md border border-royal-100 bg-royal-50 px-2.5 py-1.5 text-[11px] font-medium text-royal-700">
+            {readOnly}
+          </p>
+        )}
         {editing && (
           <RequestEditor
             draft={draft}

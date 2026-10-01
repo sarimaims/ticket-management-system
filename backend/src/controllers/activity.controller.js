@@ -32,7 +32,8 @@ function askedFor(department) {
  * Who reads what.
  *
  * A manager reads everything. A head reads the departments they run, all of
- * it, because running a queue means knowing what is happening in it. Everyone
+ * it, because running a queue means knowing what is happening in it - and the
+ * tickets their own people raised elsewhere, which they answer for too. Everyone
  * else reads their own work: the tickets on their desk and the ones they
  * raised, and nothing about what their colleagues are doing.
  *
@@ -61,8 +62,15 @@ export async function listActivity(req, res) {
      * a reference to every historical row would be a migration for a join
      * that this answers without one.
      */
+    // Their own tickets, and - for a head - every ticket somebody in a
+    // department they run raised elsewhere: a head follows their people's
+    // requests as well as their queue.
     const mine = await Ticket.find({
-      $or: [{ assignees: req.user._id }, { raisedBy: req.user._id }],
+      $or: [
+        { assignees: req.user._id },
+        { raisedBy: req.user._id },
+        ...(runs.length > 0 ? [{ fromDepartments: { $in: runs } }] : []),
+      ],
     }).distinct('number');
 
     const reach = [];

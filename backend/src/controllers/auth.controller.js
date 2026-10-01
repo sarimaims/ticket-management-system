@@ -1,5 +1,7 @@
 import ApiError from '../utils/ApiError.js';
 import { phoneNumber } from '../utils/phoneNumber.js';
+import { workEmail } from '../utils/workEmail.js';
+import { designation } from '../utils/designation.js';
 import { forgetUser } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { clearAuthCookie, setAuthCookie, signToken } from '../utils/token.js';
@@ -155,6 +157,65 @@ export async function changeName(req, res) {
 
   // The session cache holds this account for a few seconds; the new name
   // should be on the next request, not the one after.
+  forgetUser(user._id);
+
+  res.json({
+    success: true,
+    user: presentUser(await loadWithDepartments(user._id)),
+    features: { attachments: storageReady() },
+  });
+}
+
+/**
+ * The super admin's own profile: name, designation, email and phone, in one go.
+ *
+ * Everyone else has these set by an admin, at least in part. The super admin
+ * has nobody above them to ask, so every field of their own is theirs here.
+ * Only what is sent changes, and all of it is checked before any of it is
+ * saved, so a bad email does not leave a new name half-applied.
+ *
+ * A new email also needs the current password, as changing the password does:
+ * the email is how the account signs in, and an open browser alone should not
+ * be enough to take it over.
+ */
+export async function updateOwnProfile(req, res) {
+  if (req.user.role !== 'superadmin') {
+    throw ApiError.forbidden('Ask an admin to change your profile.');
+  }
+
+  const { name, designation: title, email, phone, currentPassword } = req.body ?? {};
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!user) throw ApiError.unauthorized('This session is no longer valid.');
+
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      throw ApiError.badRequest('Name cannot be empty.');
+    }
+    if (name.trim().length > 80) {
+      throw ApiError.badRequest('Name must be 80 characters or fewer.');
+    }
+    user.name = name.trim();
+  }
+
+  if (title !== undefined) user.designation = designation(title);
+
+  if (phone !== undefined) user.phone = phoneNumber(phone);
+
+  if (email !== undefined) {
+    const normalised = workEmail(email);
+    if (normalised !== user.email) {
+      if (!currentPassword || !(await user.verifyPassword(currentPassword))) {
+        throw ApiError.badRequest('Your current password is not correct.');
+      }
+      if (await User.exists({ email: normalised, _id: { $ne: user._id } })) {
+        throw ApiError.conflict('Another account already uses this email.');
+      }
+      user.email = normalised;
+    }
+  }
+
+  await user.save({ validateModifiedOnly: true });
   forgetUser(user._id);
 
   res.json({
