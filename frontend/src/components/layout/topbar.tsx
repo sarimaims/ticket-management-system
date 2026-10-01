@@ -102,8 +102,9 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
       <div id="page-actions" className="ml-auto flex shrink-0 items-center gap-2" />
 
       {/* Raising a ticket is one click from anywhere - except the form itself,
-          where the button would only lead back to where you are. */}
-      {pathname !== "/create-ticket" && (
+          where the button would only lead back to where you are, and the
+          personal to-do board, which is not about tickets. */}
+      {pathname !== "/create-ticket" && pathname !== "/todo" && (
         <Link
           href="/create-ticket"
           aria-label="Create ticket"

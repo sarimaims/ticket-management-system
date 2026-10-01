@@ -15,6 +15,7 @@ import {
   Plus,
   Settings,
   Siren,
+  SquareKanban,
   Ticket,
   UserCog,
   UserRound,
@@ -182,6 +183,14 @@ const NAV: NavEntry[] = [
         show: everyone,
       },
     ],
+  },
+  // A board of your own: to-dos dragged between statuses you name yourself.
+  {
+    kind: "item",
+    href: "/todo",
+    label: "To-do",
+    icon: SquareKanban,
+    show: everyone,
   },
   // Every file and link from the tickets above, searchable in one place.
   {

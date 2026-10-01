@@ -4,13 +4,16 @@ import env from './env.js';
 import Message from '../models/Message.js';
 import ThreadRead from '../models/ThreadRead.js';
 import TicketAssignment from '../models/TicketAssignment.js';
+import Todo from '../models/Todo.js';
+import TodoBoard from '../models/TodoBoard.js';
+import TodoColumn from '../models/TodoColumn.js';
 
 /**
  * Collections the Prisma schema does not describe, and whose indexes therefore
  * have to be asked for here. `createIndexes` only adds what is missing - unlike
  * `syncIndexes`, it never drops one it does not recognise.
  */
-const OURS = [Message, ThreadRead, TicketAssignment];
+const OURS = [Message, ThreadRead, TicketAssignment, Todo, TodoColumn, TodoBoard];
 
 export async function connectDatabase() {
   mongoose.set('strictQuery', true);
