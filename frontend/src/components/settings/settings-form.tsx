@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Lock, Phone, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, Pencil, Phone, ShieldCheck } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/field";
+import { Modal } from "@/components/ui/modal";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { RoleTag } from "@/components/ui/badge";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/ui/toast";
+import { WorkEmailInput } from "@/components/ui/work-email-input";
 import {
   avatarTone,
   changeName,
@@ -17,9 +20,11 @@ import {
   changePhone,
   initials,
   isAdmin,
+  isSuperAdmin,
   ROLE_LABEL,
+  updateOwnProfile,
 } from "@/lib/auth";
-import { formatPhone } from "@/lib/phone";
+import { formatPhone, isPhone, PHONE_HELP, toStoredPhone } from "@/lib/phone";
 import { errorMessage } from "@/lib/api";
 
 /** The same floor the API enforces, said out loud before it is hit. */
@@ -467,11 +472,170 @@ function NameLine() {
   );
 }
 
+/**
+ * The super admin's whole profile in one form: name, designation, email and
+ * phone. Everybody else has some of these set by an admin; the super admin has
+ * nobody above them to ask.
+ *
+ * The current password is asked for only once the email is changed - that is
+ * what the account signs in with - and not for a new title or number.
+ */
+function ProfileModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Edit profile"
+      description="How you appear on every ticket, and the address you sign in with."
+      className="max-w-md"
+    >
+      {open && <ProfileForm onClose={onClose} />}
+    </Modal>
+  );
+}
+
+function ProfileForm({ onClose }: { onClose: () => void }) {
+  const { session, setSession } = useAuth();
+  const toast = useToast();
+
+  const [name, setName] = useState(session?.name ?? "");
+  const [title, setTitle] = useState(session?.designation ?? "");
+  const [email, setEmail] = useState(session?.email ?? "");
+  const [phone, setPhone] = useState(session?.phone ?? "");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const emailChanged = email.toLowerCase() !== (session?.email ?? "").toLowerCase();
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!name.trim()) return setError("Enter your name.");
+    if (name.trim().length > MAX_NAME) return setError(`Name: at most ${MAX_NAME} characters.`);
+    if (title.trim().length < 2) return setError("Enter your designation.");
+    if (!email) return setError("Enter your email.");
+    // A number, once set, can be changed but not emptied.
+    if (phone.trim() && !isPhone(phone)) return setError(PHONE_HELP);
+    if (!phone.trim() && session?.phone) return setError("A phone number cannot be removed, only changed.");
+    if (emailChanged && !password) return setError("Enter your current password to change your email.");
+
+    const changes: Parameters<typeof updateOwnProfile>[0] = {};
+    if (name.trim() !== session?.name) changes.name = name.trim();
+    if (title.trim() !== (session?.designation ?? "")) changes.designation = title.trim();
+    if (phone.trim() && toStoredPhone(phone) !== (session?.phone ?? "")) {
+      changes.phone = toStoredPhone(phone);
+    }
+    if (emailChanged) {
+      changes.email = email;
+      changes.currentPassword = password;
+    }
+    if (Object.keys(changes).length === 0) return onClose();
+
+    setPending(true);
+    try {
+      const saved = await updateOwnProfile(changes);
+      setSession(saved);
+      toast.success(
+        "Profile saved",
+        emailChanged ? `Sign in with ${saved.email} from now on.` : undefined,
+      );
+      onClose();
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setPending(false);
+    }
+  };
+
+  const edit = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    setError("");
+  };
+
+  return (
+    <form className="space-y-3.5" onSubmit={submit} noValidate>
+      {error && (
+        <p
+          role="alert"
+          className="rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-[12px] font-medium text-brand-700"
+        >
+          {error}
+        </p>
+      )}
+
+      <div className="grid gap-3.5 sm:grid-cols-2">
+        <Field label="Full name" required htmlFor="profile-name">
+          <Input
+            id="profile-name"
+            autoComplete="name"
+            maxLength={MAX_NAME}
+            value={name}
+            onChange={(event) => edit(setName)(event.target.value)}
+          />
+        </Field>
+
+        <Field label="Designation" required htmlFor="profile-designation">
+          <Input
+            id="profile-designation"
+            maxLength={80}
+            placeholder="e.g. Chief Executive Officer"
+            value={title}
+            onChange={(event) => edit(setTitle)(event.target.value)}
+          />
+        </Field>
+
+        <Field label="Email" required htmlFor="profile-email">
+          <WorkEmailInput id="profile-email" value={email} onChange={edit(setEmail)} />
+        </Field>
+
+        <Field label="Phone number" htmlFor="profile-phone">
+          <PhoneInput
+            id="profile-phone"
+            placeholder="+971 50 123 4567"
+            value={phone}
+            onChange={edit(setPhone)}
+          />
+        </Field>
+      </div>
+
+      {/* Only when it is needed: a new sign-in address. */}
+      {emailChanged && (
+        <Field
+          label="Current password"
+          required
+          hint="(to change your email)"
+          htmlFor="profile-current-password"
+        >
+          <Input
+            id="profile-current-password"
+            type="password"
+            autoComplete="current-password"
+            icon={<Lock className="text-ink-400" />}
+            value={password}
+            onChange={(event) => edit(setPassword)(event.target.value)}
+          />
+        </Field>
+      )}
+
+      <div className="flex justify-end gap-2 border-t border-line pt-3.5">
+        <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={pending}>
+          {pending ? "Saving…" : "Save profile"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 export function SettingsForm() {
   const { session } = useAuth();
+  const [editingProfile, setEditingProfile] = useState(false);
+  const owner = isSuperAdmin(session);
+  const manager = isAdmin(session);
 
   const name = session?.name ?? "";
-  const email = session?.email ?? "";
   const memberships = session?.departments ?? [];
 
   return (
@@ -492,31 +656,71 @@ export function SettingsForm() {
           />
           <div className="min-w-0 flex-1">
             <Eyebrow>Profile</Eyebrow>
-            <NameLine />
-            {session?.designation && (
-              <p className="truncate text-[12px] font-medium text-ink-600">{session.designation}</p>
+            {owner ? (
+              // Everything edits in one form, so no links scattered per line.
+              <>
+                <p className="mt-0.5 truncate text-[14px] leading-tight font-bold text-ink-900">
+                  {name || "Your account"}
+                </p>
+                {session?.designation && (
+                  <p className="truncate text-[12px] font-medium text-ink-600">
+                    {session.designation}
+                  </p>
+                )}
+                <p className="flex items-center gap-1.5 truncate text-[11px] text-ink-400">
+                  <Mail className="size-3 shrink-0" />
+                  <span className="truncate">{session?.email}</span>
+                </p>
+                <p className="flex items-center gap-1.5 truncate text-[11px] text-ink-400">
+                  <Phone className="size-3 shrink-0" />
+                  {formatPhone(session?.phone) || "No phone number yet"}
+                </p>
+              </>
+            ) : (
+              <>
+                <NameLine />
+                {session?.designation && (
+                  <p className="truncate text-[12px] font-medium text-ink-600">
+                    {session.designation}
+                  </p>
+                )}
+                <p className="flex items-center gap-1.5 truncate text-[11px] text-ink-400">
+                  <Mail className="size-3 shrink-0" />
+                  <span className="truncate">{session?.email}</span>
+                </p>
+                {/* The number colleagues are given when a ticket has to be
+                    chased off the thread. Yours to set and to change. */}
+                <PhoneLine />
+              </>
             )}
-            <p className="truncate text-[11px] text-ink-400">{email}</p>
-            {/* The number colleagues are given when a ticket has to be
-                chased off the thread. Yours to set and to change. */}
-            <PhoneLine />
           </div>
-          {session?.role && (
-            <span className="shrink-0 rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">
-              {ROLE_LABEL[session.role]}
-            </span>
-          )}
+          <div className="flex shrink-0 flex-col items-end gap-2 self-start">
+            {session?.role && (
+              <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">
+                {ROLE_LABEL[session.role]}
+              </span>
+            )}
+            {owner && (
+              <Button size="sm" variant="outline" onClick={() => setEditingProfile(true)}>
+                <Pencil className="size-3.5" />
+                Edit profile
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="border-t border-line px-3.5 py-2.5">
           <div className="flex items-baseline justify-between gap-3">
             <Eyebrow>Departments</Eyebrow>
-            <span className="text-[10px] text-ink-300">set by your head</span>
+            {!manager && <span className="text-[10px] text-ink-300">set by your head</span>}
           </div>
 
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {memberships.length === 0 ? (
-              <span className="text-[12px] text-ink-400">Not in a department yet</span>
+              <span className="text-[12px] text-ink-400">
+                {/* A manager sits above the departments rather than in one. */}
+                {manager ? "Works across every department" : "Not in a department yet"}
+              </span>
             ) : (
               memberships.map((item) => (
                 <span
@@ -536,13 +740,17 @@ export function SettingsForm() {
         </div>
 
         <p className="border-t border-line px-3.5 py-2 text-[11px] text-ink-400">
-          {isAdmin(session)
-            ? "Your name, email and phone number appear on every ticket you raise. The name and number are yours to keep current; your email is changed from the directory."
-            : "Your name, email and phone number appear on every ticket you raise. The number is yours to keep current; ask an admin to change your name or email."}
+          {owner
+            ? "Your name, designation, email and phone number appear on every ticket you raise. All of them are yours to keep current."
+            : manager
+              ? "Your name, email and phone number appear on every ticket you raise. The name and number are yours to keep current; your email is changed from the directory."
+              : "Your name, email and phone number appear on every ticket you raise. The number is yours to keep current; ask an admin to change your name or email."}
         </p>
       </Card>
 
       <PasswordCard />
+
+      {owner && <ProfileModal open={editingProfile} onClose={() => setEditingProfile(false)} />}
     </div>
   );
 }

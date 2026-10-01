@@ -102,6 +102,22 @@ export function changeName(name: string) {
   );
 }
 
+/**
+ * The super admin's own profile. Only what is sent changes; a new email also
+ * needs the current password, as it is what the account signs in with.
+ */
+export function updateOwnProfile(changes: {
+  name?: string;
+  designation?: string;
+  email?: string;
+  phone?: string;
+  currentPassword?: string;
+}) {
+  return api<UserResponse>("/auth/profile", { method: "POST", body: changes }).then(
+    (data) => data.user,
+  );
+}
+
 export function logout() {
   return api<{ success: boolean }>("/auth/logout", { method: "POST" });
 }

@@ -40,6 +40,32 @@ export function visibilityFilter(user) {
   };
 }
 
+/** The departments this person runs, as ids. */
+export function headedDepartmentIds(user) {
+  return (user.memberships ?? [])
+    .filter((membership) => membership.role === 'head')
+    .map((membership) => membership.department);
+}
+
+/**
+ * Reading, with a head's oversight added: everything `visibilityFilter`
+ * allows, plus whatever their own team has asked of other departments.
+ *
+ * A head answers for their people's requests as much as for their own queue,
+ * so they may follow those tickets - the details, the conversation, the
+ * history - without being part of them. It is a reading right only: every
+ * write still asks `visibilityFilter`, `canWorkOn` or `isRaiser`, so a head
+ * cannot reply on, edit or move a ticket that is not theirs or their
+ * department's to work.
+ */
+export function oversightFilter(user) {
+  const base = visibilityFilter(user);
+  const headed = headedDepartmentIds(user);
+  if (!base.$or || headed.length === 0) return base;
+
+  return { $or: [...base.$or, { fromDepartments: { $in: headed } }] };
+}
+
 /** Who may work a ticket: the heads and teams of any of its departments, plus any manager. */
 export function canWorkOn(user, ticket) {
   if (MANAGER_ROLES.includes(user.role)) return true;

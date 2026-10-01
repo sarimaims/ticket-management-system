@@ -9,6 +9,7 @@ import {
   login,
   logout,
   me,
+  updateOwnProfile,
 } from '../controllers/auth.controller.js';
 
 const router = Router();
@@ -21,5 +22,7 @@ router.post('/password', requireAuth, asyncHandler(changePassword));
 router.post('/phone', requireAuth, asyncHandler(changePhone));
 // Your own name: the super admin and admins only, as nobody sits above them.
 router.post('/name', requireAuth, requireAdmin, asyncHandler(changeName));
+// The super admin's own name, designation, email and phone. Checked in the controller.
+router.post('/profile', requireAuth, asyncHandler(updateOwnProfile));
 
 export default router;

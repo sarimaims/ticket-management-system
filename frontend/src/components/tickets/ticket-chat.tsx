@@ -607,10 +607,17 @@ function RequestCard({ ticket }: { ticket: TicketRecord }) {
 export function TicketChat({
   ticket,
   onCount,
+  readOnly,
 }: {
   ticket: TicketRecord;
   /** How many messages the server has. Must be a stable function. */
   onCount?: (count: number) => void;
+  /**
+   * Set when the reader may follow the thread but not post in it - a head
+   * looking in on a ticket their team raised elsewhere. Says why, in place of
+   * the box.
+   */
+  readOnly?: string;
 }) {
   const { session, features } = useAuth();
   const { items, markOneRead } = useNotifications();
@@ -1240,6 +1247,11 @@ export function TicketChat({
         </p>
       )}
 
+      {readOnly ? (
+        <p className="border-t border-line bg-ink-50 px-3 py-2.5 text-center text-[11px] text-ink-500">
+          {readOnly}
+        </p>
+      ) : (
       <form
         className="border-t border-line px-3 py-2"
         onSubmit={(event) => {
@@ -1497,6 +1509,7 @@ export function TicketChat({
           </button>
         </div>
       </form>
+      )}
 
       <Modal
         open={pendingDelete !== null}

@@ -4,7 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import Message from '../models/Message.js';
 import ThreadRead from '../models/ThreadRead.js';
 import Ticket from '../models/Ticket.js';
-import { isRaiser, visibilityFilter } from '../services/ticketAccess.js';
+import { isRaiser, oversightFilter, visibilityFilter } from '../services/ticketAccess.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { notifyNewMessage } from '../services/notify.js';
 import { record } from '../services/activity.js';
@@ -304,10 +304,14 @@ function assertAuthor(message, user) {
  * not allowed answer the same, so the endpoint cannot be used to discover
  * which ticket ids exist.
  */
-async function readableTicket(req) {
+async function readableTicket(req, { oversee = false } = {}) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) })
+  // `oversee` is for reading only: a head may follow the thread on a ticket
+  // their team raised elsewhere, but posting into it still takes being part
+  // of the ticket.
+  const access = oversee ? oversightFilter(req.user) : visibilityFilter(req.user);
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...access })
     .populate('department', 'name code')
     .populate('raisedBy', 'name email');
 
@@ -363,7 +367,7 @@ async function markSeen(ticket, user) {
  * of their own list.
  */
 export async function messageInfo(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
   const message = await readableMessage(req, ticket);
 
   const reads = await ThreadRead.find({
@@ -397,7 +401,7 @@ export async function messageInfo(req, res) {
 
 /** The whole conversation, oldest first - the order a chat is read in. */
 export async function listMessages(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
   await markSeen(ticket, req.user);
 
   const tag = await fingerprint(ticket._id);
@@ -707,7 +711,7 @@ const trimLink = (url) => url.replace(/[.,;:!?)\]]+$/, '');
  * it is gone from the thread.
  */
 export async function listMedia(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
   const manager = MANAGER_ROLES.includes(req.user.role);
 
   const words = filenameWords(typeof req.query.q === 'string' ? req.query.q : '');

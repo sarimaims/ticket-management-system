@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import {
   answerApproval,
   countEscalations,
+  getDashboard,
   createTicket,
   createTicketUploadTarget,
   deleteTicket,
@@ -61,6 +62,8 @@ router.get('/approvals', asyncHandler(listApprovals));
 router.get('/media', asyncHandler(listLibrary));
 // How many escalations are open, for the super admin's sidebar.
 router.get('/escalations/count', asyncHandler(countEscalations));
+// The dashboard, shaped by the reader's role. Before '/:id' like the rest.
+router.get('/dashboard', asyncHandler(getDashboard));
 
 router.get('/:id', asyncHandler(getTicket));
 

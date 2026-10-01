@@ -16,6 +16,7 @@ import {
   validateTicketUpload,
 } from '../services/storage.js';
 import { zipStore } from '../services/zip.js';
+import Activity from '../models/Activity.js';
 import Department from '../models/Department.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
@@ -41,8 +42,10 @@ import {
   canWorkOn,
   departmentIdsOf,
   departmentsHeadedOn,
+  headedDepartmentIds,
   inTicketDepartments,
   isRaiser,
+  oversightFilter,
   visibilityFilter,
 } from '../services/ticketAccess.js';
 import { listCommitments, recordCommitment } from '../services/commitment.js';
@@ -425,7 +428,7 @@ async function resolveAttachments(req) {
 export async function downloadAttachment(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) });
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...oversightFilter(req.user) });
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
   const file = (ticket.attachments ?? [])[Number(req.params.index)];
@@ -463,7 +466,7 @@ export async function downloadAttachment(req, res) {
 export async function downloadAttachmentsArchive(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  const ticket = await Ticket.findOne({ _id: req.params.id, ...visibilityFilter(req.user) });
+  const ticket = await Ticket.findOne({ _id: req.params.id, ...oversightFilter(req.user) });
   if (!ticket) throw ApiError.notFound('Ticket not found.');
 
   const files = ticket.attachments ?? [];
@@ -1192,12 +1195,151 @@ export async function countEscalations(req, res) {
   res.json({ success: true, open: await Ticket.countDocuments({ escalationStatus: 'open' }) });
 }
 
+/** An id off a field that may or may not have been populated. */
+const idOf = (value) => String(value?._id ?? value ?? '');
+
+/**
+ * How a ticket touches the person reading the dashboard.
+ *
+ * `mine` is their own part in it - they raised it, it is on them, or somebody
+ * is asking them to take it. `team` is a head's part: it sits in a queue they
+ * run, or somebody in a department they run raised it. Both can hold at once,
+ * and the dashboard says "yours" whenever `mine` does, because that outranks
+ * being one of the team's.
+ */
+function relationOf(ticket, { meId, asked, headed }) {
+  const mine = [];
+  if (idOf(ticket.raisedBy) === meId) mine.push('raised');
+  if ((ticket.assignees ?? []).some((person) => idOf(person) === meId)) mine.push('assigned');
+  if (asked.has(idOf(ticket))) mine.push('asked');
+
+  const team = [];
+  if (headed.size > 0) {
+    if (departmentIdsOf(ticket).some((id) => headed.has(id))) team.push('queue');
+    if ((ticket.fromDepartments ?? []).some((item) => headed.has(idOf(item)))) team.push('raised');
+  }
+
+  return { mine, team };
+}
+
+/** How many lines of the feed the dashboard carries. */
+const FEED_SIZE = 40;
+
+/**
+ * The dashboard, shaped by who is asking - one call for the whole page.
+ *
+ * Three readers, three reaches:
+ *   - a member sees the tickets they are part of: raised, on them, or asked
+ *     of them - and the updates on those, nobody else's;
+ *   - a head sees all of that, plus every ticket in the queues they run and
+ *     every ticket their own people raised elsewhere - their team's work in
+ *     both directions - and the updates on all of it;
+ *   - a manager sees the workspace.
+ *
+ * Each ticket says how it touches the reader (see relationOf), so the page
+ * can tell a head which of their team's tickets are theirs personally.
+ *
+ * The same conditional-GET contract as the ticket list: a poll that finds
+ * nothing moved costs a 304.
+ */
+export async function getDashboard(req, res) {
+  const me = req.user;
+  const meId = String(me._id);
+  const manager = MANAGER_ROLES.includes(me.role);
+  const headedIds = manager ? [] : headedDepartmentIds(me);
+  const lens = manager ? 'manager' : headedIds.length > 0 ? 'head' : 'member';
+
+  const askedIds = await HandoverRequest.find({ to: me._id, status: 'pending' }).distinct('ticket');
+
+  let filter = {};
+  if (!manager) {
+    const reach = [{ raisedBy: me._id }, { assignees: me._id }, { _id: { $in: askedIds } }];
+    if (headedIds.length > 0) {
+      reach.push(
+        { departments: { $in: headedIds } },
+        { department: { $in: headedIds } },
+        { fromDepartments: { $in: headedIds } },
+      );
+    }
+    filter = { $or: reach };
+  }
+
+  // The feed follows the tickets: a line about a ticket outside this reach is
+  // somebody else's business. A manager reads every ticket line there is.
+  const feedFilter = manager
+    ? { ticketNumber: { $ne: '' } }
+    : { ticketNumber: { $in: await Ticket.find(filter).distinct('number') } };
+
+  const [ticketTag, newestLine] = await Promise.all([
+    fingerprint(filter),
+    Activity.findOne(feedFilter).sort({ createdAt: -1 }).select('_id').lean(),
+  ]);
+  // Tickets, the newest line of the feed, and the asks waiting on this person:
+  // any of the three moving is a different page.
+  const tag = `${ticketTag.slice(0, -1)}-${newestLine?._id ?? 0}-${askedIds.length}-${lens}"`;
+  res.set('ETag', tag);
+  res.set('Cache-Control', 'private, no-cache');
+
+  const offered = (req.headers['if-none-match'] ?? '').split(',').map((value) => value.trim());
+  if (offered.includes(tag)) {
+    res.status(304).end();
+    return;
+  }
+
+  const [tickets, lines, headOf] = await Promise.all([
+    Ticket.find(filter).sort({ createdAt: -1 }).lean(),
+    Activity.find(feedFilter).sort({ createdAt: -1 }).limit(FEED_SIZE).lean(),
+    headedIds.length > 0
+      ? Department.find({ _id: { $in: headedIds } }).select('name code').lean()
+      : [],
+  ]);
+
+  const asked = new Set(askedIds.map(String));
+  const headed = new Set(headedIds.map(String));
+
+  const presented = (await hydrate(tickets)).map((ticket) => ({
+    ...present(ticket, { awaiting: asked }),
+    relation: relationOf(ticket, { meId, asked, headed }),
+  }));
+
+  const byNumber = new Map(presented.map((ticket) => [ticket.number, ticket]));
+
+  res.json({
+    success: true,
+    lens,
+    headOf: headOf.map((department) => ({
+      id: String(department._id),
+      name: department.name,
+      code: department.code ?? '',
+    })),
+    tickets: presented,
+    activity: lines.map((line) => {
+      const ticket = byNumber.get(line.ticketNumber);
+      return {
+        id: String(line._id),
+        department: line.department
+          ? { id: String(line.department), name: line.departmentName }
+          : null,
+        actor: { name: line.actorName, role: line.actorRole, isMe: idOf(line.actor) === meId },
+        action: line.action,
+        summary: line.summary,
+        ticketNumber: line.ticketNumber,
+        // Null once the ticket is gone: the line stays readable, not openable.
+        ticketId: ticket?.id ?? null,
+        mine: Boolean(ticket && ticket.relation.mine.length > 0),
+        createdAt: line.createdAt,
+      };
+    }),
+  });
+}
+
 export async function getTicket(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
+  // Reading only, so a head may open what their team asked of others.
   const found = await Ticket.findOne({
     _id: req.params.id,
-    ...visibilityFilter(req.user),
+    ...oversightFilter(req.user),
   }).lean();
 
   const ticket = found ? await hydrateOne(found) : null;
@@ -1221,7 +1363,7 @@ export async function listAssignments(req, res) {
 
   const ticket = await Ticket.findOne({
     _id: req.params.id,
-    ...visibilityFilter(req.user),
+    ...oversightFilter(req.user),
   }).select('_id');
 
   if (!ticket) throw ApiError.notFound('Ticket not found.');

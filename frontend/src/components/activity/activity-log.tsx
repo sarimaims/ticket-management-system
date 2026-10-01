@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
  * Every row in this log carries one, and forty tinted chips down a page read as
  * decoration rather than as meaning. A dot says the same thing quietly.
  */
-const ACTION_DOTS: Record<string, string> = {
+export const ACTION_DOTS: Record<string, string> = {
   "ticket.created": "bg-status-new-fg",
   "ticket.updated": "bg-status-progress-fg",
   "ticket.deleted": "bg-status-overdue-fg",
@@ -85,7 +85,7 @@ const ACTION_ROWS: Record<string, { row: string; label: string }> = {
   },
 };
 
-const ACTION_LABELS: Record<string, string> = {
+export const ACTION_LABELS: Record<string, string> = {
   "ticket.created": "Ticket raised",
   "ticket.updated": "Ticket updated",
   "ticket.deleted": "Ticket deleted",
