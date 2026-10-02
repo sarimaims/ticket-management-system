@@ -10,6 +10,8 @@ export const NOTIFICATION_TYPES = [
   'ticket.updated',
   'ticket.edited',
   'ticket.message',
+  /** Somebody named you in a message with "@". */
+  'ticket.mention',
   /** Somebody is asking you to take a ticket on. */
   'ticket.handover',
   /** They answered the one you sent. */
@@ -40,6 +42,7 @@ export const NOTIFICATION_EVENTS = [
   'moved',
   'edited',
   'message',
+  'mention',
   'handover',
   'handover.answered',
   'deleted',

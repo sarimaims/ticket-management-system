@@ -25,6 +25,7 @@ import { TicketHistory } from "@/components/tickets/ticket-history";
 import { StatusPicker } from "@/components/tickets/status-picker";
 import { ApprovalCard } from "@/components/tickets/approval-card";
 import { EscalationCard } from "@/components/tickets/escalation-card";
+import { ApprovalConfirmModal } from "@/components/tickets/approval-confirm-modal";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
@@ -37,8 +38,7 @@ import {
   departmentsOf,
   isShared,
   updateTicket,
-  type TicketRecord,
-} from "@/lib/tickets";
+  type TicketRecord, APPROVAL_WINDOW_TEXT } from "@/lib/tickets";
 import { formatBytes } from "@/lib/uploads";
 import { errorMessage } from "@/lib/api";
 import { isAdmin, isHead } from "@/lib/auth";
@@ -717,6 +717,8 @@ function SheetBody({
   const [pending, setPending] = useState(false);
   /** Open while Cancelled waits on its remark. */
   const [cancelling, setCancelling] = useState(false);
+  /** Asked to finish somebody else's request: the approval box is open. */
+  const [approving, setApproving] = useState(false);
   const toast = useToast();
 
   // The raiser's side of the sheet: reading turns into editing in place, so
@@ -745,7 +747,10 @@ function SheetBody({
   const unread = useMemo(
     () =>
       items.filter(
-        (item) => item.type === "ticket.message" && !item.read && item.ticket === ticket.id,
+        (item) =>
+          (item.type === "ticket.message" || item.type === "ticket.mention") &&
+          !item.read &&
+          item.ticket === ticket.id,
       ).length,
     [items, ticket.id],
   );
@@ -779,6 +784,10 @@ function SheetBody({
   const { session } = useAuth();
   const direct = assignsDirectly(session, ticket);
   const meId = session?.id;
+  // Finishing somebody else's request asks them first; your own does not, and
+  // one already waiting or done has nothing left to ask.
+  const sendsForApproval =
+    ticket.raisedBy.id !== meId && ticket.status !== "Resolved" && ticket.status !== "Completed";
 
   const loadHandovers = useCallback(() => {
     listHandovers(ticket.id)
@@ -1010,7 +1019,7 @@ function SheetBody({
         toast.show({
           tone: "approval",
           title: `#${ticket.number} sent for approval`,
-          description: `${ticket.raisedBy.name ?? "The requester"} has 48 hours to approve it or send it back. It completes on its own after that.`,
+          description: `${ticket.raisedBy.name ?? "The requester"} has ${APPROVAL_WINDOW_TEXT} to approve it or send it back. It completes on its own after that.`,
           duration: 8000,
         });
       } else {
@@ -1033,6 +1042,17 @@ function SheetBody({
 
   return (
     <>
+      <ApprovalConfirmModal
+        ticket={approving ? ticket : null}
+        pending={pending}
+        onClose={() => setApproving(false)}
+        onConfirm={() => {
+          setApproving(false);
+          setStatus("Completed");
+          void save("Completed");
+        }}
+      />
+
       <CancelTicketModal
         ticket={cancelling ? ticket : null}
         pending={pending}
@@ -1282,7 +1302,10 @@ function SheetBody({
                     onChange={(next) =>
                       next === "Cancelled" && ticket.status !== "Cancelled"
                         ? setCancelling(true)
-                        : setStatus(next)
+                        : next === "Completed" && sendsForApproval
+                          ? // Somebody else's request: say so before it goes.
+                            setApproving(true)
+                          : setStatus(next)
                     }
                     label={`Status for #${ticket.number}`}
                     needsApproval={ticket.raisedBy.id !== meId}
@@ -1607,6 +1630,10 @@ function SheetBody({
             variant="outline"
             className="flex-1 text-status-completed-fg"
             onClick={() => {
+              if (sendsForApproval) {
+                setApproving(true);
+                return;
+              }
               setStatus("Completed");
               save("Completed");
             }}

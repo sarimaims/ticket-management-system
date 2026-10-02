@@ -34,7 +34,7 @@ const MATCHES: Record<Exclude<Filter, "all" | "unread">, NotificationEvent[]> = 
   status: ["completed", "cancelled", "status", "edited"],
   deadlines: ["promise"],
   people: ["assigned", "moved", "handover", "handover.answered"],
-  messages: ["message"],
+  messages: ["message", "mention"],
 };
 
 const FILTERS: { key: Filter; label: string }[] = [

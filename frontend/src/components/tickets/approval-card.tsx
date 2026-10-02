@@ -6,7 +6,7 @@ import { CheckCircle2, CircleCheckBig, Clock, ShieldCheck, Undo2 } from "lucide-
 import { approvalsChanged, timeLeft } from "@/components/tickets/approval-banner";
 import { useToast } from "@/components/ui/toast";
 import { errorMessage } from "@/lib/api";
-import { answerApproval, type TicketRecord } from "@/lib/tickets";
+import { answerApproval, type TicketRecord, APPROVAL_WINDOW_TEXT } from "@/lib/tickets";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
 
 /** Long enough to say what is missing; the API holds the same limit. */
@@ -129,7 +129,7 @@ export function ApprovalCard({
               If you do not answer, it completes on its own
               {ticket.approvalDueAt
                 ? ` on ${formatDateOf(ticket.approvalDueAt)} at ${formatTime(ticket.approvalDueAt)}`
-                : " after 48 hours"}
+                : ` after ${APPROVAL_WINDOW_TEXT}`}
               .
             </span>
           </p>
@@ -249,7 +249,7 @@ export function ApprovalCard({
           <span className="font-bold">
             {auto ? "Approved automatically" : `Approved by ${ticket.approvedByName}`}
           </span>
-          {auto && " - no answer within 48 hours"}
+          {auto && ` - no answer within ${APPROVAL_WINDOW_TEXT}`}
           {ticket.completedAt && (
             <span className="opacity-80">
               {" "}

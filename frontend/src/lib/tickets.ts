@@ -130,6 +130,12 @@ export function isQuiet(ticket: TicketRecord) {
 /** Done by the department and waiting for the requester to sign it off. */
 export const isAwaitingApproval = (ticket: TicketRecord) => ticket.status === "Resolved";
 
+/**
+ * How long the requester has to answer before a resolved ticket completes on
+ * its own, in words. Must match APPROVAL_WINDOW_MS on the server.
+ */
+export const APPROVAL_WINDOW_TEXT = "48 hours";
+
 /** Open with nobody on it. */
 export const isUnassigned = (ticket: TicketRecord) =>
   !isSettled(ticket.status) && ticket.assignees.length === 0;

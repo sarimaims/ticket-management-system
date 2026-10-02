@@ -32,7 +32,7 @@ import {
 } from "@/lib/messages";
 import { cn, formatDateOf, formatTime } from "@/lib/utils";
 import { UserLink } from "@/components/users/user-profile";
-import { Linkified } from "@/components/tickets/linkified";
+import { MessageText } from "@/components/tickets/linkified";
 
 /** Roughly how tall the panel is, used to decide which way it opens. */
 const PANEL_HEIGHT = 220;
@@ -448,6 +448,7 @@ function MessageMenu({
  */
 export function ChatMessage({
   message,
+  meId,
   mine,
   pending,
   departmentName,
@@ -466,6 +467,8 @@ export function ChatMessage({
   busy,
 }: {
   message: MessageRecord;
+  /** Who is reading, so a line naming them can say so. */
+  meId?: string;
   mine: boolean;
   /** Written here but not yet acknowledged by the server. */
   pending?: boolean;
@@ -658,7 +661,14 @@ export function ChatMessage({
             {/* The clock sits on the last line of the text when there is room
                 for it, and drops to its own line when there is not. */}
             <div className={cn(image && "px-1.5 pt-1 pb-0.5")}>
-              {message.body && <Linkified text={message.body} className="whitespace-pre-wrap" />}
+              {message.body && (
+                <MessageText
+                  text={message.body}
+                  mentions={message.mentions}
+                  meId={meId}
+                  className="whitespace-pre-wrap"
+                />
+              )}
               <span className="float-right mt-0.5 translate-y-0.5">{meta}</span>
               <span className="clear-both block" />
             </div>

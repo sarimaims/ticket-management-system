@@ -77,6 +77,8 @@ export type MessageRecord = {
   /** Which end of the ticket it was written from. */
   side: "raiser" | "department";
   body: string;
+  /** The people the line names with "@", as written - the words to mark. */
+  mentions: { id: string; name: string }[];
   attachment: MessageAttachment | null;
   /** Set when the author has corrected it since. */
   editedAt: string | null;
@@ -135,10 +137,16 @@ export function revalidateMessages(ticketId: string, etag: string | null, signal
  * storage - the API checks it landed before it writes the message.
  */
 /** Corrects a line you wrote. The previous text is kept for admins. */
-export function editMessage(ticketId: string, messageId: string, body: string) {
+export function editMessage(
+  ticketId: string,
+  messageId: string,
+  body: string,
+  /** People newly named in the corrected text; the ones still written are kept. */
+  mentions?: string[],
+) {
   return api<{ message: MessageRecord }>(`/tickets/${ticketId}/messages/${messageId}`, {
     method: "PATCH",
-    body: { body },
+    body: { body, ...(mentions?.length ? { mentions } : {}) },
   }).then((data) => data.message);
 }
 
@@ -158,10 +166,17 @@ export function sendMessage(
   attachment?: { kind: AttachmentKind; key: string; durationMs?: number; filename?: string },
   /** The message being answered, if this is a reply. */
   replyTo?: string | null,
+  /** The people named with "@" - the server checks each can read the ticket. */
+  mentions?: string[],
 ) {
   return api<{ message: MessageRecord }>(`/tickets/${ticketId}/messages`, {
     method: "POST",
-    body: { body, ...(attachment ? { attachment } : {}), ...(replyTo ? { replyTo } : {}) },
+    body: {
+      body,
+      ...(attachment ? { attachment } : {}),
+      ...(replyTo ? { replyTo } : {}),
+      ...(mentions?.length ? { mentions } : {}),
+    },
   }).then((data) => data.message);
 }
 

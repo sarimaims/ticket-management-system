@@ -6,7 +6,7 @@ import ThreadRead from '../models/ThreadRead.js';
 import Ticket from '../models/Ticket.js';
 import { isRaiser, oversightFilter, visibilityFilter } from '../services/ticketAccess.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
-import { notifyNewMessage } from '../services/notify.js';
+import { notifyMentioned, notifyNewMessage } from '../services/notify.js';
 import { record } from '../services/activity.js';
 import { cleanFilename, filenameWords } from '../utils/fileName.js';
 import { statusOf } from '../services/overdue.js';
@@ -215,6 +215,10 @@ async function present(message, viewer, context = {}) {
     authorRole: message.authorRole,
     side: message.side,
     body: hidden ? '' : message.body,
+    /** Who the line names with "@", as written - the words to mark. */
+    mentions: hidden
+      ? []
+      : (message.mentions ?? []).map((mention) => ({ id: String(mention.user), name: mention.name })),
     /** Corrected by its author, and when. */
     editedAt: message.editedAt ?? null,
     deleted,
@@ -500,6 +504,8 @@ export async function createMessage(req, res) {
     throw ApiError.badRequest(`A message cannot be longer than ${MAX_BODY} characters.`);
   }
 
+  const mentions = await resolveMentions(req, ticket, body);
+
   const message = await Message.create({
     ticket: ticket._id,
     author: req.user._id,
@@ -509,6 +515,7 @@ export async function createMessage(req, res) {
     body,
     attachment,
     replyTo,
+    mentions,
   });
 
   // The ticket carries the thread's size and its last line, so a list can show
@@ -521,9 +528,14 @@ export async function createMessage(req, res) {
   );
 
   const trimmed = body.length > PREVIEW ? `${body.slice(0, PREVIEW - 1)}…` : body;
+  const named = mentions.map((mention) => mention.user);
+  if (named.length > 0) {
+    await notifyMentioned({ ticket, actor: req.user, recipients: named, preview: trimmed });
+  }
   await notifyNewMessage({
     ticket,
     actor: req.user,
+    skip: named,
     // A bell that says "Photo" is more use than one that says nothing.
     // A file's own name says more than its kind: "Document" tells nobody
     // whether it is the invoice they were waiting for.
@@ -562,10 +574,27 @@ export async function updateMessage(req, res) {
 
   // Saying the same thing again is not an edit.
   if (body !== message.body) {
+    // A name taken out of the text is no longer a mention; one put in is.
+    const kept = (message.mentions ?? []).filter((mention) => body.includes(`@${mention.name}`));
+    const known = new Set(kept.map((mention) => String(mention.user)));
+    const added = (await resolveMentions(req, ticket, body)).filter(
+      (mention) => !known.has(String(mention.user)),
+    );
+
     message.revisions.push({ body: message.body, replacedAt: new Date() });
     message.body = body;
+    message.mentions = [...kept, ...added];
     message.editedAt = new Date();
     await message.save();
+
+    if (added.length > 0) {
+      await notifyMentioned({
+        ticket,
+        actor: req.user,
+        recipients: added.map((mention) => mention.user),
+        preview: body.length > PREVIEW ? `${body.slice(0, PREVIEW - 1)}…` : body,
+      });
+    }
 
     // Changing what was said is worth a line of its own: the thread shows
     // that it happened, the log shows who and when, and an admin can still
@@ -615,6 +644,55 @@ export async function deleteMessage(req, res) {
   }
 
   res.json({ success: true, message: await presentOne(message, req.user, ticket) });
+}
+
+/** The most people one line can name, so a mention stays a mention and not a broadcast. */
+const MAX_MENTIONS = 20;
+
+/**
+ * The people a line names with "@", checked.
+ *
+ * Only someone who can read the ticket can be named - whoever raised it, whoever
+ * holds it, anyone in a department working it, a head of the department it came
+ * from, or a manager - so a mention never sends a bell to someone the ticket
+ * would then refuse. And only a name still written in the text counts: one
+ * picked and then deleted before sending is not a mention. The author naming
+ * themselves is dropped.
+ */
+async function resolveMentions(req, ticket, body) {
+  const raw = req.body?.mentions;
+  if (!Array.isArray(raw) || raw.length === 0 || !body) return [];
+
+  const ids = [...new Set(raw.map(String))]
+    .filter((id) => mongoose.isValidObjectId(id) && id !== String(req.user._id))
+    .slice(0, MAX_MENTIONS);
+  if (ids.length === 0) return [];
+
+  const working = new Set(
+    [ticket.department, ...(ticket.departments ?? [])]
+      .map((item) => String(item?._id ?? item ?? ''))
+      .filter(Boolean),
+  );
+  const asking = new Set((ticket.fromDepartments ?? []).map((item) => String(item?._id ?? item)));
+  const raiser = String(ticket.raisedBy?._id ?? ticket.raisedBy ?? '');
+  const holders = new Set((ticket.assignees ?? []).map((person) => String(person?._id ?? person)));
+
+  const people = await User.find({ _id: { $in: ids }, status: { $ne: 'suspended' } }).select(
+    'name role memberships',
+  );
+
+  return people
+    .filter((person) => {
+      const id = String(person._id);
+      if (id === raiser || holders.has(id) || MANAGER_ROLES.includes(person.role)) return true;
+      return (person.memberships ?? []).some(
+        (membership) =>
+          working.has(String(membership.department)) ||
+          (membership.role === 'head' && asking.has(String(membership.department))),
+      );
+    })
+    .filter((person) => body.includes(`@${person.name}`))
+    .map((person) => ({ user: person._id, name: person.name }));
 }
 
 /**

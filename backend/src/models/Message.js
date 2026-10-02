@@ -133,6 +133,21 @@ const messageSchema = new mongoose.Schema(
       default: null,
     },
     /**
+     * The people named in the line with "@". Checked on the way in against who
+     * can read the ticket, and kept with the name as it was written, so the
+     * thread marks exactly those words and nothing that merely looks like one.
+     */
+    mentions: {
+      type: [
+        {
+          user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+          name: { type: String, required: true },
+          _id: false,
+        },
+      ],
+      default: [],
+    },
+    /**
      * A photo, a video, a document or a voice note living in S3. Only the key
      * is stored: the URL is signed fresh on every read, so the bucket can stay
      * private and a link copied out of the page stops working before long.
