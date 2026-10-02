@@ -47,7 +47,8 @@ export function MembershipRows({
   onChange,
   invalid,
 }: {
-  departments: Department[];
+  /** The departments a role can be in - every one for an admin, a head's own for a head. */
+  departments: Pick<Department, "id" | "name" | "unit">[];
   value: MembershipInput[];
   onChange: (value: MembershipInput[]) => void;
   /** Saving was refused for want of a role: say so where the row would go. */
@@ -276,6 +277,8 @@ export function MembershipRows({
         );
       })}
 
+      {/* Gone once every department has a row: one more could only repeat one. */}
+      {rows.length < departments.length && (
       <button
         type="button"
         onClick={add}
@@ -288,6 +291,7 @@ export function MembershipRows({
         <Plus className="size-4" />
         {rows.length === 0 ? "Add a role" : "Add another role"}
       </button>
+      )}
     </div>
   );
 }

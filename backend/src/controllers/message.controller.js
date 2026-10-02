@@ -927,7 +927,9 @@ export async function listLibrary(req, res) {
   const manager = MANAGER_ROLES.includes(req.user.role);
   const words = filenameWords(typeof req.query.q === 'string' ? req.query.q : '');
 
-  const tickets = await Ticket.find(visibilityFilter(req.user))
+  // Every ticket this person may read - a head's oversight of their team's
+  // requests included - since the library only ever shows, never changes.
+  const tickets = await Ticket.find(oversightFilter(req.user))
     .select('number subject status deadline committedDeadline department departments raisedBy attachments description createdAt')
     .populate('department', 'name')
     .populate('departments', 'name')

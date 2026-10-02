@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  PanelLeftOpen,
+  PanelLeftClose,
   Building,
   Building2,
   ChevronDown,
@@ -249,9 +251,17 @@ function writeClosed(ids: string[]) {
 export function Sidebar({
   open,
   onClose,
+  collapsed = false,
+  onToggleCollapsed,
 }: {
   open: boolean;
   onClose: () => void;
+  /**
+   * Folded to its icons on a desktop. The phone drawer ignores it: a drawer
+   * that slides over the page has the room for its words.
+   */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   const pathname = usePathname();
   const { session } = useAuth();
@@ -288,9 +298,11 @@ export function Sidebar({
         href={href}
         onClick={onClose}
         aria-current={active ? "page" : undefined}
+        title={collapsed ? label : undefined}
         className={cn(
-          "group flex items-center gap-2 rounded-md py-1.5 pr-2 text-[13px] font-semibold transition-colors",
+          "group relative flex items-center gap-2 rounded-md py-1.5 pr-2 text-[13px] font-semibold transition-colors",
           nested ? "pl-4" : "pl-2",
+          collapsed && "lg:justify-center lg:px-0",
           active
             ? "bg-brand-50 text-brand-700"
             : "text-ink-600 hover:bg-ink-50 hover:text-ink-900",
@@ -312,9 +324,15 @@ export function Sidebar({
             <Icon className="size-4" strokeWidth={2} />
           </span>
         )}
-        {label}
+        <span className={cn("truncate", collapsed && "lg:hidden")}>{label}</span>
         {count !== undefined && count > 0 && (
-          <span className="ml-auto rounded-full bg-status-escalated-strong px-1.5 py-px text-[10px] leading-4 font-bold text-white tabular-nums">
+          <span
+            className={cn(
+              "ml-auto rounded-full bg-status-escalated-strong px-1.5 py-px text-[10px] leading-4 font-bold text-white tabular-nums",
+              // Folded, the count sits on the icon's corner.
+              collapsed && "lg:absolute lg:-top-0.5 lg:right-0.5 lg:ml-0 lg:px-1 lg:text-[9px] lg:leading-3.5",
+            )}
+          >
             {count}
           </span>
         )}
@@ -335,14 +353,39 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-52 flex-col border-r border-line bg-surface transition-transform duration-200 lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-52 flex-col border-r border-line bg-surface transition-[transform,width] duration-200 lg:translate-x-0",
+          collapsed && "lg:w-14",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-11 shrink-0 items-center justify-between px-3">
-          <Link href={homeFor(session) as "/"} onClick={onClose}>
+        <div
+          className={cn(
+            "flex h-11 shrink-0 items-center justify-between px-3",
+            collapsed && "lg:justify-center lg:px-0",
+          )}
+        >
+          <Link
+            href={homeFor(session) as "/"}
+            onClick={onClose}
+            className={cn(collapsed && "lg:hidden")}
+          >
             <Logo />
           </Link>
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="hidden size-8 place-items-center rounded-md text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700 lg:grid"
+            >
+              {collapsed ? (
+                <PanelLeftOpen className="size-4.5" />
+              ) : (
+                <PanelLeftClose className="size-4.5" />
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -353,7 +396,12 @@ export function Sidebar({
           </button>
         </div>
 
-        <nav className="flex-1 space-y-px overflow-y-auto px-2 py-2">
+        <nav
+          className={cn(
+            "flex-1 space-y-px overflow-y-auto px-2 py-2",
+            collapsed && "lg:overflow-x-hidden lg:px-1.5",
+          )}
+        >
           {/* The super admin's own desk comes first: what people escalate to
               them is the reason they open the app. */}
           {top &&
@@ -383,6 +431,14 @@ export function Sidebar({
 
             return (
               <div key={entry.id} className="pt-0.5">
+                {collapsed && (
+                  // Folded: no heading to open, just the pages, set apart by a
+                  // hairline so the groups still read as groups.
+                  <div className="hidden space-y-px border-t border-line pt-1.5 mt-1 lg:block">
+                    {items.map((item) => renderItem(item))}
+                  </div>
+                )}
+                <div className={cn(collapsed && "lg:hidden")}>
                 <button
                   type="button"
                   onClick={() => toggle(entry.id)}
@@ -419,12 +475,13 @@ export function Sidebar({
                     {items.map((item) => renderItem(item, true))}
                   </div>
                 )}
+                </div>
               </div>
             );
           })}
         </nav>
 
-        <SidebarProfile onNavigate={onClose} />
+        <SidebarProfile onNavigate={onClose} collapsed={collapsed} />
       </aside>
     </>
   );

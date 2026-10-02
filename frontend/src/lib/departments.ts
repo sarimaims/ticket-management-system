@@ -7,6 +7,7 @@ const dropLists = () => {
   forget("units:");
 };
 import type { DepartmentRole, Membership } from "./auth";
+import type { MembershipInput } from "./users";
 
 /** The unit a department sits under, as the API sends it alongside. */
 export type DepartmentUnit = { id: string; name?: string; code?: string };
@@ -182,6 +183,8 @@ export function addMember(
     designation?: string;
     password?: string;
     role: DepartmentRole;
+    /** Further roles in other departments, given at the same time. */
+    memberships?: MembershipInput[];
   },
 ) {
   return api<{ member: Member }>(`/departments/${departmentId}/members`, {

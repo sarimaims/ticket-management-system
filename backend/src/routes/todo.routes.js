@@ -12,6 +12,7 @@ import {
   deleteColumn,
   deleteTodo,
   getBoard,
+  getSummary,
   moveTodo,
   reorderColumns,
   updateColumn,
@@ -26,6 +27,8 @@ router.use(requireAuth);
 // `?board=<id>`: one workspace's columns and cards.
 router.get('/', asyncHandler(getBoard));
 
+// Everything at once, for the dashboard.
+router.get('/summary', asyncHandler(getSummary));
 router.get('/boards', asyncHandler(listBoards));
 router.post('/boards', asyncHandler(createBoard));
 router.patch('/boards/:id', asyncHandler(updateBoard));

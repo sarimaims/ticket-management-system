@@ -229,6 +229,27 @@ export async function deleteBoard(req, res) {
 /* ----------------------------------------------------------------- board */
 
 /** One workspace in one answer: columns left to right, cards top to bottom. */
+/**
+ * Every to-do the caller has, across all their workspaces, for the
+ * dashboard's brief. Columns carry their board so the brief can say where a
+ * card lives; nothing here is created on the way, unlike opening a board.
+ */
+export async function getSummary(req, res) {
+  const boards = await boardsOf(req.user);
+  const defaultId = await defaultBoardId(req.user);
+  const [columns, todos] = await Promise.all([
+    TodoColumn.find({ user: req.user._id }).sort({ order: 1, createdAt: 1 }),
+    Todo.find({ user: req.user._id }).sort({ dueDate: 1, order: 1 }),
+  ]);
+
+  res.json({
+    success: true,
+    boards: boards.map((board) => presentBoard(board, defaultId)),
+    columns: columns.map((column) => ({ ...presentColumn(column), board: String(column.board ?? '') })),
+    todos: todos.map(presentTodo),
+  });
+}
+
 export async function getBoard(req, res) {
   await boardsOf(req.user);
   const board = await ownBoard(req.user, req.query.board);

@@ -35,6 +35,7 @@ import {
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { ACTION_LABELS } from "@/components/activity/activity-log";
+import { TodoBrief } from "@/components/dashboard/todo-brief";
 import { DepartmentChart, type DepartmentPoint } from "@/components/dashboard/department-chart";
 import {
   ActionNeeded,
@@ -683,7 +684,9 @@ function waitedFor(since: string) {
 }
 
 /** The workload list's columns: who, then one narrow column per slice. */
-const WORKLOAD_GRID = "grid grid-cols-[minmax(0,1fr)_repeat(4,4.25rem)] items-center gap-x-1 sm:grid-cols-[minmax(0,1fr)_repeat(4,5.75rem)]";
+// Narrow enough to share a row with the to-dos: the four number columns give
+// way before the names do.
+const WORKLOAD_GRID = "grid grid-cols-[minmax(6rem,1fr)_repeat(4,minmax(0,3.75rem))] items-center gap-x-1";
 
 /**
  * The team's load as one quiet list: a row per person, four plain numbers in
@@ -753,10 +756,10 @@ function WorkloadPanel({
                   <span
                     key={item.key}
                     role="columnheader"
-                    className="flex items-center justify-center gap-1 truncate"
+                    className="flex flex-col items-center gap-1 text-center leading-tight"
                   >
                     <span className={cn("size-1.5 shrink-0 rounded-full", item.dot)} aria-hidden="true" />
-                    <span className="truncate">{item.label}</span>
+                    <span>{item.label}</span>
                   </span>
                 ))}
               </div>
@@ -1312,22 +1315,26 @@ export function DashboardOverview() {
 
           <WorkTable tabs={view.tabs} onOpen={openTicket} />
 
-          {view.lens === "head" && view.workload && (
-            <WorkloadPanel
-              load={view.workload}
-              meId={meId}
-              onShow={(key, filter) => {
-                setSpec(null);
-                setWorkloadKey(`${key}:${filter ?? "open"}`);
-              }}
-            />
-          )}
+          {/* Your own list beside your team's load: what is on you, and on them. */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <TodoBrief />
+            {view.lens === "head" && view.workload && (
+              <WorkloadPanel
+                load={view.workload}
+                meId={meId}
+                onShow={(key, filter) => {
+                  setSpec(null);
+                  setWorkloadKey(`${key}:${filter ?? "open"}`);
+                }}
+              />
+            )}
 
-          {view.lens === "manager" && view.departments.length > 0 && (
-            <Card title="Where the work sits" caption="Open tickets per department">
-              <DepartmentChart data={view.departments} />
-            </Card>
-          )}
+            {view.lens === "manager" && view.departments.length > 0 && (
+              <Card title="Where the work sits" caption="Open tickets per department">
+                <DepartmentChart data={view.departments} />
+              </Card>
+            )}
+          </div>
         </div>
 
         {/* The side column: what is waiting on you, the picture, the days ahead. */}

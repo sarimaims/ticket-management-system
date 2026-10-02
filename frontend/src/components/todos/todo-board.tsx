@@ -45,7 +45,7 @@ import { cn, formatDate } from "@/lib/utils";
  * wash and edge, the badge its name sits in, and the dot. One hue per lane, so
  * a board reads by colour before a single name is read.
  */
-const COLOR: Record<
+export const COLOR: Record<
   TodoColor,
   {
     dot: string;
@@ -132,7 +132,7 @@ const COLOR: Record<
 };
 
 /** The strip down a card's left edge, in its priority's colour. */
-const EDGE: Record<TicketPriority, string> = {
+export const EDGE: Record<TicketPriority, string> = {
   Low: "bg-priority-low-dot",
   Medium: "bg-priority-medium-dot",
   High: "bg-priority-high-dot",

@@ -401,13 +401,69 @@ export async function deleteDepartment(req, res) {
  * Adds someone to a department as head or team. A new email creates the
  * account; an existing email is attached to the department instead.
  */
+/** The most roles one request can hand out on top of the first. */
+const MAX_EXTRA_ROLES = 20;
+
+/**
+ * Further roles asked for alongside the first, checked one by one: a real
+ * department, one the person asking may add to - a head their own, an admin
+ * any - a valid role, and a designation in each. The first department again,
+ * or one named twice, is quietly dropped rather than refused.
+ */
+async function extraMemberships(user, firstId, input) {
+  if (input === undefined || input === null) return [];
+  if (!Array.isArray(input)) throw ApiError.badRequest('Memberships must be a list.');
+
+  const seen = new Set([String(firstId)]);
+  const extra = [];
+
+  for (const entry of input.slice(0, MAX_EXTRA_ROLES)) {
+    const departmentId = entry?.department;
+    assertObjectId(departmentId, 'department id');
+    if (seen.has(String(departmentId))) continue;
+    seen.add(String(departmentId));
+
+    if (!DEPARTMENT_ROLES.includes(entry?.role)) {
+      throw ApiError.badRequest(`Role must be one of: ${DEPARTMENT_ROLES.join(', ')}.`);
+    }
+
+    const found = await Department.findById(departmentId).select('name');
+    if (!found) throw ApiError.badRequest('One of those departments does not exist.');
+    if (!canManageMembers(user, found._id)) {
+      throw ApiError.forbidden(`You can only add people to departments you run - not ${found.name}.`);
+    }
+
+    // Named, so the error says which of several roles is missing its title.
+    let job;
+    try {
+      job = designation(entry?.designation);
+    } catch (error) {
+      throw ApiError.badRequest(`${error.message.replace(/\.$/, '')} for ${found.name}.`);
+    }
+
+    extra.push({ department: found, role: entry.role, designation: job });
+  }
+
+  return extra;
+}
+
 export async function addMember(req, res) {
   assertObjectId(req.params.id, 'department id');
 
   const department = await Department.findById(req.params.id);
   if (!department) throw ApiError.notFound('Department not found.');
 
-  const { name, email, phone, designation: title, password, role } = req.body ?? {};
+  const {
+    name,
+    email,
+    phone,
+    designation: title,
+    password,
+    role,
+    // Further roles in other departments, given at the same time - so a person
+    // who works in two places is added once, with both, rather than twice.
+    memberships: more,
+  } = req.body ?? {};
 
   if (!canManageMembers(req.user, department._id)) {
     throw ApiError.forbidden('Only a head of this department, or an admin, can add members.');
@@ -420,6 +476,16 @@ export async function addMember(req, res) {
   // not: an existing person joining a second department is exactly the case
   // where their title here can differ from the one they already have.
   const job = designation(title);
+  const extra = await extraMemberships(req.user, department._id, more);
+  const roles = [
+    { department, role, designation: job },
+    ...extra,
+  ];
+  const stored = roles.map((item) => ({
+    department: item.department._id,
+    role: item.role,
+    designation: item.designation,
+  }));
 
   const normalisedEmail = email.trim().toLowerCase();
   let user = await User.findOne({ email: normalisedEmail });
@@ -430,11 +496,19 @@ export async function addMember(req, res) {
         'Admins are not part of any department - they already have access to all of them.',
       );
     }
-    if (user.roleInDepartment(department._id)) {
-      throw ApiError.conflict('This user is already in the department.');
+    const already = roles.find((item) => user.roleInDepartment(item.department._id));
+    if (already) {
+      throw ApiError.conflict(
+        roles.length > 1
+          ? `This user is already in ${already.department.name}.`
+          : 'This user is already in the department.',
+      );
     }
-    user.memberships.push({ department: department._id, role, designation: job });
+    user.memberships.push(...stored);
     await user.save({ validateBeforeSave: false });
+    // The session cache holds this account for a few seconds; new roles
+    // should count on their very next request.
+    forgetUser(user._id);
   } else {
     if (!name?.trim()) throw ApiError.badRequest('Name is required for a new user.');
     if (!password || password.length < 8) {
@@ -452,18 +526,23 @@ export async function addMember(req, res) {
       password,
       role: 'user',
       status: 'active',
-      memberships: [{ department: department._id, role, designation: job }],
+      memberships: stored,
     });
   }
 
   const populated = await User.findById(user._id).populate(WITH_DEPARTMENTS);
 
-  await record({
-    actor: req.user,
-    department,
-    action: 'member.added',
-    summary: `added ${user.name} to ${department.name} as ${role}`,
-  });
+  // One line in each department's own log, so each head reads it in theirs.
+  await Promise.all(
+    roles.map((item) =>
+      record({
+        actor: req.user,
+        department: item.department,
+        action: 'member.added',
+        summary: `added ${user.name} to ${item.department.name} as ${item.role}`,
+      }),
+    ),
+  );
 
   res.status(201).json({
     success: true,
