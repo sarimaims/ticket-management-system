@@ -102,7 +102,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                 ? "escalation"
                 : item.type === "ticket.new"
                 ? "ticket"
-                : item.type === "ticket.message"
+                : item.type === "ticket.message" || item.type === "ticket.mention"
                   ? "message"
                   : "update",
             // A sign-off waiting on you stays up for a while: it is a question

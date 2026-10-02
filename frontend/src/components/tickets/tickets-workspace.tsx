@@ -20,6 +20,7 @@ import {
   MessagesSquare,
   RefreshCw,
   Search,
+  Send,
   Siren,
   SlidersHorizontal,
   UserCheck,
@@ -39,8 +40,10 @@ import {
   type SheetTab,
 } from "@/components/tickets/ticket-detail-sheet";
 import { StatusPicker } from "@/components/tickets/status-picker";
+import { WhoseSelect } from "@/components/tickets/whose-select";
 import { PriorityPicker } from "@/components/tickets/priority-picker";
 import { DateField } from "@/components/tickets/date-field";
+import { ApprovalConfirmModal } from "@/components/tickets/approval-confirm-modal";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
 import { ScopeFilter, type ScopeOption, type ScopeValue } from "@/components/ui/scope-filter";
 import { useNotifications } from "@/components/notifications/notification-provider";
@@ -73,8 +76,7 @@ import {
   type TicketRecord,
   type TicketScope,
   unitsOf,
-  updateTicket,
-} from "@/lib/tickets";
+  updateTicket, APPROVAL_WINDOW_TEXT } from "@/lib/tickets";
 import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -536,7 +538,17 @@ const TicketRow = memo(function TicketRow({
         {/* Only on a list that holds other people's work too. On Assigned to
             Me every row is yours, and marking all of them marks none. */}
         {mine && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-brand-600" />}
+        {/* Your own request in a queue of others': its own colour down the edge. */}
+        {!mine && byMe && scope === "all" && (
+          <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-violet-500" />
+        )}
         <span className="block font-bold whitespace-nowrap text-brand-600">#{ticket.number}</span>
+        {byMe && scope === "all" && (
+          <span className="mt-0.5 inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 py-px text-[9px] font-bold tracking-wide whitespace-nowrap text-violet-700 uppercase">
+            <Send className="size-2.5" />
+            My request
+          </span>
+        )}
         {/* The one thing on a row that is a question rather than a fact. */}
         {askedOfMe && (
           <span className="mt-0.5 inline-block rounded bg-brand-600 px-1 py-px text-[9px] font-bold tracking-wide text-white uppercase">
@@ -992,6 +1004,8 @@ export function TicketsWorkspace({
   // the chat icon on a row can go straight to the conversation.
   const [tab, setTab] = useState<SheetTab>("details");
   const [mineOnly, setMineOnly] = useState(false);
+  /** All Tickets: everything, only what I asked for, or only everyone else's. */
+  const [origin, setOrigin] = useState<"any" | "mine" | "others">("any");
   /** Set by a tile or card that is not a status - due today, late, unowned. */
   const [view, setView] = useState<View | null>(() => {
     const named = params.get("view");
@@ -1091,7 +1105,8 @@ export function TicketsWorkspace({
   const unreadByTicket = useMemo(() => {
     const counts = new Map<string, number>();
     for (const item of feed) {
-      if (item.type !== "ticket.message" || item.read || !item.ticket) continue;
+      if ((item.type !== "ticket.message" && item.type !== "ticket.mention") || item.read || !item.ticket)
+        continue;
       counts.set(item.ticket, (counts.get(item.ticket) ?? 0) + 1);
     }
     return counts;
@@ -1198,6 +1213,7 @@ export function TicketsWorkspace({
     setCreated(NO_RANGE);
     setDue(NO_RANGE);
     setMineOnly(false);
+    setOrigin("any");
     setView(null);
   };
 
@@ -1210,6 +1226,11 @@ export function TicketsWorkspace({
   );
 
   const mineCount = useMemo(() => inScope.filter(isMine).length, [inScope, isMine]);
+  /** How many of the list I raised myself - the rest are everyone else's. */
+  const raisedByMeCount = useMemo(
+    () => inScope.filter((ticket) => ticket.raisedBy.id === meId).length,
+    [inScope, meId],
+  );
 
   const rows = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
@@ -1249,6 +1270,7 @@ export function TicketsWorkspace({
       if (!inRange(localDay(ticket.createdAt), created.from, created.to)) return false;
       if (!inRange(ticket.deadline?.slice(0, 10) ?? null, due.from, due.to)) return false;
       if (mineOnly && !isMine(ticket)) return false;
+      if (origin !== "any" && (ticket.raisedBy.id === meId) !== (origin === "mine")) return false;
       if (view && !VIEWS[view](ticket, viewContext)) return false;
       return true;
     });
@@ -1287,6 +1309,8 @@ export function TicketsWorkspace({
     due,
     mineOnly,
     isMine,
+    origin,
+    meId,
     view,
     viewContext,
     sort,
@@ -1309,6 +1333,7 @@ export function TicketsWorkspace({
     created,
     due,
     mineOnly,
+    origin,
     view,
   ]);
   const [settledKey, setSettledKey] = useState(filterKey);
@@ -1410,6 +1435,13 @@ export function TicketsWorkspace({
     }
     if (mineOnly) {
       inForce.push({ key: "mine", label: "Assigned to me", clear: () => setMineOnly(false) });
+    }
+    if (origin !== "any") {
+      inForce.push({
+        key: "origin",
+        label: origin === "mine" ? "My requests only" : "Raised by others",
+        clear: () => setOrigin("any"),
+      });
     }
     if (query.trim()) {
       inForce.push({ key: "query", label: `“${query.trim()}”`, clear: () => setQuery("") });
@@ -1531,10 +1563,16 @@ export function TicketsWorkspace({
     setCreated(NO_RANGE);
     setDue(NO_RANGE);
     setMineOnly(false);
+    setOrigin("any");
     setView(null);
     setFlashed(target.id);
     // Sent here to act on it - the approval banner, say - rather than to see it.
     if (params.get("open")) setViewing(target);
+    // Sent to a line in the conversation - a mention - so it opens on the chat.
+    if (params.get("tab") === "chat") {
+      setTab("chat");
+      setViewing(target);
+    }
     /* eslint-enable react-hooks/set-state-in-effect */
 
     // The query has done its job. Dropping it here rather than through the
@@ -1614,7 +1652,7 @@ export function TicketsWorkspace({
           toast.show({
             tone: "approval",
             title: `#${ticket.number} sent for approval`,
-            description: `${ticket.raisedBy.name ?? "The requester"} has 48 hours to approve it or send it back. It completes on its own after that.`,
+            description: `${ticket.raisedBy.name ?? "The requester"} has ${APPROVAL_WINDOW_TEXT} to approve it or send it back. It completes on its own after that.`,
             duration: 8000,
           });
         } else {
@@ -1663,14 +1701,24 @@ export function TicketsWorkspace({
 
   /** The row whose Cancelled is waiting on its remark. */
   const [cancelling, setCancelling] = useState<TicketRecord | null>(null);
+  /** Somebody else's request being finished from its row: the approval box. */
+  const [approving, setApproving] = useState<TicketRecord | null>(null);
 
   /** Cancelled is the one status that asks something first: why. */
   const chooseStatus = useCallback(
     (ticket: TicketRecord, next: TicketStatus) => {
       if (next === "Cancelled" && ticket.status !== "Cancelled") setCancelling(ticket);
+      else if (
+        next === "Completed" &&
+        ticket.raisedBy.id !== meId &&
+        ticket.status !== "Resolved" &&
+        ticket.status !== "Completed"
+      )
+        // Somebody else's request: say so before it goes for their sign-off.
+        setApproving(ticket);
       else void applyStatus(ticket, next);
     },
-    [applyStatus],
+    [applyStatus, meId],
   );
 
   const pickOne = useCallback((id: string, on: boolean) => {
@@ -1792,29 +1840,21 @@ export function TicketsWorkspace({
             </span>
           )}
 
+          {/* Whose tickets: all, the ones I raised, everyone else's, or the ones on me. */}
           {scope === "all" && (
-            <button
-              type="button"
-              onClick={() => setMineOnly((current) => !current)}
-              aria-pressed={mineOnly}
-              className={cn(
-                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[13px] font-semibold transition-colors",
-                mineOnly
-                  ? "border-brand-600 bg-brand-50 text-brand-700"
-                  : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
-              )}
-            >
-              <UserCheck className="size-3.5" />
-              Assigned to me
-              <span
-                className={cn(
-                  "rounded-full px-1.5 py-0.5 text-[11px] leading-none font-bold",
-                  mineOnly ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-600",
-                )}
-              >
-                {mineCount}
-              </span>
-            </button>
+            <WhoseSelect
+              value={mineOnly ? "assigned" : origin}
+              counts={{
+                any: inScope.length,
+                mine: raisedByMeCount,
+                others: inScope.length - raisedByMeCount,
+                assigned: mineCount,
+              }}
+              onChange={(next) => {
+                setMineOnly(next === "assigned");
+                setOrigin(next === "assigned" ? "any" : next);
+              }}
+            />
           )}
 
           {!busy && (
@@ -2088,7 +2128,7 @@ export function TicketsWorkspace({
                         ? "Nothing escalated to you"
                         : mineOnly || scope === "assigned"
                           ? "Nothing assigned to you"
-                          : scope === "mine"
+                          : scope === "mine" || origin === "mine"
                             ? "No requests yet"
                             : "No tickets yet"}
                     </p>
@@ -2180,6 +2220,15 @@ export function TicketsWorkspace({
           if (viewing && ids.has(viewing.id)) setViewing(null);
         }}
         onError={(message) => toast.error("Could not reassign", message)}
+      />
+
+      <ApprovalConfirmModal
+        ticket={approving}
+        onClose={() => setApproving(null)}
+        onConfirm={() => {
+          if (approving) void applyStatus(approving, "Completed");
+          setApproving(null);
+        }}
       />
 
       <CancelTicketModal

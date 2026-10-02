@@ -2,7 +2,7 @@
 // may run before any route has imported them.
 import '../models/Department.js';
 import '../models/User.js';
-import Ticket, { APPROVAL_WINDOW_MS, RESOLVED } from '../models/Ticket.js';
+import Ticket, { APPROVAL_WINDOW_TEXT, RESOLVED } from '../models/Ticket.js';
 import { record } from './activity.js';
 import { postSystemMessage } from './chat.js';
 import { notifyAutoApproved } from './notify.js';
@@ -19,7 +19,7 @@ import { notifyAutoApproved } from './notify.js';
 /** Who the thread and the log say did it: nobody, the workspace itself. */
 const WORKSPACE = { _id: null, name: 'FlowDesk', role: 'user' };
 
-const HOURS = APPROVAL_WINDOW_MS / 3_600_000;
+const WINDOW = APPROVAL_WINDOW_TEXT;
 
 /** How often to look. The window is two days; being five minutes late is fine. */
 const EVERY_MS = 5 * 60 * 1000;
@@ -67,16 +67,16 @@ export async function completeUnanswered(now = new Date()) {
       actor: WORKSPACE,
       event: 'auto-approved',
       side: 'raiser',
-      body: `completed this automatically - ${raiser} did not answer within ${HOURS} hours`,
+      body: `completed this automatically - ${raiser} did not answer within ${WINDOW}`,
     });
     await record({
       actor: WORKSPACE,
       department: ticket.department,
       action: 'ticket.auto_approved',
-      summary: `completed ${ticket.number} "${ticket.subject}" automatically - no answer from ${raiser} within ${HOURS} hours`,
+      summary: `completed ${ticket.number} "${ticket.subject}" automatically - no answer from ${raiser} within ${WINDOW}`,
       ticketNumber: ticket.number,
     });
-    await notifyAutoApproved({ ticket, hours: HOURS });
+    await notifyAutoApproved({ ticket, within: WINDOW });
     /* eslint-enable no-await-in-loop */
   }
 

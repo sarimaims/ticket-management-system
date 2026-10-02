@@ -22,6 +22,7 @@ import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 import Ticket, {
   APPROVAL_WINDOW_MS,
+  APPROVAL_WINDOW_TEXT,
   CLOSED_STATUSES,
   NOT_LATE_STATUSES,
   OVERDUE,
@@ -827,14 +828,20 @@ export async function listTickets(req, res) {
       );
 
       // Everything the departments this person belongs to have been asked to
-      // do - their own assignments included. Built from scratch rather than
-      // layered onto the usual filter, whose "or anything I raised" would put
-      // requests they sent elsewhere into a queue that is about incoming work.
+      // do - their own assignments included - and everything they asked of
+      // anyone themselves. Their own requests are marked as theirs on the page
+      // and can be filtered in or out there, so the one list holds both.
       filter =
         departments.length > 0
-          ? { $or: [{ departments: { $in: departments } }, { department: { $in: departments } }] }
-          : // Nobody's department: all that is left is what is on them by name.
-            { assignees: req.user._id };
+          ? {
+              $or: [
+                { departments: { $in: departments } },
+                { department: { $in: departments } },
+                { raisedBy: req.user._id },
+              ],
+            }
+          : // Nobody's department: what is on them by name, and what they asked for.
+            { $or: [{ assignees: req.user._id }, { raisedBy: req.user._id }] };
     }
   } else {
     filter = { ...visibilityFilter(req.user) };
@@ -2313,7 +2320,7 @@ export async function updateTicket(req, res) {
     await notifyApprovalRequested({
       ticket: populated,
       actor: req.user,
-      hours: APPROVAL_WINDOW_MS / 3_600_000,
+      within: APPROVAL_WINDOW_TEXT,
     });
   }
 

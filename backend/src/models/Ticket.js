@@ -22,6 +22,12 @@ export const RESOLVED = 'Resolved';
 /** How long a resolved ticket waits for an answer before it completes itself. */
 export const APPROVAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 
+/** The window in words, for the thread, the log and the bell: "48 hours", "5 minutes". */
+export const APPROVAL_WINDOW_TEXT =
+  APPROVAL_WINDOW_MS >= 3_600_000
+    ? `${APPROVAL_WINDOW_MS / 3_600_000} hours`
+    : `${APPROVAL_WINDOW_MS / 60_000} minutes`;
+
 /**
  * Finished, one way or the other: done, or called off. Neither can be late and
  * neither is waiting on anybody.

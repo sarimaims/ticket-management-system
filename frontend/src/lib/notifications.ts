@@ -5,6 +5,8 @@ export type NotificationType =
   | "ticket.updated"
   | "ticket.edited"
   | "ticket.message"
+  /** Somebody named you in a message with "@". */
+  | "ticket.mention"
   /** Somebody is asking you to take a ticket on. */
   | "ticket.handover"
   /** They answered the one you sent. */
@@ -32,6 +34,8 @@ export type NotificationEvent =
   | "moved"
   | "edited"
   | "message"
+  /** You were named in a message. */
+  | "mention"
   | "handover"
   | "handover.answered"
   | "deleted"

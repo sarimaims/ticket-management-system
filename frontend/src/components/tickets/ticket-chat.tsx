@@ -34,6 +34,12 @@ import { errorMessage } from "@/lib/api";
 import { initials, isAdmin } from "@/lib/auth";
 import { listDepartmentMembers, type MemberOption } from "@/lib/departments";
 import {
+  MentionTextarea,
+  mentionsIn,
+  type Mention,
+  type MentionPerson,
+} from "@/components/tickets/mention-textarea";
+import {
   deleteMessage,
   editMessage,
   revalidateMessages,
@@ -625,6 +631,8 @@ export function TicketChat({
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [pending, setPending] = useState<MessageRecord[]>([]);
   const [draft, setDraft] = useState("");
+  /** The people named with "@" in the line being written. */
+  const [mentions, setMentions] = useState<Mention[]>([]);
   /** Everyone in the department being asked; the raiser comes off the ticket. */
   const [team, setTeam] = useState<MemberOption[] | null>(null);
   const [peopleOpen, setPeopleOpen] = useState(false);
@@ -830,6 +838,38 @@ export function TicketChat({
   ]);
 
   /**
+   * Who "@" offers: everyone the thread is visible to - whoever raised it,
+   * whoever holds it, the heads - then the rest of the department, who can
+   * read it too. The writer is left out of their own list.
+   */
+  const mentionable = useMemo<MentionPerson[]>(() => {
+    const seen = new Set<string>();
+    const out: MentionPerson[] = [];
+    const add = (id: string, name: string, note: string) => {
+      if (!id || id === meId || seen.has(id)) return;
+      seen.add(id);
+      out.push({ id, name, note });
+    };
+    for (const person of people) {
+      add(
+        person.id,
+        person.name,
+        [STANDING[person.standing].label, person.designation].filter(Boolean).join(" · "),
+      );
+    }
+    for (const member of team ?? []) {
+      add(
+        member.id,
+        member.name,
+        [member.departmentRole === "head" ? "Head" : "Member", member.designation]
+          .filter(Boolean)
+          .join(" · "),
+      );
+    }
+    return out;
+  }, [people, team, meId]);
+
+  /**
    * Reading the thread is what marks its bell entries read. The feed is the
    * only per-person record of what has been seen, so opening the chat clears
    * exactly the notifications this ticket produced, and nothing else.
@@ -837,7 +877,7 @@ export function TicketChat({
   useEffect(() => {
     const unread = items.filter(
       (item) =>
-        item.type === "ticket.message" &&
+        (item.type === "ticket.message" || item.type === "ticket.mention") &&
         !item.read &&
         item.ticket === ticketId,
     );
@@ -998,6 +1038,8 @@ export function TicketChat({
     const body = draft.trim();
     const file = draftFile;
     const answering = replyTo;
+    // Only the names still written count - one picked and then deleted is not a mention.
+    const named = mentionsIn(body, mentions);
     if ((!body && !file) || sending) return;
 
     // On screen immediately, greyed until the server has it.
@@ -1026,6 +1068,7 @@ export function TicketChat({
       seen: { by: 0, of: 0 },
       side: ticket.raisedBy.id === meId ? "raiser" : "department",
       body,
+      mentions: named,
       editedAt: null,
       deleted: false,
       deletedAt: null,
@@ -1049,6 +1092,7 @@ export function TicketChat({
 
     setPending((current) => [...current, placeholder]);
     setDraft("");
+    setMentions([]);
     setReplyTo(null);
     setSending(true);
     following.current = true;
@@ -1083,6 +1127,7 @@ export function TicketChat({
         body,
         stored,
         answering?.id ?? null,
+        named.map((mention) => mention.id),
       );
       if (!alive.current) return;
       setMessages((current) => merge(current, [saved]));
@@ -1098,6 +1143,7 @@ export function TicketChat({
         current.filter((item) => item.id !== placeholder.id),
       );
       setDraft((current) => current || body);
+      setMentions((current) => (current.length ? current : named));
       setReplyTo((current) => current ?? answering);
       setError(errorMessage(caught));
     } finally {
@@ -1212,6 +1258,7 @@ export function TicketChat({
                     group.items[index - 1]?.author.id !== message.author.id
                   }
                   message={message}
+                  meId={meId}
                   mine={message.author.id === meId}
                   pending={message.id.startsWith(PENDING)}
                   departmentName={departmentName}
@@ -1352,27 +1399,20 @@ export function TicketChat({
               "transition-colors focus-within:border-chat-accent focus-within:ring-2 focus-within:ring-chat-accent/15",
             )}
           >
-            <textarea
+            {/* Grows with the text the way WhatsApp's box does, and "@"
+                names somebody on the ticket. */}
+            <MentionTextarea
               ref={composer}
               value={draft}
+              onChange={setDraft}
+              people={mentionable}
+              mentions={mentions}
+              onMentionsChange={setMentions}
+              onEnter={() => void send()}
               maxLength={MAX_BODY}
-              rows={1}
-              placeholder="Type a message"
+              placeholder="Type a message · @ to mention"
               aria-label={`Message on ticket ${ticket.number}`}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                // Enter sends, Shift+Enter breaks the line: what everyone
-                // already expects of a message box.
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
-              className={cn(
-                "max-h-28 min-h-7 w-full flex-1 resize-none border-0 bg-transparent px-1.5 py-1",
-                "text-[13px] leading-snug text-ink-900 placeholder:truncate placeholder:text-ink-400",
-                "focus:ring-0 focus:outline-none",
-              )}
+              className="flex-1"
             />
 
             {/* Only near the ceiling, where it starts to matter. */}

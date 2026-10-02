@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  AtSign,
   Building2,
   CalendarClock,
   CircleCheckBig,
@@ -105,7 +106,10 @@ export const destination = (item: NotificationRecord, overseer = true) => {
 
   // The id is exact; the number still finds the row if the id is missing.
   const key = item.ticket ?? item.ticketNumber;
-  return key ? `${page}?ticket=${encodeURIComponent(key)}` : page;
+  if (!key) return page;
+  // A mention is about a line in the conversation, so it opens there.
+  if (item.type === "ticket.mention") return `${page}?ticket=${encodeURIComponent(key)}&tab=chat`;
+  return `${page}?ticket=${encodeURIComponent(key)}`;
 };
 
 type Meta = {
@@ -182,6 +186,14 @@ export const EVENT_META: Record<NotificationEvent, Meta> = {
     rail: "bg-ink-400",
     label: "Message",
   },
+  // Named in a line: a question put to the reader, so it wears the chat's
+  // own accent rather than the quiet grey of a plain message.
+  mention: {
+    icon: AtSign,
+    badge: "bg-chat-accent/10 text-chat-accent-strong",
+    rail: "bg-chat-accent",
+    label: "Mention",
+  },
   handover: {
     icon: HandHelping,
     badge: "bg-tile-admin-bg text-tile-admin-fg",
@@ -240,6 +252,7 @@ const TYPE_FALLBACK: Record<NotificationType, NotificationEvent> = {
   "ticket.updated": "status",
   "ticket.edited": "edited",
   "ticket.message": "message",
+  "ticket.mention": "mention",
   "ticket.handover": "handover",
   "ticket.handover.answered": "handover.answered",
   "ticket.deleted": "deleted",

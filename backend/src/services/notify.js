@@ -179,12 +179,16 @@ export async function notifyTicketUpdated({ ticket, actor, summary, event = 'sta
  * `preview` is the message trimmed to a line, because the bell shows one line
  * and the thread itself is a click away.
  */
-export async function notifyNewMessage({ ticket, actor, preview }) {
+export async function notifyNewMessage({ ticket, actor, preview, skip = [] }) {
   try {
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
+    // Anyone named in the line hears about it as a mention instead, once.
+    const skipped = new Set(skip.map(String));
 
     return await deliver({
-      recipients: [...(await audienceFor(ticket)), raiser],
+      recipients: [...(await audienceFor(ticket)), raiser].filter(
+        (id) => id && !skipped.has(String(id)),
+      ),
       exclude: actor._id,
       type: 'ticket.message',
       event: 'message',
@@ -195,6 +199,31 @@ export async function notifyNewMessage({ ticket, actor, preview }) {
     });
   } catch (error) {
     console.error('Notification failed (ticket.message):', error.message);
+    return 0;
+  }
+}
+
+/**
+ * Somebody named these people in a message with "@".
+ *
+ * Addressed, like a hand-over: only the people named hear it, and it says so -
+ * "mentioned you" is a question put to them, not just news on the thread. It
+ * replaces the plain message bell for them rather than adding to it.
+ */
+export async function notifyMentioned({ ticket, actor, recipients, preview }) {
+  try {
+    return await deliver({
+      recipients,
+      exclude: actor._id,
+      type: 'ticket.mention',
+      event: 'mention',
+      ticket,
+      title: `${ticket.number} · ${actor.name} mentioned you`,
+      body: preview,
+      actorName: actor.name,
+    });
+  } catch (error) {
+    console.error('Notification failed (ticket.mention):', error.message);
     return 0;
   }
 }
@@ -281,7 +310,7 @@ export async function notifyHandoverAnswered({ ticket, actor, recipient, accepte
  * the app can make it impossible to miss - it is a question waiting on them,
  * with a clock on it, not news they can skim past.
  */
-export async function notifyApprovalRequested({ ticket, actor, hours }) {
+export async function notifyApprovalRequested({ ticket, actor, within }) {
   try {
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
@@ -292,7 +321,7 @@ export async function notifyApprovalRequested({ ticket, actor, hours }) {
       event: 'resolved',
       ticket,
       title: `${ticket.number} · resolved - please approve`,
-      body: `${actor.name} marked "${ticket.subject}" done. Approve it or send it back within ${hours} hours, or it completes on its own.`,
+      body: `${actor.name} marked "${ticket.subject}" done. Approve it or send it back within ${within}, or it completes on its own.`,
       actorName: actor.name,
     });
   } catch (error) {
@@ -330,7 +359,7 @@ export async function notifyApprovalAnswered({ ticket, actor, approved, reason, 
  * sides hear: the raiser so the silence is not mistaken for nothing having
  * happened, the department so it knows the work was accepted.
  */
-export async function notifyAutoApproved({ ticket, hours }) {
+export async function notifyAutoApproved({ ticket, within }) {
   try {
     const raiser = ticket.raisedBy?._id ?? ticket.raisedBy;
 
@@ -341,7 +370,7 @@ export async function notifyAutoApproved({ ticket, hours }) {
       event: 'approved',
       ticket,
       title: `${ticket.number} · completed automatically`,
-      body: `No answer within ${hours} hours, so "${ticket.subject}" was approved on its own.`,
+      body: `No answer within ${within}, so "${ticket.subject}" was approved on its own.`,
       actorName: 'FlowDesk',
     });
   } catch (error) {

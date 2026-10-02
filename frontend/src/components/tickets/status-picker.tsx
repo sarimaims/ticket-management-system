@@ -8,6 +8,7 @@ import { statusToneClasses } from "@/components/ui/badge";
 import { SETTABLE_STATUSES, STATUS_LABEL } from "@/lib/types";
 import type { TicketStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { APPROVAL_WINDOW_TEXT } from "@/lib/tickets";
 
 /** Roughly how tall the open list is, used to decide which way it opens. */
 const LIST_HEIGHT = 232;
@@ -178,7 +179,7 @@ export function StatusPicker({
               ticket with no status at all. It has one - the deadline gave it. */}
           {value === "Resolved" && (
             <li className="mt-1 border-t border-line px-1.5 pt-1 text-[10px] leading-tight text-ink-400">
-              Waiting for the requester to approve. It completes on its own after 48 hours.
+              Waiting for the requester to approve. It completes on its own after {APPROVAL_WINDOW_TEXT}.
             </li>
           )}
 
