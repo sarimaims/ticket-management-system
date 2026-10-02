@@ -826,11 +826,23 @@ export async function listTickets(req, res) {
       const departments = (req.user.memberships ?? []).map(
         (membership) => membership.department,
       );
+      const headed = headedDepartmentIds(req.user);
 
-      // Everything the departments this person belongs to have been asked to
-      // do - their own assignments included - and everything they asked of
-      // anyone themselves. Their own requests are marked as theirs on the page
-      // and can be filtered in or out there, so the one list holds both.
+      /*
+       * Everything the departments this person belongs to have been asked to
+       * do - whoever in them holds it, so a department's two heads see each
+       * other's tickets - and everything they asked of anyone themselves.
+       *
+       * A head also sees what their department asked of others: every ticket
+       * raised from a department they run, by a fellow head or anyone on the
+       * team. They answer for those requests as much as for their queue. Only
+       * the departments they head - a team member elsewhere does not see that
+       * team's outgoing requests. Reading only: working such a ticket still
+       * belongs to the department it went to.
+       *
+       * Their own requests are marked as theirs on the page and can be
+       * filtered in or out there, so the one list holds all of it.
+       */
       filter =
         departments.length > 0
           ? {
@@ -838,6 +850,7 @@ export async function listTickets(req, res) {
                 { departments: { $in: departments } },
                 { department: { $in: departments } },
                 { raisedBy: req.user._id },
+                ...(headed.length > 0 ? [{ fromDepartments: { $in: headed } }] : []),
               ],
             }
           : // Nobody's department: what is on them by name, and what they asked for.

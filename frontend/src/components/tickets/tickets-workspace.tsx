@@ -1730,6 +1730,23 @@ export function TicketsWorkspace({
     });
   }, []);
 
+  // What the reader may do with the ticket open in the sheet.
+  const viewingCanWork = viewing
+    ? manager || departmentsOf(viewing).some((department) => myDepartmentIds.has(department.id))
+    : false;
+  const viewingCanEdit = viewing ? manager || viewing.raisedBy.id === meId : false;
+  /** Which of the departments they run raised it - why they can see it at all. */
+  const overseenBy = (ticket: TicketRecord) =>
+    ticket.fromDepartments
+      .filter((department) =>
+        (session?.departments ?? []).some(
+          (membership) => membership.id === department.id && membership.role === "head",
+        ),
+      )
+      .map((department) => department.name)
+      .filter(Boolean)
+      .join(", ") || "the raising department";
+
   const openTicket = useCallback((ticket: TicketRecord, next: SheetTab = "details") => {
     setViewing(ticket);
     setTab(next);
@@ -2276,13 +2293,15 @@ export function TicketsWorkspace({
 
       <TicketDetailSheet
         ticket={viewing}
-        canWork={
-          viewing
-            ? manager ||
-              departmentsOf(viewing).some((department) => myDepartmentIds.has(department.id))
-            : false
+        canWork={viewingCanWork}
+        canEdit={viewingCanEdit}
+        readOnly={
+          // Neither theirs to work nor theirs to change: a head following a
+          // request their own department raised elsewhere.
+          viewing && !viewingCanWork && !viewingCanEdit
+            ? `You are following this as head of ${overseenBy(viewing)}. Only the people on the ticket can reply or change it.`
+            : undefined
         }
-        canEdit={viewing ? manager || viewing.raisedBy.id === meId : false}
         tab={tab}
         onTab={setTab}
         onClose={() => setViewing(null)}

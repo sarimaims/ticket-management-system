@@ -15,7 +15,14 @@ import { cn } from "@/lib/utils";
  * does it: the account sits under the navigation it belongs to, and the menu
  * opens upward so it never covers the nav.
  */
-export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarProfile({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  /** The sidebar is folded to icons on a desktop: the avatar alone. */
+  collapsed?: boolean;
+}) {
   const { session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -96,14 +103,16 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
 
 
   return (
-    <div ref={root} className="relative shrink-0 border-t border-line p-2.5">
+    <div ref={root} className={cn("relative shrink-0 border-t border-line p-2.5", collapsed && "lg:px-1.5")}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-haspopup="menu"
         aria-expanded={open}
+        title={collapsed ? tooltip : undefined}
         className={cn(
           "flex w-full items-center gap-2 rounded-lg border p-1.5 text-left transition-colors",
+          collapsed && "lg:justify-center",
           open
             ? "border-brand-200 bg-brand-50/60"
             : "border-transparent hover:border-line hover:bg-ink-50",
@@ -113,7 +122,7 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
 
         {/* Name and where they sit, nothing else: the rest is one click
             away in the menu above. */}
-        <span className="min-w-0 flex-1" title={tooltip}>
+        <span className={cn("min-w-0 flex-1", collapsed && "lg:hidden")} title={tooltip}>
           <span className="block truncate text-[13px] leading-tight font-semibold text-ink-900">
             {name}
           </span>
@@ -126,6 +135,7 @@ export function SidebarProfile({ onNavigate }: { onNavigate?: () => void }) {
           className={cn(
             "size-4 shrink-0 text-ink-400 transition-transform",
             open && "rotate-180",
+            collapsed && "lg:hidden",
           )}
         />
       </button>

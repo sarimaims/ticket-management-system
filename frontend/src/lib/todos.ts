@@ -139,3 +139,12 @@ export function moveTodo(id: string, column: string, index: number) {
 export function deleteTodo(id: string) {
   return api<{ success: true }>(`/todos/${id}`, { method: "DELETE" });
 }
+
+/** Every workspace, column and card the caller has - the dashboard's brief. */
+export function getTodoSummary(signal?: AbortSignal) {
+  return api<{
+    boards: TodoBoard[];
+    columns: (TodoColumn & { board: string })[];
+    todos: TodoRecord[];
+  }>("/todos/summary", { signal });
+}

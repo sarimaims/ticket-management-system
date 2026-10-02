@@ -7,7 +7,7 @@ import { AlertCircle, Building2, Eye, EyeOff, Search, UserPlus } from "lucide-re
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Field, Input } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { MemberSheet } from "@/components/team/member-sheet";
 import { WorkEmailInput } from "@/components/ui/work-email-input";
@@ -23,7 +23,8 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/auth/auth-provider";
 import { addMember } from "@/lib/departments";
-import { listMyTeam, type DirectoryUser } from "@/lib/users";
+import { MembershipRows } from "@/components/admin/membership-rows";
+import { listMyTeam, type DirectoryUser, type MembershipInput } from "@/lib/users";
 import { avatarTone, headDepartments, initials, type DepartmentRole } from "@/lib/auth";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -532,7 +533,7 @@ export function TeamWorkspace() {
           departments={mine.map((item) => ({
             id: item.id,
             name: item.name ?? "Department",
-            unit: item.unit?.name,
+            unit: item.unit ? { id: item.unit.id, name: item.unit.name ?? "Unit" } : null,
           }))}
           onClose={() => setAdding(false)}
           onAdded={(name, where) => {
@@ -546,32 +547,47 @@ export function TeamWorkspace() {
   );
 }
 
+/** "Finance", "Finance and Pharmacy", "Finance, Pharmacy and Radiology". */
+function listNames(names: string[]) {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 /**
- * Makes an account and puts it straight into one of this head's departments.
+ * Makes an account and puts it straight into this head's departments - one
+ * role or several at once, each with its own role and title, the same way an
+ * admin adds someone.
  *
- * The department is a choice between theirs and nothing else, because that is
- * the only thing the API will accept from them - there is no way to spend this
- * form on somebody else's team.
+ * The departments are a choice between theirs and nothing else, because that
+ * is all the API will accept from them - there is no way to spend this form on
+ * somebody else's team. Every role goes in one request, so the account is made
+ * with all of them or with none.
  */
 function AddUserModal({
   departments,
   onClose,
   onAdded,
 }: {
-  departments: { id: string; name: string; unit?: string }[];
+  departments: { id: string; name: string; unit: { id: string; name?: string } | null }[];
   onClose: () => void;
-  onAdded: (name: string, department: string) => void;
+  onAdded: (name: string, where: string) => void;
 }) {
-  const [departmentId, setDepartmentId] = useState(departments[0]?.id ?? "");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [designation, setDesignation] = useState("");
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState(false);
-  const [role, setRole] = useState<DepartmentRole>("team");
+  // Opens on the first department already chosen: most of the time it is the
+  // only one, and the head only has to say what the person is there.
+  const [memberships, setMemberships] = useState<MembershipInput[]>(() =>
+    departments[0] ? [{ department: departments[0].id, role: "team", designation: "" }] : [],
+  );
+  /** Set once they try to save without a role, cleared as soon as one lands. */
+  const [rolesMissing, setRolesMissing] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+
+  const nameOf = (id: string) => departments.find((item) => item.id === id)?.name ?? "your department";
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -581,25 +597,32 @@ function AddUserModal({
       return setError("Enter a valid email address.");
     }
     if (!isPhone(phone)) return setError(PHONE_HELP);
-    if (designation.trim().length < 2) return setError("Designation is required.");
     if (password.length < MIN_PASSWORD) {
       return setError(`Password must be at least ${MIN_PASSWORD} characters.`);
     }
+    if (memberships.length === 0) {
+      setRolesMissing(true);
+      return setError("Add at least one role: a department, what they are in it, and their title there.");
+    }
+    const untitled = memberships.find((item) => item.designation.trim().length < 2);
+    if (untitled) {
+      setRolesMissing(true);
+      return setError(`Add a designation for ${nameOf(untitled.department)}.`);
+    }
 
+    const [first, ...rest] = memberships;
     setPending(true);
     try {
-      const member = await addMember(departmentId, {
+      const member = await addMember(first.department, {
         name: name.trim(),
         email: email.trim(),
         phone: toStoredPhone(phone),
-        designation: designation.trim(),
         password,
-        role,
+        role: first.role,
+        designation: first.designation.trim(),
+        memberships: rest.map((item) => ({ ...item, designation: item.designation.trim() })),
       });
-      onAdded(
-        member.name,
-        departments.find((item) => item.id === departmentId)?.name ?? "your department",
-      );
+      onAdded(member.name, listNames(memberships.map((item) => nameOf(item.department))));
     } catch (caught) {
       setError(errorMessage(caught));
       setPending(false);
@@ -611,8 +634,8 @@ function AddUserModal({
       open
       onClose={pending ? () => {} : onClose}
       title="Add a user"
-      description="They can sign in straight away and start raising and picking up tickets."
-      className="max-w-md"
+      description="Their sign-in details, and the roles they hold in the departments you run."
+      className="max-w-lg"
     >
       <form className="space-y-3.5" onSubmit={submit} noValidate>
         {error && <Banner message={error} />}
@@ -637,9 +660,7 @@ function AddUserModal({
               onChange={setEmail}
             />
           </Field>
-        </div>
 
-        <div className="grid gap-3.5 sm:grid-cols-2">
           <Field label="Phone number" required htmlFor="team-phone">
             <PhoneInput
               id="team-phone"
@@ -651,95 +672,60 @@ function AddUserModal({
           </Field>
 
           <Field
-            label="Designation"
+            label="Temporary password"
             required
-            hint="(in this department)"
-            htmlFor="team-designation"
+            hint={`(min ${MIN_PASSWORD})`}
+            htmlFor="team-password"
           >
             <Input
-              id="team-designation"
+              id="team-password"
               className="h-9"
-              placeholder="e.g. HR Executive"
-              maxLength={80}
-              value={designation}
-              onChange={(event) => setDesignation(event.target.value)}
+              type={shown ? "text" : "password"}
+              autoComplete="new-password"
+              placeholder={`At least ${MIN_PASSWORD} characters`}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              trailing={
+                <button
+                  type="button"
+                  onClick={() => setShown((current) => !current)}
+                  className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                  aria-label={shown ? "Hide password" : "Show password"}
+                >
+                  {shown ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
+                </button>
+              }
             />
           </Field>
         </div>
 
-        <div className="grid gap-3.5 sm:grid-cols-2">
-          {/* Only the departments this person runs: the API refuses any other,
-              so offering one would be offering a failure. With a single one
-              there is no choice to make, and a dropdown that cannot open reads
-              as a broken dropdown - so it is shown as the fact it is. */}
-          <Field label="Department" required htmlFor="team-department">
-            {departments.length === 1 ? (
-              <p
-                id="team-department"
-                className="flex h-9 items-center gap-1.5 rounded-field border border-line bg-ink-50 px-3 text-sm font-medium text-ink-600"
-              >
-                <Building2 className="size-4 shrink-0 text-ink-400" />
-                <span className="truncate">
-                  {departments[0].name}
-                  {departments[0].unit && (
-                    <span className="ml-1 text-ink-400">· {departments[0].unit}</span>
-                  )}
-                </span>
-              </p>
-            ) : (
-              <Select
-                id="team-department"
-                className="h-9"
-                value={departmentId}
-                onChange={(event) => setDepartmentId(event.target.value)}
-              >
-                {departments.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.unit ? `${item.name} · ${item.unit}` : item.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-
-          <Field label="Role in the department" required htmlFor="team-role">
-            <Select
-              id="team-role"
-              className="h-9"
-              value={role}
-              onChange={(event) => setRole(event.target.value as DepartmentRole)}
-            >
-              <option value="team">User</option>
-              <option value="head">Head</option>
-            </Select>
-          </Field>
-        </div>
-
-        <Field
-          label="Temporary password"
-          required
-          hint={`(at least ${MIN_PASSWORD} characters)`}
-          htmlFor="team-password"
-        >
-          <Input
-            id="team-password"
-            className="h-9"
-            type={shown ? "text" : "password"}
-            autoComplete="new-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            trailing={
-              <button
-                type="button"
-                onClick={() => setShown((current) => !current)}
-                className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                aria-label={shown ? "Hide password" : "Show password"}
-              >
-                {shown ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
-              </button>
-            }
+        {/* One card per department they work in - only the ones this head
+            runs, which is all the API will take from them. */}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold text-ink-700">
+              Roles <span className="text-brand-600">*</span>
+              <span className="ml-1.5 font-normal text-ink-400">Department, role and designation</span>
+            </p>
+            <span className="rounded-full bg-ink-100 px-2 py-0.5 text-[10.5px] font-semibold text-ink-600">
+              {memberships.length} added
+            </span>
+          </div>
+          <MembershipRows
+            departments={departments}
+            value={memberships}
+            onChange={(next) => {
+              setMemberships(next);
+              if (next.length > 0) setRolesMissing(false);
+            }}
+            invalid={rolesMissing}
           />
-        </Field>
+          {departments.length > 1 && (
+            <p className="mt-1.5 text-[11px] text-ink-400">
+              Add one for each of your departments they work in.
+            </p>
+          )}
+        </div>
 
         <p className="rounded-field bg-ink-50 px-3 py-2 text-xs text-ink-500">
           Hand them the password yourself; they can change it under Settings. A head can add and
