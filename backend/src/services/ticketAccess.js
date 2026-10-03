@@ -53,10 +53,10 @@ export function headedDepartmentIds(user) {
  *
  * A head answers for their people's requests as much as for their own queue,
  * so they may follow those tickets - the details, the conversation, the
- * history - without being part of them. It is a reading right only: every
- * write still asks `visibilityFilter`, `canWorkOn` or `isRaiser`, so a head
- * cannot reply on, edit or move a ticket that is not theirs or their
- * department's to work.
+ * history - without being part of them, and speak in the conversation. That
+ * is the only write it opens: editing or moving the ticket still asks
+ * `visibilityFilter`, `canWorkOn` or `isRaiser`, so a head cannot change a
+ * ticket that is not theirs or their department's to work.
  */
 export function oversightFilter(user) {
   const base = visibilityFilter(user);

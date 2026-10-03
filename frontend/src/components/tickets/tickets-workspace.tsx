@@ -2299,7 +2299,7 @@ export function TicketsWorkspace({
           // Neither theirs to work nor theirs to change: a head following a
           // request their own department raised elsewhere.
           viewing && !viewingCanWork && !viewingCanEdit
-            ? `You are following this as head of ${overseenBy(viewing)}. Only the people on the ticket can reply or change it.`
+            ? `You are following this as head of ${overseenBy(viewing)}. You can chat on it; only the people on the ticket can change it.`
             : undefined
         }
         tab={tab}

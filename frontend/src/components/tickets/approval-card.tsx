@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, CircleCheckBig, Clock, ShieldCheck, Undo2 } from "lucide-react";
+import { CheckCircle2, Clock, ShieldCheck, Undo2 } from "lucide-react";
 
 import { approvalsChanged, timeLeft } from "@/components/tickets/approval-banner";
 import { useToast } from "@/components/ui/toast";
@@ -239,27 +239,6 @@ export function ApprovalCard({
     );
   }
 
-  // -------------------------------------------------------- approved
-  if (ticket.status === "Completed" && ticket.resolvedAt && ticket.approvedByName) {
-    const auto = ticket.approvedByName === "Auto-approved";
-    return (
-      <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-status-completed-bg px-2.5 py-1.5 text-[11px] text-status-completed-fg">
-        <CircleCheckBig className="size-3.5 shrink-0" />
-        <span>
-          <span className="font-bold">
-            {auto ? "Approved automatically" : `Approved by ${ticket.approvedByName}`}
-          </span>
-          {auto && ` - no answer within ${APPROVAL_WINDOW_TEXT}`}
-          {ticket.completedAt && (
-            <span className="opacity-80">
-              {" "}
-              · {formatDateOf(ticket.completedAt)} {formatTime(ticket.completedAt)}
-            </span>
-          )}
-        </span>
-      </p>
-    );
-  }
-
+  // Approved: said under Dates - who approved it, and when - so nothing here.
   return null;
 }

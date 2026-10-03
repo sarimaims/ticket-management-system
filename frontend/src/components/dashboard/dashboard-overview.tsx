@@ -1380,7 +1380,7 @@ export function DashboardOverview() {
         onSaved={() => refresh()}
         readOnly={
           overseeing
-            ? `You are following this as head of ${overseen || "the raising department"}. Only the people on the ticket can reply or change it.`
+            ? `You are following this as head of ${overseen || "the raising department"}. You can chat on it; only the people on the ticket can change it.`
             : undefined
         }
       />

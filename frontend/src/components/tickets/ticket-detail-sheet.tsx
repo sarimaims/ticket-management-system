@@ -8,6 +8,7 @@ import {
   CircleSlash,
   Download,
   FileText,
+  GitCommitVertical,
   History,
   MessagesSquare,
   Paperclip,
@@ -24,6 +25,7 @@ import { TicketChat } from "@/components/tickets/ticket-chat";
 import { TicketHistory } from "@/components/tickets/ticket-history";
 import { StatusPicker } from "@/components/tickets/status-picker";
 import { ApprovalCard } from "@/components/tickets/approval-card";
+import { TicketTimeline } from "@/components/tickets/ticket-timeline";
 import { EscalationCard } from "@/components/tickets/escalation-card";
 import { ApprovalConfirmModal } from "@/components/tickets/approval-confirm-modal";
 import { CancelTicketModal } from "@/components/tickets/cancel-ticket-modal";
@@ -740,6 +742,13 @@ function SheetBody({
    * stops lagging behind what the reader can see.
    */
   const [chatCount, setChatCount] = useState<number | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const closeTimeline = useCallback(() => setTimelineOpen(false), []);
+  // Asked for sign-off, and not refused since: the latest ask still stands.
+  const sentForApproval =
+    Boolean(ticket.resolvedAt) &&
+    !ticket.rejectedAt &&
+    (ticket.status === "Resolved" || ticket.status === "Completed");
 
   // The feed is the only per-person record of what has been read, so it is
   // also what says whether this ticket has anything waiting.
@@ -1078,9 +1087,9 @@ function SheetBody({
       {/* Mounted only while it is being read, so a closed thread costs no
           polling. The details below are hidden rather than unmounted, so an
           edit in progress survives a look at the conversation. */}
-      {tab === "chat" && (
-        <TicketChat ticket={ticket} onCount={setChatCount} readOnly={readOnly} />
-      )}
+      {/* A head following their team's request may still talk in its thread;
+          readOnly is about changing the ticket, not about the conversation. */}
+      {tab === "chat" && <TicketChat ticket={ticket} onCount={setChatCount} />}
       {tab === "history" && <TicketHistory ticket={ticket} />}
 
       <div className={cn("flex-1 overflow-y-auto overscroll-contain px-3 py-2.5", tab !== "details" && "hidden")}>
@@ -1241,7 +1250,47 @@ function SheetBody({
             <Fact label="Deadline">
               {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : <Blank>Not set</Blank>}
             </Fact>
+            {/* When the department last asked the requester to sign it off,
+                and who asked. Sent back and asked again, this is the latest
+                ask - a refusal is cleared by the next one, so one still on
+                record means it was finished some other way. */}
+            {sentForApproval && ticket.resolvedAt && (
+              <Fact label="Approval sent">
+                {formatDateOf(ticket.resolvedAt)}
+                <span className="font-normal text-ink-400">{formatTime(ticket.resolvedAt)}</span>
+                {ticket.resolvedByName && (
+                  <span className="w-full font-normal text-ink-500">by {ticket.resolvedByName}</span>
+                )}
+              </Fact>
+            )}
+            {ticket.status === "Completed" && ticket.completedAt && (
+              <Fact label="Completed">
+                {formatDateOf(ticket.completedAt)}
+                <span className="font-normal text-ink-400">{formatTime(ticket.completedAt)}</span>
+                {ticket.approvedByName && (
+                  <span className="w-full font-normal text-ink-500">
+                    {/* Without an approval step the requester closed it themselves. */}
+                    {!sentForApproval
+                      ? `by ${ticket.approvedByName}`
+                      : ticket.approvedByName === "Auto-approved"
+                        ? "approved automatically"
+                        : `approved by ${ticket.approvedByName}`}
+                  </span>
+                )}
+              </Fact>
+            )}
           </Group>
+
+          {/* Everything that happened, in order, with the time of each. */}
+          <button
+            type="button"
+            onClick={() => setTimelineOpen(true)}
+            className="mt-1.5 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-ink-700 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
+          >
+            <GitCommitVertical className="size-3.5" />
+            View timeline
+          </button>
+          <TicketTimeline ticket={ticket} open={timelineOpen} onClose={closeTimeline} />
 
           {/* What came with the request. Each link goes to the API, which
               redirects to a URL signed at that moment - so nothing here can go

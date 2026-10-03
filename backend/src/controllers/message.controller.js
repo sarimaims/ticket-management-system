@@ -4,7 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import Message from '../models/Message.js';
 import ThreadRead from '../models/ThreadRead.js';
 import Ticket from '../models/Ticket.js';
-import { isRaiser, oversightFilter, visibilityFilter } from '../services/ticketAccess.js';
+import { canWorkOn, isRaiser, oversightFilter, visibilityFilter } from '../services/ticketAccess.js';
 import User, { MANAGER_ROLES } from '../models/User.js';
 import { notifyMentioned, notifyNewMessage } from '../services/notify.js';
 import { record } from '../services/activity.js';
@@ -311,9 +311,10 @@ function assertAuthor(message, user) {
 async function readableTicket(req, { oversee = false } = {}) {
   if (!mongoose.isValidObjectId(req.params.id)) throw ApiError.badRequest('Invalid ticket id.');
 
-  // `oversee` is for reading only: a head may follow the thread on a ticket
-  // their team raised elsewhere, but posting into it still takes being part
-  // of the ticket.
+  // `oversee` adds a head's view of what their team raised elsewhere. The
+  // thread takes it for writing too: a head may speak up for their people's
+  // request in its conversation, though changing the ticket itself still takes
+  // being part of it.
   const access = oversee ? oversightFilter(req.user) : visibilityFilter(req.user);
   const ticket = await Ticket.findOne({ _id: req.params.id, ...access })
     .populate('department', 'name code')
@@ -456,7 +457,7 @@ export async function listMessages(req, res) {
  * The ticket id is in the path, so every object can be traced to its thread.
  */
 export async function createUploadTarget(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
 
   if (!storageReady()) {
     throw ApiError.unavailable(
@@ -491,7 +492,7 @@ export async function createUploadTarget(req, res) {
  * were - talking about a ticket is not working it.
  */
 export async function createMessage(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
 
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
   const attachment = await resolveAttachment(req, ticket);
@@ -511,7 +512,8 @@ export async function createMessage(req, res) {
     author: req.user._id,
     authorName: req.user.name,
     authorRole: req.user.role,
-    side: isRaiser(req.user, ticket) ? 'raiser' : 'department',
+    // A head following their team's request speaks from the requester's end.
+    side: isRaiser(req.user, ticket) || !canWorkOn(req.user, ticket) ? 'raiser' : 'department',
     body,
     attachment,
     replyTo,
@@ -559,7 +561,7 @@ export async function createMessage(req, res) {
  * touched - a photo cannot be swapped for another under the same message.
  */
 export async function updateMessage(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
   const message = await readableMessage(req, ticket);
 
   assertNotSystem(message);
@@ -619,7 +621,7 @@ export async function updateMessage(req, res) {
  * still read it. A hard delete would let a thread be rewritten after the fact.
  */
 export async function deleteMessage(req, res) {
-  const ticket = await readableTicket(req);
+  const ticket = await readableTicket(req, { oversee: true });
   const message = await readableMessage(req, ticket);
 
   assertNotSystem(message);
