@@ -29,6 +29,7 @@ export function DateField({
   showIcon = true,
   invalid = false,
   min,
+  max,
   className,
 }: {
   value: string;
@@ -41,6 +42,8 @@ export function DateField({
   invalid?: boolean;
   /** The earliest day that can be picked, as YYYY-MM-DD. Earlier days are greyed out. */
   min?: string;
+  /** The latest day that can be picked, as YYYY-MM-DD. Later days are greyed out. */
+  max?: string;
   className?: string;
 }) {
   return (
@@ -72,11 +75,13 @@ export function DateField({
         type="date"
         value={value}
         min={min}
-        // The picker greys out days before `min`, but a date can still be
-        // typed; one before it is not taken.
+        max={max}
+        // The picker greys out days outside `min` and `max`, but a date can
+        // still be typed; one outside them is not taken.
         onChange={(event) => {
           const next = event.target.value;
           if (min && next && next < min) return;
+          if (max && next && next > max) return;
           onChange(next);
         }}
         className="absolute inset-0 cursor-pointer opacity-0"

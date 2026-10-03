@@ -709,6 +709,20 @@ function SheetBody({
   /** The promise is not editable until they ask for it: a date already given
       is a commitment, not a field to brush past. */
   const [movingDate, setMovingDate] = useState(!ticket.committedDeadline);
+  /**
+   * In Progress - already, or being put there now - the date it is due can
+   * only come closer: no later promise, and no withdrawing one when the
+   * requested date is later. The API refuses the same; this keeps the picker
+   * from offering it.
+   */
+  const dueNow = (ticket.committedDeadline ?? ticket.deadline)?.slice(0, 10) ?? "";
+  const requestedDay = ticket.deadline?.slice(0, 10) ?? "";
+  const underWay = Boolean(ticket.underWay) || status === "In Progress";
+  const noLaterThan = underWay && dueNow ? dueNow : undefined;
+  const pushesBack = (next: string, target: TicketStatus) =>
+    (Boolean(ticket.underWay) || target === "In Progress") &&
+    Boolean(dueNow) &&
+    (next || requestedDay) > dueNow;
   const [assignees, setAssignees] = useState(ticket.assignees.map((person) => person.id));
   /** People on offer, each stamped with the ticket department they were loaded for. */
   const [members, setMembers] = useState<(Member & { forDepartment: string })[]>([]);
@@ -975,6 +989,15 @@ function SheetBody({
   /** Saving closes the sheet; the toast carries what changed. */
   const save = async (nextStatus: TicketStatus = status, cancelReason?: string) => {
     const promiseMoved = committed !== (ticket.committedDeadline?.slice(0, 10) ?? "");
+
+    if (canWork && promiseMoved && pushesBack(committed, nextStatus)) {
+      setMovingDate(true);
+      toast.error(
+        "The date cannot be pushed back",
+        `This ticket is In Progress, so it can only be brought forward - ${formatDate(dueNow)} at the latest.`,
+      );
+      return;
+    }
 
     // The reason is the whole point of the date: the person waiting is told
     // both, and "moved to the 30th" on its own answers nothing.
@@ -1250,6 +1273,27 @@ function SheetBody({
             <Fact label="Deadline">
               {ticket.deadline ? formatDate(ticket.deadline.slice(0, 10)) : <Blank>Not set</Blank>}
             </Fact>
+            {/* What the department promised back, for everyone - the requester
+                included, who otherwise never sees it. Green when it meets the
+                ask, amber when it runs past it. Left out on a finished ticket
+                that never had one. */}
+            {(ticket.committedDeadline || !isClosed(ticket.status)) && (
+              <Fact label="Promised">
+                {ticket.committedDeadline ? (
+                  <>
+                    <DeadlineVerdict requested={ticket.deadline} committed={ticket.committedDeadline} />
+                    {ticket.committedBy?.name && (
+                      <span className="w-full font-normal text-ink-500">by {ticket.committedBy.name}</span>
+                    )}
+                    {ticket.committedReason && (
+                      <span className="w-full text-[11px] font-normal text-ink-400">“{ticket.committedReason}”</span>
+                    )}
+                  </>
+                ) : (
+                  <Blank>Not promised yet</Blank>
+                )}
+              </Fact>
+            )}
             {/* When the department last asked the requester to sign it off,
                 and who asked. Sent back and asked again, this is the latest
                 ask - a refusal is cleared by the next one, so one still on
@@ -1547,7 +1591,7 @@ function SheetBody({
                         className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
                       >
                         <CalendarClock className="size-3.5" />
-                        Extend or change
+                        {noLaterThan ? "Bring forward" : "Extend or change"}
                       </button>
                     </p>
                     {ticket.committedReason && (
@@ -1561,11 +1605,21 @@ function SheetBody({
                     <DateField
                       id="sheet-committed"
                       min={todayISO()}
+                      max={noLaterThan}
+                      // Clearing would hand it back to a later requested date.
+                      clearable={!(noLaterThan && requestedDay > noLaterThan)}
                       value={committed}
                       onChange={setCommitted}
                       placeholder="Pick a date"
                       className="gap-1.5 px-2.5 [&>span]:text-[13px]"
                     />
+                    {noLaterThan && (
+                      <p className="text-[11px] leading-snug text-ink-500">
+                        {noLaterThan < todayISO()
+                          ? "In progress and already past its date - it cannot be pushed back."
+                          : `In progress - the date can only move earlier, ${formatDate(noLaterThan)} at the latest.`}
+                      </p>
+                    )}
 
                     {/* Only once the date has actually moved: asking why before
                         anything has changed is a box in the way. */}

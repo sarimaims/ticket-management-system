@@ -256,6 +256,11 @@ function present(ticket, { awaiting } = {}) {
     // What is stored is what a person last set; what is sent is that, unless
     // the deadline has since made it late.
     status: statusOf(ticket),
+    /**
+     * Stored as In Progress - true for a late one shown as Overdue too. Its
+     * due date can then only come closer; see updateTicket.
+     */
+    underWay: ticket.status === 'In Progress',
     project: ticket.project,
     deadline: ticket.deadline,
     committedDeadline: ticket.committedDeadline ?? null,
@@ -2166,6 +2171,29 @@ export async function updateTicket(req, res) {
     const moved = asDay(parsed) !== asDay(ticket.committedDeadline);
     if (moved && parsed && beforeToday(committedDeadline)) {
       throw ApiError.badRequest('The promised date cannot be in the past.');
+    }
+
+    /*
+     * Once the work is under way, the date it is due can only come closer.
+     * Whoever put it In Progress took it on against the date it carried then,
+     * so pushing that back is refused - for everybody, managers included -
+     * whether by promising a later day or by withdrawing a promise when the
+     * requested date is later still. Bringing it forward, or a first promise
+     * on or before the date it already has, is still fine. "In Progress" is
+     * the stored status, so a late ticket that is shown as Overdue counts,
+     * and so does one being put In Progress in this same save.
+     */
+    const underWay = before.status === 'In Progress' || ticket.status === 'In Progress';
+    if (moved && underWay) {
+      const dueBefore = before.committedDeadline ?? before.deadline;
+      const dueAfter = asDay(parsed) ?? asDay(ticket.deadline);
+      if (dueBefore && dueAfter && dueAfter > dueBefore) {
+        throw ApiError.badRequest(
+          parsed
+            ? 'This ticket is In Progress, so its date cannot be pushed back. You can only bring it forward.'
+            : 'This ticket is In Progress, so the promised date cannot be withdrawn - that would push it back to the later requested date.',
+        );
+      }
     }
 
     if (moved) {

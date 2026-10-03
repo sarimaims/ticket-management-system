@@ -5,6 +5,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -81,7 +82,6 @@ import { errorMessage } from "@/lib/api";
 import { useLiveTickets } from "@/hooks/use-live-tickets";
 import { useAuth } from "@/components/auth/auth-provider";
 import { UserLink } from "@/components/users/user-profile";
-import { Designation } from "@/components/users/designation";
 import { isAdmin } from "@/lib/auth";
 import { cn, formatDate, formatDateOf, formatTime } from "@/lib/utils";
 import {
@@ -395,7 +395,14 @@ function sortValue(ticket: TicketRecord, key: SortKey): string | number {
 }
 
 /** Every cell in this table, tight enough that the whole row fits on screen. */
-const CELL = "px-2 py-1.5 text-[12px] align-middle";
+const CELL = "px-1.5 py-1.5 text-[12px] align-middle";
+
+/**
+ * The two sides of a request are what the table is read for, so their cells
+ * get more air than the rest, and a floor under their width that the subject
+ * gives way to first.
+ */
+const ROUTE = "px-2.5";
 
 /**
  * The rules that frame a band: its own colour at the two edges, and a fainter
@@ -423,10 +430,97 @@ const FROM_HEAD = "bg-route-from-bg";
 const TO_HEAD = "bg-route-to-bg";
 
 /** A sub-heading inside a band: quieter than the group name above it. */
-const SUB = "px-2 pt-0 pb-1.5 text-[10px] font-medium text-ink-400";
+const SUB = "px-2.5 pt-0 pb-1.5 text-[10px] font-medium text-ink-400";
 
 /** A fact this ticket does not carry. */
 const Blank = () => <span className="text-ink-300">—</span>;
+
+type Place = { id: string; name?: string; unit?: { id?: string; name?: string } | null };
+
+/**
+ * One side's departments, one per line, grouped under their unit - so the
+ * Unit and Department columns line up row for row: a unit is named on the
+ * line of its first department and left blank beside the rest of its own.
+ */
+function linesOf(departments: Place[]) {
+  const groups = new Map<string, Place[]>();
+  for (const item of departments) {
+    const key = item.unit?.id ?? "";
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  return [...groups.values()].flatMap((items) =>
+    items.map((item, index) => ({ item, unit: index === 0 ? (item.unit?.name ?? "") : "" })),
+  );
+}
+
+/** Every line is the same height in both columns, so they stay side by side. */
+const LINE = "flex h-5 items-center";
+
+/** The unit column of one side: each unit once, beside its first department. */
+function UnitLines({ departments }: { departments: Place[] }) {
+  if (departments.length === 0) return <Blank />;
+  return (
+    <span className="flex flex-col gap-1">
+      {linesOf(departments).map(({ item, unit }) => (
+        <span key={item.id} className={cn(LINE, "text-[11.5px] font-medium whitespace-nowrap text-ink-600")}>
+          {unit}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** The department column of one side: a pill per department, in its side's colour. */
+function DepartmentLines({ departments, tone }: { departments: Place[]; tone: "from" | "to" }) {
+  if (departments.length === 0) return <Blank />;
+  return (
+    <span className="flex flex-col gap-1">
+      {linesOf(departments).map(({ item }) => (
+        <span key={item.id} className={LINE}>
+          <span
+            className={cn(
+              "rounded bg-surface px-1.5 py-px text-[11px] leading-4 font-semibold whitespace-nowrap shadow-[0_0_0_1px_rgba(15,23,42,0.04)]",
+              tone === "from" ? "text-route-from-fg" : "text-route-to-fg",
+            )}
+          >
+            {item.name}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * A name on one line, never broken in two. Titles stay off the table - the
+ * room goes to the names and departments - and are a click away on the
+ * person's card.
+ */
+function Person({
+  id,
+  name,
+  children,
+}: {
+  id: string;
+  name: string;
+  /** A tag that belongs right after the name: "You". */
+  children?: React.ReactNode;
+}) {
+  return (
+    <span className="flex items-center gap-1 whitespace-nowrap">
+      <UserLink id={id} name={name} className="text-[12.5px] font-semibold text-ink-800 hover:text-brand-600" />
+      {children}
+    </span>
+  );
+}
+
+/** A priority's own tint, so the picker reads like the badge it replaces. */
+const PRIORITY_TINT: Record<TicketPriority, string> = {
+  Low: "bg-priority-low-bg text-priority-low-fg",
+  Medium: "bg-priority-medium-bg text-priority-medium-fg",
+  High: "bg-priority-high-bg text-priority-high-fg",
+  Critical: "bg-priority-critical-bg text-priority-critical-fg",
+};
 
 /**
  * One row, held apart from the table so a refresh only repaints the tickets
@@ -490,15 +584,6 @@ const TicketRow = memo(function TicketRow({
 }) {
   const messages = unreadMessages > 0 ? unreadMessages : ticket.messageCount;
 
-  // Named once each: several departments of one unit all say the same thing.
-  const fromUnits = [
-    ...new Set(
-      ticket.fromDepartments
-        .map((item) => item.unit?.name)
-        .filter((name): name is string => Boolean(name)),
-    ),
-  ];
-
   return (
     <tr
       id={`ticket-row-${ticket.id}`}
@@ -543,6 +628,14 @@ const TicketRow = memo(function TicketRow({
           <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-violet-500" />
         )}
         <span className="block font-bold whitespace-nowrap text-brand-600">#{ticket.number}</span>
+        {/* When it was raised, under its number rather than in a column of its
+            own: numbers are handed out in that order, so the two always agree. */}
+        <span className="block text-[10.5px] leading-tight whitespace-nowrap text-ink-500">
+          {formatDateOf(ticket.createdAt)}
+        </span>
+        <span className="block text-[10px] leading-tight whitespace-nowrap text-ink-400">
+          {formatTime(ticket.createdAt)}
+        </span>
         {byMe && scope === "all" && (
           <span className="mt-0.5 inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 py-px text-[9px] font-bold tracking-wide whitespace-nowrap text-violet-700 uppercase">
             <Send className="size-2.5" />
@@ -573,7 +666,7 @@ const TicketRow = memo(function TicketRow({
         )}
       </TableCell>
 
-      <TableCell className={cn(CELL, "font-semibold whitespace-normal text-ink-900")}>
+      <TableCell className={cn(CELL, "min-w-40 font-semibold whitespace-normal text-ink-900")}>
         {ticket.subject}
         {/* On the escalations page the reason is the point of the row. */}
         {scope === "escalated" && ticket.escalation && (
@@ -602,77 +695,46 @@ const TicketRow = memo(function TicketRow({
         )}
       </TableCell>
 
-      {/* Where the request came from: the unit, the department inside it, and
-          the person who asked. A manager sits above the departments, so their
-          first two cells stay empty and the tag beside their name says why. */}
-      <TableCell className={cn(CELL, FROM_EDGE, FROM, "whitespace-normal")}>
-        {fromUnits.length > 0 ? fromUnits.join(", ") : <Blank />}
-      </TableCell>
+      {/* Where the request came from - the unit, the department inside it -
+          then the person who asked. A manager sits above the departments, so
+          their tag stands across both. */}
+      {ticket.fromDepartments.length === 0 && ticket.raisedByRole !== "user" ? (
+        // A plain cell: TableCell has no colSpan, and this one spans both.
+        <td colSpan={2} className={cn("px-2.5 py-1.5 text-[12px] whitespace-nowrap text-ink-600", CELL, ROUTE, FROM_EDGE, FROM)}>
+          <OriginTag role={ticket.raisedByRole} />
+        </td>
+      ) : (
+        <>
+          <TableCell className={cn(CELL, ROUTE, "min-w-24", FROM_EDGE, FROM)}>
+            <UnitLines departments={ticket.fromDepartments} />
+          </TableCell>
+          <TableCell className={cn(CELL, ROUTE, "min-w-28", FROM_INNER, FROM)}>
+            <DepartmentLines departments={ticket.fromDepartments} tone="from" />
+          </TableCell>
+        </>
+      )}
 
-      <TableCell className={cn(CELL, FROM_INNER, FROM, "whitespace-normal")}>
-        {ticket.fromDepartments.length === 0 ? (
-          <Blank />
-        ) : (
-          <span className="flex flex-wrap gap-1">
-            {ticket.fromDepartments.map((item) => (
-              <span
-                key={item.id}
-                className="rounded bg-surface px-1 py-px text-[10px] font-semibold text-route-from-fg"
-              >
-                {item.name}
-              </span>
-            ))}
-          </span>
-        )}
-      </TableCell>
-
-      <TableCell className={cn(CELL, FROM_INNER, FROM, "whitespace-normal")}>
-        <span className="flex flex-wrap items-center gap-1">
-          <UserLink
-            id={ticket.raisedBy.id}
-            name={ticket.raisedBy.name ?? "Someone"}
-            className="font-medium text-ink-700 hover:text-brand-600"
-          />
-          {byMe && (
-            <span className="rounded bg-ink-100 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
+      <TableCell className={cn(CELL, ROUTE, "min-w-32", FROM_INNER, FROM)}>
+        <Person id={ticket.raisedBy.id} name={ticket.raisedBy.name ?? "Someone"}>
+          {/* Not where the number already says "My request". */}
+          {byMe && scope !== "all" && (
+            <span className="self-center rounded bg-ink-900/8 px-1 py-px text-[9px] font-bold tracking-wide text-ink-600 uppercase">
               You
             </span>
           )}
-          <OriginTag role={ticket.raisedByRole} />
-        </span>
-        {/* What they are in the department they asked from. */}
-        <Designation value={ticket.raisedBy.designation} />
+        </Person>
       </TableCell>
 
       {/* And where it landed: every department one shared ticket went to,
-          each under its own unit. */}
-      <TableCell className={cn(CELL, TO_EDGE, TO, "whitespace-normal")}>
-        {unitsOf(ticket).length === 0 ? (
-          <Blank />
-        ) : (
-          <span className="flex flex-col gap-0.5">
-            {unitsOf(ticket).map((unit) => (
-              <span key={unit.id}>{unit.name}</span>
-            ))}
-          </span>
-        )}
+          each under its own unit. White pills rather than the brand tint: a
+          red chip on an orange band was two warm colours arguing. */}
+      <TableCell className={cn(CELL, ROUTE, "min-w-24", TO_EDGE, TO)}>
+        <UnitLines departments={departmentsOf(ticket)} />
       </TableCell>
-
-      <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
-        {/* White rather than the brand tint it wore before: a red chip on an
-            orange band was two warm colours arguing over the same cell. */}
-        <span className="flex flex-wrap gap-1">
-          {departmentsOf(ticket).map((department) => (
-            <span
-              key={department.id}
-              className="rounded bg-surface px-1 py-px text-[10px] font-semibold text-route-to-fg"
-            >
-              {department.name}
-            </span>
-          ))}
-        </span>
+      <TableCell className={cn(CELL, ROUTE, "min-w-28", TO_INNER, TO)}>
+        <DepartmentLines departments={departmentsOf(ticket)} tone="to" />
         {isShared(ticket) && (
-          <span className="mt-0.5 block text-[9px] font-bold tracking-wide text-route-to-fg/70 uppercase">
+          <span className="mt-1 block text-[9px] font-bold tracking-wide text-route-to-fg/70 uppercase">
             Shared
           </span>
         )}
@@ -682,22 +744,14 @@ const TicketRow = memo(function TicketRow({
           requests the question is whether it is done, not whose desk it is
           on - so the column is not there to read or to sort by. */}
       {scope !== "mine" && (
-        <TableCell className={cn(CELL, TO_INNER, TO, "whitespace-normal")}>
+        <TableCell className={cn(CELL, ROUTE, "min-w-32", TO_INNER, TO)}>
           {ticket.assignees.length === 0 ? (
             <span className="text-ink-400">Nobody yet</span>
           ) : (
-            // One line per person, each with their title in this department:
-            // "Rida, Omar" says nothing about which of them is the specialist.
-            <span className="flex flex-col gap-0.5 font-medium text-ink-700">
+            // One line per person: a list reads faster than "Rida, Omar".
+            <span className="flex flex-col gap-1">
               {ticket.assignees.map((person) => (
-                <span key={person.id} className="min-w-0">
-                  <UserLink
-                    id={person.id}
-                    name={person.name ?? "Someone"}
-                    className="hover:text-brand-600"
-                  />
-                  <Designation value={person.designation} />
-                </span>
+                <Person key={person.id} id={person.id} name={person.name ?? "Someone"} />
               ))}
             </span>
           )}
@@ -708,11 +762,15 @@ const TicketRow = memo(function TicketRow({
         {canPrioritise ? (
           // The list is drawn on the body but still bubbles through React, so
           // a pick must not also open the row.
-          <div className="w-[104px]" onClick={(event) => event.stopPropagation()}>
+          // A tinted pill as wide as its word, like the status beside it.
+          <div className="w-fit" onClick={(event) => event.stopPropagation()}>
             <PriorityPicker
               value={ticket.priority}
               onChange={(next) => onPriority(ticket, next)}
-              className="h-7 gap-1.5 px-2 text-[12px]"
+              className={cn(
+                "h-6 w-auto gap-1 rounded-full border-0 px-2 text-[11px] font-semibold",
+                PRIORITY_TINT[ticket.priority],
+              )}
             />
           </div>
         ) : (
@@ -740,24 +798,21 @@ const TicketRow = memo(function TicketRow({
             Approve?
           </button>
         ) : scope !== "mine" ? (
-          <div className="w-[124px]">
+          // As wide as its own word, like the badge it stands for - a fixed
+          // box left "New" floating in a strip of grey.
+          <div className="w-fit">
             <StatusPicker
               value={ticket.status}
               onChange={(next) => onStatus(ticket, next)}
               label={`Status of ${ticket.number}`}
               needsApproval={!byMe}
+              className="w-auto gap-1 rounded-full px-2"
+              short
             />
           </div>
         ) : (
           <StatusBadge status={ticket.status} className="px-1.5 py-0.5 text-[11px]" />
         )}
-      </TableCell>
-
-      <TableCell className={cn(CELL, "whitespace-nowrap")}>
-        <span className="block leading-tight">{formatDateOf(ticket.createdAt)}</span>
-        <span className="block text-[10px] leading-tight text-ink-400">
-          {formatTime(ticket.createdAt)}
-        </span>
       </TableCell>
 
       {/* The date asked for, with what the department promised back under it:
@@ -772,7 +827,7 @@ const TicketRow = memo(function TicketRow({
       </TableCell>
 
       <TableCell className={CELL}>
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-0.5">
           {/* The way into the conversation, on every row rather than only the
               ones that already have one - a thread nobody can find is a thread
               nobody starts. Filled in once something is waiting to be read. */}
@@ -804,7 +859,7 @@ const TicketRow = memo(function TicketRow({
               event.stopPropagation();
               onOpen(ticket);
             }}
-            className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+            className="grid size-6 shrink-0 place-items-center rounded-md text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
             aria-label={`Open ${ticket.number}`}
           >
             <SlidersHorizontal className="size-4" />
@@ -817,7 +872,7 @@ const TicketRow = memo(function TicketRow({
                 event.stopPropagation();
                 onStatus(ticket, "Cancelled");
               }}
-              className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+              className="grid size-6 shrink-0 place-items-center rounded-md text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
               aria-label={`Cancel ${ticket.number}`}
               title="Cancel this request"
             >
@@ -832,7 +887,7 @@ const TicketRow = memo(function TicketRow({
                 event.stopPropagation();
                 onDelete(ticket);
               }}
-              className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+              className="grid size-6 shrink-0 place-items-center rounded-md text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
               aria-label={`Delete ${ticket.number}`}
               title={deleteHint(ticket)}
             >
@@ -1523,7 +1578,87 @@ export function TicketsWorkspace({
   // Ticket, subject, three from, three to, priority, status, created,
   // deadline, actions - the same on every list.
   // One fewer on your own requests, where the assignee column is not shown.
-  const columns = (scope === "mine" ? 12 : 13) + (showPicks ? 1 : 0);
+  const columns = (scope === "mine" ? 11 : 12) + (showPicks ? 1 : 0);
+
+  /*
+   * The header that stays put. The table sits in a box that scrolls sideways,
+   * and a sticky header can only stick inside the box it scrolls in - so the
+   * page's own scroll would carry it away. A copy pinned under the top bar
+   * stands in for it instead: the real header stays in the table, invisible,
+   * so the columns keep sizing to their content, and the copy takes its
+   * column widths from it. Measured only when something changes size, and
+   * moved sideways by the rows' own scroll - nothing runs while the page
+   * scrolls, so the pinning itself is the browser's and stays smooth.
+   */
+  const narrowed = inForce.length > 0;
+  const strip = useRef<HTMLDivElement>(null);
+  const rowsScroller = useRef<HTMLDivElement>(null);
+  const rowsTable = useRef<HTMLTableElement>(null);
+  const pinnedScroller = useRef<HTMLDivElement>(null);
+  const [pinned, setPinned] = useState<{
+    cols: number[];
+    width: number;
+    height: number;
+    /** How tall the strip above is, so the header pins just under it. */
+    below: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const table = rowsTable.current;
+    if (!table || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const head = table.tHead;
+        if (!head) return;
+        // One cell per column: the ones that span a single column, left to right.
+        const cols = [...head.querySelectorAll("th")]
+          .filter((cell) => cell.colSpan === 1)
+          .map((cell) => cell.getBoundingClientRect())
+          .sort((a, b) => a.left - b.left)
+          .map((box) => box.width);
+        const next = {
+          cols,
+          width: table.getBoundingClientRect().width,
+          height: head.getBoundingClientRect().height,
+          below: strip.current?.getBoundingClientRect().height ?? 0,
+        };
+        setPinned((current) =>
+          current &&
+          current.width === next.width &&
+          current.height === next.height &&
+          current.below === next.below &&
+          current.cols.length === next.cols.length &&
+          current.cols.every((width, index) => width === next.cols[index])
+            ? current
+            : next,
+        );
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(table);
+    if (table.tHead) observer.observe(table.tHead);
+    if (strip.current) observer.observe(strip.current);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [columns, narrowed]);
+
+  const hasPinned = pinned !== null;
+  useEffect(() => {
+    const rows = rowsScroller.current;
+    const copy = pinnedScroller.current;
+    if (!rows || !copy) return;
+    const follow = () => {
+      copy.scrollLeft = rows.scrollLeft;
+    };
+    follow();
+    rows.addEventListener("scroll", follow, { passive: true });
+    return () => rows.removeEventListener("scroll", follow);
+  }, [hasPinned]);
 
   /**
    * Arriving from a notification: find the ticket it named, clear whatever
@@ -1752,6 +1887,105 @@ export function TicketsWorkspace({
     setTab(next);
   }, []);
 
+  /** The two header rows, drawn in the table and again in its pinned copy. */
+  const headRows = (
+    <>
+      <tr>
+        {showPicks && (
+          <TableHead rowSpan={2} className="w-8 px-1.5 py-2">
+            <input
+              type="checkbox"
+              aria-label="Select every ticket that can be deleted"
+              checked={
+                selectable.length > 0 &&
+                selectable.every((ticket) => picked.has(ticket.id))
+              }
+              onChange={(event) =>
+                // Only what is on screen and can be acted on: a filter
+                // is a decision about what you meant.
+                setPicked(
+                  event.target.checked
+                    ? new Set(selectable.map((ticket) => ticket.id))
+                    : new Set(),
+                )
+              }
+              className="size-4 cursor-pointer accent-brand-600"
+            />
+          </TableHead>
+        )}
+        {/* Ordered by when it was raised, which is also the order of
+            the numbers - the date sits under each one. */}
+        <TableHead
+          {...sortable("createdAt")}
+          rowSpan={2}
+          className="px-1.5 py-2"
+          title="Ticket number, and when it was raised"
+        >
+          Ticket
+        </TableHead>
+        <TableHead {...sortable("subject")} rowSpan={2} className="w-[16%] px-1.5 py-2">
+          Subject
+        </TableHead>
+        {/* Two banded groups rather than one "From to" column. Each
+            side of a request is where - the unit and the department
+            inside it, read top to bottom in one cell - and who, and
+            reading them down a column beats unpicking them from a
+            phrase. */}
+        <TableHead
+          colSpan={3}
+          className={cn(FROM_EDGE, FROM_HEAD, "px-1.5 py-1 text-center text-route-from-fg")}
+        >
+          Raised By / From
+        </TableHead>
+        <TableHead
+          colSpan={scope === "mine" ? 2 : 3}
+          className={cn(TO_EDGE, TO_HEAD, "px-1.5 py-1 text-center text-route-to-fg")}
+        >
+          To
+        </TableHead>
+        <TableHead {...sortable("priority")} rowSpan={2} className={cn(TO_EDGE, "px-1.5 py-2")}>
+          Priority
+        </TableHead>
+        <TableHead {...sortable("status")} rowSpan={2} className="px-1.5 py-2">
+          Status
+        </TableHead>
+        <TableHead
+          {...sortable("deadline")}
+          rowSpan={2}
+          className="px-1.5 py-2"
+          title="Asked for, and what was promised back"
+        >
+          Deadline
+        </TableHead>
+        <TableHead rowSpan={2} className="px-1.5 py-2">
+          Actions
+        </TableHead>
+      </tr>
+      <tr>
+        <TableHead {...sortable("fromUnit")} className={cn(FROM_EDGE, SUB, FROM_HEAD)}>
+          Unit
+        </TableHead>
+        <TableHead {...sortable("fromDepartment")} className={cn(FROM_INNER, SUB, FROM_HEAD)}>
+          Department
+        </TableHead>
+        <TableHead {...sortable("raisedBy")} className={cn(FROM_INNER, SUB, FROM_HEAD)}>
+          User
+        </TableHead>
+        <TableHead {...sortable("toUnit")} className={cn(TO_EDGE, SUB, TO_HEAD)}>
+          Unit
+        </TableHead>
+        <TableHead {...sortable("toDepartment")} className={cn(TO_INNER, SUB, TO_HEAD)}>
+          Department
+        </TableHead>
+        {scope !== "mine" && (
+          <TableHead {...sortable("assignees")} className={cn(TO_INNER, SUB, TO_HEAD)}>
+            User
+          </TableHead>
+        )}
+      </tr>
+    </>
+  );
+
   return (
     <>
       {error && (
@@ -1769,7 +2003,7 @@ export function TicketsWorkspace({
       <div>
       <StatTiles row stats={stats} loading={loading} active={activeTile} onSelect={selectTile} />
 
-      <Card className="mt-3 overflow-hidden">
+      <Card className="mt-3 overflow-clip">
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-1.5">
           <div className="min-w-44 flex-1">
             <Input
@@ -1882,57 +2116,6 @@ export function TicketsWorkspace({
           {live && <RefreshButton onRefresh={refresh} syncedAt={syncedAt} />}
         </div>
 
-        {/* Said out loud whenever the list is narrowed: without it a short
-            list reads as everything there is, not as what matched. */}
-        {inForce.length > 0 && (
-          <div
-            role="status"
-            className="flex flex-wrap items-center gap-1.5 border-b border-status-progress-fg/15 bg-status-progress-bg/70 px-2.5 py-1.5"
-          >
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-status-progress-fg">
-              <ListFilter className="size-3.5" />
-              Filtered view
-            </span>
-            <span className="shrink-0 text-[11px] text-ink-500">
-              {busy ? (
-                "Filtering…"
-              ) : (
-                <>
-                  Showing <span className="font-bold text-ink-800">{rows.length}</span> of{" "}
-                  <span className="font-bold text-ink-800">{inScope.length}</span> {noun}
-                </>
-              )}
-            </span>
-
-            <span aria-hidden className="h-3.5 w-px shrink-0 bg-status-progress-fg/20" />
-
-            {inForce.map((item) => (
-              <span
-                key={item.key}
-                className="inline-flex max-w-[16rem] items-center gap-0.5 rounded-full border border-line bg-surface py-0.5 pr-0.5 pl-2 text-[11px] font-medium text-ink-700 shadow-xs"
-              >
-                <span className="truncate">{item.label}</span>
-                <button
-                  type="button"
-                  onClick={item.clear}
-                  aria-label={`Remove filter: ${item.label}`}
-                  className="grid size-4 shrink-0 cursor-pointer place-items-center rounded-full text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                >
-                  <X className="size-3" />
-                </button>
-              </span>
-            ))}
-
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="ml-auto inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold text-status-progress-fg transition-colors hover:bg-status-progress-fg/10"
-            >
-              Show all {noun}
-            </button>
-          </div>
-        )}
-
         {moreOpen && (
           <div
             id="ticket-filters-more"
@@ -2013,100 +2196,96 @@ export function TicketsWorkspace({
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        {/* Said out loud whenever the list is narrowed: without it a short
+            list reads as everything there is, not as what matched. */}
+        {inForce.length > 0 && (
+          <div
+            ref={strip}
+            role="status"
+            className="sticky top-11 z-20 flex flex-wrap items-center gap-1.5 border-b border-status-progress-fg/15 bg-[color-mix(in_srgb,var(--color-status-progress-bg)_70%,var(--color-surface))] px-2.5 py-1.5"
+          >
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-status-progress-fg">
+              <ListFilter className="size-3.5" />
+              Filtered view
+            </span>
+            <span className="shrink-0 text-[11px] text-ink-500">
+              {busy ? (
+                "Filtering…"
+              ) : (
+                <>
+                  Showing <span className="font-bold text-ink-800">{rows.length}</span> of{" "}
+                  <span className="font-bold text-ink-800">{inScope.length}</span> {noun}
+                </>
+              )}
+            </span>
+
+            <span aria-hidden className="h-3.5 w-px shrink-0 bg-status-progress-fg/20" />
+
+            {inForce.map((item) => (
+              <span
+                key={item.key}
+                className="inline-flex max-w-[16rem] items-center gap-0.5 rounded-full border border-line bg-surface py-0.5 pr-0.5 pl-2 text-[11px] font-medium text-ink-700 shadow-xs"
+              >
+                <span className="truncate">{item.label}</span>
+                <button
+                  type="button"
+                  onClick={item.clear}
+                  aria-label={`Remove filter: ${item.label}`}
+                  className="grid size-4 shrink-0 cursor-pointer place-items-center rounded-full text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="ml-auto inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold text-status-progress-fg transition-colors hover:bg-status-progress-fg/10"
+            >
+              Show all {noun}
+            </button>
+          </div>
+        )}
+
+        {/* The pinned copy of the header. It hangs over the real one by its own
+            height, so before any scrolling it sits exactly where that one is;
+            past it, it stays under the top bar and the strip. */}
+        {pinned && (
+          <div
+            ref={pinnedScroller}
+            aria-hidden
+            className="sticky z-10 overflow-hidden"
+            style={{
+              top: `calc(2.75rem + ${pinned.below}px)`,
+              height: pinned.height,
+              marginBottom: -pinned.height,
+            }}
+          >
+            <table className="border-collapse" style={{ width: pinned.width, tableLayout: "fixed" }}>
+              <colgroup>
+                {pinned.cols.map((width, index) => (
+                  <col key={index} style={{ width }} />
+                ))}
+              </colgroup>
+              <thead className="border-b border-line bg-ink-50 shadow-[0_1px_0_var(--color-line)]">
+                {headRows}
+              </thead>
+            </table>
+          </div>
+        )}
+
+        <div ref={rowsScroller} className="overflow-x-auto">
           {/* Fluid rather than held open at a fixed width: on a desktop every
               column fits and nothing scrolls sideways, and the min-width below
               only catches phones. */}
-          <table className="w-full min-w-[1180px] border-collapse">
-            <thead className="sticky top-0 z-10 border-b border-line bg-ink-50 shadow-[0_1px_0_var(--color-line)]">
-              <tr>
-                {showPicks && (
-                  <TableHead rowSpan={2} className="w-8 px-2 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label="Select every ticket that can be deleted"
-                      checked={
-                        selectable.length > 0 &&
-                        selectable.every((ticket) => picked.has(ticket.id))
-                      }
-                      onChange={(event) =>
-                        // Only what is on screen and can be acted on: a filter
-                        // is a decision about what you meant.
-                        setPicked(
-                          event.target.checked
-                            ? new Set(selectable.map((ticket) => ticket.id))
-                            : new Set(),
-                        )
-                      }
-                      className="size-4 cursor-pointer accent-brand-600"
-                    />
-                  </TableHead>
-                )}
-                <TableHead {...sortable("number")} rowSpan={2} className="px-2 py-2">
-                  Ticket
-                </TableHead>
-                <TableHead {...sortable("subject")} rowSpan={2} className="w-[16%] px-2 py-2">
-                  Subject
-                </TableHead>
-                {/* Two banded groups rather than one "From to" column. Each
-                    side of a request is three separate facts - the unit, the
-                    department inside it and the person - and reading them
-                    straight down a column beats unpicking them from a phrase. */}
-                <TableHead
-                  colSpan={3}
-                  className={cn(FROM_EDGE, FROM_HEAD, "px-2 py-1 text-center text-route-from-fg")}
-                >
-                  Raised By / From
-                </TableHead>
-                <TableHead
-                  colSpan={scope === "mine" ? 2 : 3}
-                  className={cn(TO_EDGE, TO_HEAD, "px-2 py-1 text-center text-route-to-fg")}
-                >
-                  To
-                </TableHead>
-                <TableHead {...sortable("priority")} rowSpan={2} className={cn(TO_EDGE, "px-2 py-2")}>
-                  Priority
-                </TableHead>
-                <TableHead {...sortable("status")} rowSpan={2} className="px-2 py-2">
-                  Status
-                </TableHead>
-                <TableHead {...sortable("createdAt")} rowSpan={2} className="px-2 py-2">
-                  Created
-                </TableHead>
-                <TableHead
-                  {...sortable("deadline")}
-                  rowSpan={2}
-                  className="px-2 py-2"
-                  title="Asked for, and what was promised back"
-                >
-                  Deadline
-                </TableHead>
-                <TableHead rowSpan={2} className="px-2 py-2">
-                  Actions
-                </TableHead>
-              </tr>
-              <tr>
-                <TableHead {...sortable("fromUnit")} className={cn(FROM_EDGE, SUB, FROM_HEAD)}>
-                  Unit
-                </TableHead>
-                <TableHead {...sortable("fromDepartment")} className={cn(FROM_INNER, SUB, FROM_HEAD)}>
-                  Department
-                </TableHead>
-                <TableHead {...sortable("raisedBy")} className={cn(FROM_INNER, SUB, FROM_HEAD)}>
-                  User
-                </TableHead>
-                <TableHead {...sortable("toUnit")} className={cn(TO_EDGE, SUB, TO_HEAD)}>
-                  Unit
-                </TableHead>
-                <TableHead {...sortable("toDepartment")} className={cn(TO_INNER, SUB, TO_HEAD)}>
-                  Department
-                </TableHead>
-                {scope !== "mine" && (
-                  <TableHead {...sortable("assignees")} className={cn(TO_INNER, SUB, TO_HEAD)}>
-                    User
-                  </TableHead>
-                )}
-              </tr>
+          <table ref={rowsTable} className="w-full min-w-[1180px] border-collapse">
+            {/* Kept for the column widths and hidden under its pinned copy - which
+                is the one people see and click, so this one is out of reach. */}
+            <thead
+              className={cn("border-b border-line bg-ink-50", pinned && "invisible")}
+            >
+              {headRows}
             </thead>
             <tbody>
               {busy && <TableSkeleton rows={6} columns={columns} />}
