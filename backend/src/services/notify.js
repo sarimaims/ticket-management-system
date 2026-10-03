@@ -1,3 +1,4 @@
+import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { publish } from './stream.js';
@@ -17,6 +18,27 @@ async function departmentHeadIds(departmentId) {
   const heads = await User.find({
     status: { $ne: 'suspended' },
     memberships: { $elemMatch: { department: departmentId, role: 'head' } },
+  }).select('_id');
+  return heads.map((head) => head._id);
+}
+
+/**
+ * Heads of the raising side who have spoken in this ticket's thread.
+ *
+ * No department puts them on the ticket - they follow their team's request -
+ * so once they have written in, the replies have to find them some other way.
+ */
+async function followingHeadsInThread(ticket) {
+  const from = (ticket.fromDepartments ?? []).map((item) => item?._id ?? item).filter(Boolean);
+  if (from.length === 0) return [];
+
+  const writers = await Message.distinct('author', { ticket: ticket._id, kind: { $ne: 'system' } });
+  if (writers.length === 0) return [];
+
+  const heads = await User.find({
+    _id: { $in: writers },
+    status: { $ne: 'suspended' },
+    memberships: { $elemMatch: { department: { $in: from }, role: 'head' } },
   }).select('_id');
   return heads.map((head) => head._id);
 }
@@ -186,7 +208,7 @@ export async function notifyNewMessage({ ticket, actor, preview, skip = [] }) {
     const skipped = new Set(skip.map(String));
 
     return await deliver({
-      recipients: [...(await audienceFor(ticket)), raiser].filter(
+      recipients: [...(await audienceFor(ticket)), raiser, ...(await followingHeadsInThread(ticket))].filter(
         (id) => id && !skipped.has(String(id)),
       ),
       exclude: actor._id,

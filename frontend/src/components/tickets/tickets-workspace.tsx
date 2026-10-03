@@ -1004,8 +1004,8 @@ export function TicketsWorkspace({
   // the chat icon on a row can go straight to the conversation.
   const [tab, setTab] = useState<SheetTab>("details");
   const [mineOnly, setMineOnly] = useState(false);
-  /** All Tickets: everything, only what I asked for, or only everyone else's. */
-  const [origin, setOrigin] = useState<"any" | "mine" | "others">("any");
+  /** All Tickets: everything, or only what I asked for. */
+  const [origin, setOrigin] = useState<"any" | "mine">("any");
   /** Set by a tile or card that is not a status - due today, late, unowned. */
   const [view, setView] = useState<View | null>(() => {
     const named = params.get("view");
@@ -1226,7 +1226,7 @@ export function TicketsWorkspace({
   );
 
   const mineCount = useMemo(() => inScope.filter(isMine).length, [inScope, isMine]);
-  /** How many of the list I raised myself - the rest are everyone else's. */
+  /** How many of the list I raised myself. */
   const raisedByMeCount = useMemo(
     () => inScope.filter((ticket) => ticket.raisedBy.id === meId).length,
     [inScope, meId],
@@ -1270,7 +1270,7 @@ export function TicketsWorkspace({
       if (!inRange(localDay(ticket.createdAt), created.from, created.to)) return false;
       if (!inRange(ticket.deadline?.slice(0, 10) ?? null, due.from, due.to)) return false;
       if (mineOnly && !isMine(ticket)) return false;
-      if (origin !== "any" && (ticket.raisedBy.id === meId) !== (origin === "mine")) return false;
+      if (origin === "mine" && ticket.raisedBy.id !== meId) return false;
       if (view && !VIEWS[view](ticket, viewContext)) return false;
       return true;
     });
@@ -1439,7 +1439,7 @@ export function TicketsWorkspace({
     if (origin !== "any") {
       inForce.push({
         key: "origin",
-        label: origin === "mine" ? "My requests only" : "Raised by others",
+        label: "My requests only",
         clear: () => setOrigin("any"),
       });
     }
@@ -1857,14 +1857,13 @@ export function TicketsWorkspace({
             </span>
           )}
 
-          {/* Whose tickets: all, the ones I raised, everyone else's, or the ones on me. */}
+          {/* Whose tickets: all, the ones I raised, or the ones on me. */}
           {scope === "all" && (
             <WhoseSelect
               value={mineOnly ? "assigned" : origin}
               counts={{
                 any: inScope.length,
                 mine: raisedByMeCount,
-                others: inScope.length - raisedByMeCount,
                 assigned: mineCount,
               }}
               onChange={(next) => {
@@ -2299,7 +2298,7 @@ export function TicketsWorkspace({
           // Neither theirs to work nor theirs to change: a head following a
           // request their own department raised elsewhere.
           viewing && !viewingCanWork && !viewingCanEdit
-            ? `You are following this as head of ${overseenBy(viewing)}. Only the people on the ticket can reply or change it.`
+            ? `You are following this as head of ${overseenBy(viewing)}. You can chat on it; only the people on the ticket can change it.`
             : undefined
         }
         tab={tab}

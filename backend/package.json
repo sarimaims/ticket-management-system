@@ -18,7 +18,8 @@
     "postinstall": "prisma generate || exit 0",
     "prisma:seed": "prisma db seed",
     "units:migrate": "node src/scripts/add-units.js",
-    "migrate:assignees": "node src/scripts/migrate-assignees.js"
+    "migrate:assignees": "node src/scripts/migrate-assignees.js",
+    "repair:ticket-departments": "node src/scripts/repair-ticket-departments.js"
   },
   "engines": {
     "node": ">=18.18.0"

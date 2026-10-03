@@ -75,7 +75,6 @@ import {
   departmentsOf,
   dueOf,
   firstName,
-  holders,
   isOpen,
   openFirst,
   relativeTime,
@@ -126,7 +125,61 @@ function Empty({
 
 /* ------------------------------------------------------------- list window */
 
-/** One ticket in the list: who it is for and where it stands, at a glance. */
+/** Everyone on one end of a ticket, in full, for a line that truncates. */
+const fullNames = (people: { name?: string }[]) =>
+  people.map((person) => person.name ?? "Someone").join(", ");
+
+/** The departments a ticket was raised from. */
+const fromNames = (ticket: DashboardTicket) =>
+  (ticket.fromDepartments ?? [])
+    .map((department) => department.name ?? "")
+    .filter(Boolean)
+    .join(", ");
+
+/**
+ * One end of a ticket on one line: who, then where, in that end's colour -
+ * the same violet and orange as the From and To of the ticket's own sheet.
+ * Longer than the line, it ends in an ellipsis and says the rest on hover.
+ */
+function RouteLine({
+  tone,
+  people,
+  places,
+  empty,
+}: {
+  tone: "from" | "to";
+  people: string;
+  places: string;
+  empty: string;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-2" title={[people || empty, places].filter(Boolean).join(" · ")}>
+      <span
+        className={cn(
+          "w-9 shrink-0 rounded px-1 py-px text-center text-[9px] leading-[14px] font-bold tracking-wider uppercase",
+          tone === "from" ? "bg-route-from-bg text-route-from-fg" : "bg-route-to-bg text-route-to-fg",
+        )}
+      >
+        {tone === "from" ? "From" : "To"}
+      </span>
+      <span className="min-w-0 truncate text-[11.5px] leading-[18px]">
+        {people ? (
+          <span className="font-semibold text-ink-700">{people}</span>
+        ) : (
+          <span className="text-ink-400 italic">{empty}</span>
+        )}
+        {places && (
+          <span className={cn("font-medium", tone === "from" ? "text-route-from-fg" : "text-route-to-fg")}>
+            {" · "}
+            {places}
+          </span>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/** One ticket in the list: who asked, who has it, and where it stands. */
 function ListRow({
   ticket,
   onOpen,
@@ -149,26 +202,34 @@ function ListRow({
         </span>
 
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold text-ink-900 group-hover:text-royal-700">
-            {ticket.subject}
-          </span>
-          <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-ink-400">
-            <span className="truncate">{departmentNames(ticket)}</span>
-            <span aria-hidden className="text-ink-300">·</span>
-            <span className="shrink-0">{holders(ticket)}</span>
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate text-[13px] font-semibold text-ink-900 group-hover:text-royal-700">
+              {ticket.subject}
+            </span>
             {due && !isClosed(ticket.status) && (
-              <>
-                <span aria-hidden className="text-ink-300">·</span>
-                <span
-                  className={cn(
-                    "shrink-0",
-                    late ? "font-semibold text-status-overdue-fg" : "text-ink-500",
-                  )}
-                >
-                  {when(due)}
-                </span>
-              </>
+              <span
+                className={cn(
+                  "shrink-0 text-[11px]",
+                  late ? "font-semibold text-status-overdue-fg" : "text-ink-400",
+                )}
+              >
+                {when(due)}
+              </span>
             )}
+          </span>
+          <span className="mt-1 flex flex-col gap-0.5">
+            <RouteLine
+              tone="from"
+              people={ticket.raisedBy.name ?? ""}
+              places={fromNames(ticket)}
+              empty="Someone"
+            />
+            <RouteLine
+              tone="to"
+              people={fullNames(ticket.assignees)}
+              places={departmentNames(ticket)}
+              empty="Not picked up yet"
+            />
           </span>
         </span>
 
@@ -217,7 +278,7 @@ function TicketListModal({
   const term = query.trim().toLowerCase();
   const shown = term
     ? all.filter((ticket) =>
-        `${ticket.number} ${ticket.subject} ${departmentNames(ticket)} ${holders(ticket)}`
+        `${ticket.number} ${ticket.subject} ${departmentNames(ticket)} ${fullNames(ticket.assignees)} ${ticket.raisedBy.name ?? ""} ${fromNames(ticket)}`
           .toLowerCase()
           .includes(term),
       )
@@ -1380,7 +1441,7 @@ export function DashboardOverview() {
         onSaved={() => refresh()}
         readOnly={
           overseeing
-            ? `You are following this as head of ${overseen || "the raising department"}. Only the people on the ticket can reply or change it.`
+            ? `You are following this as head of ${overseen || "the raising department"}. You can chat on it; only the people on the ticket can change it.`
             : undefined
         }
       />

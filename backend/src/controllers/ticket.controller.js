@@ -133,18 +133,69 @@ async function hydrate(tickets) {
   );
   const userById = new Map(users.map((user) => [String(user._id), user]));
 
+  /*
+   * A ticket keeps the department ids it was raised to. A department deleted
+   * since - or deleted and made again under the same name - leaves those ids
+   * pointing at nothing, and the people on the ticket belonging somewhere it
+   * does not name. Shown as stored, that is a row of dashes with everybody
+   * piled under whichever department is left.
+   *
+   * So what is shown is what is true now: the departments that still exist,
+   * then, for anybody on it who is in none of those, the department they are
+   * in today. Nothing stored changes - scripts/repair-ticket-departments.js
+   * does that - so this costs one more query only when a ticket needs it.
+   */
+  const rolesOf = (person) => (userById.get(String(person))?.memberships ?? []).map((role) => String(role.department));
+  const uncovered = new Set();
+  for (const ticket of tickets) {
+    const live = departmentIdsOf(ticket).filter((id) => departmentById.has(id));
+    for (const person of ticket.assignees ?? []) {
+      const roles = rolesOf(person);
+      if (roles.some((id) => live.includes(id))) continue;
+      for (const id of roles) if (!departmentById.has(id)) uncovered.add(id);
+    }
+  }
+  if (uncovered.size > 0) {
+    const more = await Department.find({ _id: { $in: [...uncovered] } })
+      .select('name code unit')
+      .lean();
+    for (const department of more) {
+      departmentById.set(String(department._id), {
+        ...department,
+        unit: unitById.get(String(department.unit)) ?? department.unit,
+      });
+    }
+  }
+
+  /** The departments to show for one ticket, the lead first. */
+  const shownFor = (ticket) => {
+    const shown = departmentIdsOf(ticket).filter((id) => departmentById.has(id));
+    for (const person of ticket.assignees ?? []) {
+      const roles = rolesOf(person);
+      if (roles.length === 0 || roles.some((id) => shown.includes(id))) continue;
+      const theirs = roles.find((id) => departmentById.has(id));
+      if (theirs) shown.push(theirs);
+    }
+    // Nothing left to show at all: keep what is stored rather than nothing.
+    return shown.length > 0 ? shown : departmentIdsOf(ticket);
+  };
+
   const asDepartment = (value) => departmentById.get(String(value)) ?? value;
   const asUser = (value) => userById.get(String(value)) ?? value;
 
-  return tickets.map((ticket) => ({
+  return tickets.map((ticket) => {
+    const shown = shownFor(ticket);
+    const leadLives = ticket.department && departmentById.has(String(ticket.department));
+    return {
     ...ticket,
-    department: ticket.department ? asDepartment(ticket.department) : ticket.department,
-    departments: departmentIdsOf(ticket).map(asDepartment),
+    department: leadLives || !shown[0] ? (ticket.department ? asDepartment(ticket.department) : ticket.department) : asDepartment(shown[0]),
+    departments: shown.map(asDepartment),
     fromDepartments: (ticket.fromDepartments ?? []).map(asDepartment),
     raisedBy: ticket.raisedBy ? asUser(ticket.raisedBy) : ticket.raisedBy,
     assignees: (ticket.assignees ?? []).map(asUser),
     committedBy: ticket.committedBy ? asUser(ticket.committedBy) : ticket.committedBy,
-  }));
+    };
+  });
 }
 
 /** The same, for a single ticket. */
@@ -850,6 +901,8 @@ export async function listTickets(req, res) {
                 { departments: { $in: departments } },
                 { department: { $in: departments } },
                 { raisedBy: req.user._id },
+                // On them by name, whichever department it is filed under.
+                { assignees: req.user._id },
                 ...(headed.length > 0 ? [{ fromDepartments: { $in: headed } }] : []),
               ],
             }
@@ -2396,5 +2449,6 @@ export async function updateTicket(req, res) {
     }
   }
 
-  res.json({ success: true, ticket: present(populated) });
+  // Through the same loader as the lists, so the sheet shows what they show.
+  res.json({ success: true, ticket: present(await hydrateOne(await Ticket.findById(ticket._id).lean())) });
 }

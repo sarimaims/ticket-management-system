@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
-  ChevronDown,
   Eye,
   EyeOff,
   Lock,
@@ -36,18 +35,14 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { errorMessage } from "@/lib/api";
 import { DEPARTMENT_ROLE_LABEL, isAdmin, type DepartmentRole } from "@/lib/auth";
 import type { Stat } from "@/lib/types";
-import { DepartmentRolePicker } from "@/components/departments/department-role-picker";
 import {
   addMember,
   type Department,
   getDepartment,
-  listDepartments,
   type Member,
   removeMember,
   updateDepartment,
 } from "@/lib/departments";
-import { updateUser, type MembershipInput } from "@/lib/users";
-import { cn } from "@/lib/utils";
 
 function Banner({ message }: { message: string }) {
   return (
@@ -514,20 +509,6 @@ function AddMemberModal({
   const [pending, setPending] = useState(false);
   const toast = useToast();
 
-  // "Advanced" puts the same person in more than one department in one go.
-  const [advanced, setAdvanced] = useState(false);
-  const [extras, setExtras] = useState<MembershipInput[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-
-  useEffect(() => {
-    if (!open || departments.length > 0) return;
-    const controller = new AbortController();
-    listDepartments(controller.signal)
-      .then(setDepartments)
-      .catch(() => setDepartments([]));
-    return () => controller.abort();
-  }, [open, departments.length]);
-
   const close = () => {
     setName("");
     setEmail("");
@@ -536,8 +517,6 @@ function AddMemberModal({
     setPassword("");
     setRole("team");
     setShowPassword(false);
-    setAdvanced(false);
-    setExtras([]);
     setError("");
     onClose();
   };
@@ -579,34 +558,7 @@ function AddMemberModal({
         role,
       });
 
-      if (extras.length > 0) {
-        // Merge rather than replace: whatever the account already belonged to
-        // stays, and the picked roles win where both name the same department.
-        const merged = new Map<string, MembershipInput>(
-          member.departments.map((item) => [
-            item.id,
-            { department: item.id, role: item.role, designation: item.designation ?? "" },
-          ]),
-        );
-        // Every role needs a title. The extra departments ticked here take the
-        // one typed for this department, unless the person already holds that
-        // department with a title of their own - which is kept. Each can be
-        // changed afterwards on the person's own record.
-        extras.forEach((entry) =>
-          merged.set(entry.department, {
-            ...entry,
-            designation: merged.get(entry.department)?.designation || designation.trim(),
-          }),
-        );
-        await updateUser(member.id, { memberships: [...merged.values()] });
-      }
-
-      toast.success(
-        `${member.name} added to ${departmentName}`,
-        `Role: ${DEPARTMENT_ROLE_LABEL[role]}${
-          extras.length > 0 ? ` · also in ${extras.length} other department(s)` : ""
-        }`,
-      );
+      toast.success(`${member.name} added to ${departmentName}`, `Role: ${DEPARTMENT_ROLE_LABEL[role]}`);
       close();
       onAdded();
     } catch (caught) {
@@ -735,41 +687,6 @@ function AddMemberModal({
           If the email already has an account, that person is added to this department with the
           designation above as their title here. Their name, phone and password stay as they are.
         </p>
-
-        <div className="rounded-field border border-line">
-          <button
-            type="button"
-            onClick={() => setAdvanced((current) => !current)}
-            aria-expanded={advanced}
-            className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
-          >
-            <span className="text-sm font-semibold text-ink-800">
-              Advanced
-              <span className="ml-1.5 font-normal text-ink-400">
-                add to other departments{extras.length > 0 ? ` (${extras.length})` : ""}
-              </span>
-            </span>
-            <ChevronDown
-              className={cn("size-4 text-ink-400 transition-transform", advanced && "rotate-180")}
-            />
-          </button>
-
-          {advanced && (
-            <div className="border-t border-line p-3">
-              <DepartmentRolePicker
-                departments={departments}
-                lockedDepartmentId={departmentId}
-                value={[{ department: departmentId, role, designation }, ...extras]}
-                onChange={(next) =>
-                  setExtras(next.filter((item) => item.department !== departmentId))
-                }
-              />
-              <p className="mt-2 text-xs text-ink-400">
-                The current department uses the role picked above.
-              </p>
-            </div>
-          )}
-        </div>
 
         <div className="flex justify-end gap-2 border-t border-line pt-4">
           <Button type="button" variant="outline" size="sm" onClick={close}>
