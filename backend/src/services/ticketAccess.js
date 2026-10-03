@@ -23,6 +23,11 @@ export function departmentIdsOf(ticket) {
  * A ticket belongs to the departments it was raised to: their heads and teams
  * see it, and so does whoever raised it. Admins see everything.
  *
+ * Whoever it is on by name sees it too, whatever department it is filed
+ * under. A ticket keeps the department ids it was raised to, so a department
+ * deleted and made again since - or a person moved to another one - would
+ * otherwise leave it on their desk and out of their sight.
+ *
  * Asked of `departments` and of the lead both, so a ticket from before tickets
  * could be shared is still found before the backfill has reached it.
  */
@@ -34,10 +39,17 @@ export function visibilityFilter(user) {
   return {
     $or: [
       { raisedBy: user._id },
+      { assignees: user._id },
       { departments: { $in: departmentIds } },
       { department: { $in: departmentIds } },
     ],
   };
+}
+
+/** Whether this person is one of the people the ticket is on by name. */
+export function isAssignee(user, ticket) {
+  const me = String(user._id);
+  return (ticket.assignees ?? []).some((person) => String(person?._id ?? person) === me);
 }
 
 /** The departments this person runs, as ids. */
@@ -66,9 +78,13 @@ export function oversightFilter(user) {
   return { $or: [...base.$or, { fromDepartments: { $in: headed } }] };
 }
 
-/** Who may work a ticket: the heads and teams of any of its departments, plus any manager. */
+/**
+ * Who may work a ticket: the heads and teams of any of its departments, the
+ * people it is on by name, and any manager.
+ */
 export function canWorkOn(user, ticket) {
   if (MANAGER_ROLES.includes(user.role)) return true;
+  if (isAssignee(user, ticket)) return true;
 
   const here = new Set(departmentIdsOf(ticket));
   return (user.memberships ?? []).some((membership) => here.has(String(membership.department)));

@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Layers, type LucideIcon, Send, UserCheck, Users } from "lucide-react";
+import { Check, ChevronDown, Layers, type LucideIcon, Send, UserCheck } from "lucide-react";
 
 import { inAnchoredPanel, useAnchoredPanel } from "@/components/ui/use-anchored-panel";
 import { cn } from "@/lib/utils";
 
 /** Whose tickets All Tickets is showing. */
-export type Whose = "any" | "mine" | "others" | "assigned";
+export type Whose = "any" | "mine" | "assigned";
 
 const OPTIONS: {
   value: Whose;
@@ -36,14 +36,6 @@ const OPTIONS: {
     chosen: "border-violet-300 bg-violet-50 text-violet-800",
   },
   {
-    value: "others",
-    label: "Raised by others",
-    hint: "Everyone's but your own",
-    icon: Users,
-    chip: "bg-sky-100 text-sky-700",
-    chosen: "border-sky-300 bg-sky-50 text-sky-800",
-  },
-  {
     value: "assigned",
     label: "Assigned to me",
     hint: "On your desk by name",
@@ -55,7 +47,7 @@ const OPTIONS: {
 
 /**
  * One control for whose tickets the list shows: all of them, the ones you
- * raised, everyone else's, or the ones on you by name. Each with its count,
+ * raised, or the ones on you by name. Each with its count,
  * so the choice says what it holds before it is made.
  *
  * The panel is drawn on the body, like the other filters, so the toolbar's
