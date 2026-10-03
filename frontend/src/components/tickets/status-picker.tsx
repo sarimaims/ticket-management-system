@@ -23,6 +23,11 @@ const DOTS: Record<TicketStatus, string> = {
   Overdue: "bg-status-overdue-fg",
 };
 
+/** Shorter names for a tight column; the full one stays on hover. */
+const SHORT_LABEL: Partial<Record<TicketStatus, string>> = {
+  Resolved: "Approval",
+};
+
 /**
  * Sets a ticket's status from the row.
  *
@@ -38,6 +43,7 @@ export function StatusPicker({
   label,
   className,
   needsApproval,
+  short,
 }: {
   value: TicketStatus;
   /**
@@ -51,6 +57,8 @@ export function StatusPicker({
   label: string;
   /** Size and spacing, for a caller whose row is taller than a table row's. */
   className?: string;
+  /** In a crowded table: "Approval" rather than "Awaiting Approval". */
+  short?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   /** Where the list is pinned, in viewport coordinates. */
@@ -120,6 +128,7 @@ export function StatusPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
+        title={STATUS_LABEL[value]}
         className={cn(
           "inline-flex h-6 w-full items-center gap-1 rounded px-1.5 text-[11px] font-semibold transition-shadow",
           "hover:ring-1 hover:ring-ink-300 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none",
@@ -129,7 +138,9 @@ export function StatusPicker({
         )}
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", DOTS[value])} />
-        <span className="min-w-0 flex-1 truncate text-left">{STATUS_LABEL[value]}</span>
+        <span className="min-w-0 flex-1 truncate text-left">
+          {(short && SHORT_LABEL[value]) || STATUS_LABEL[value]}
+        </span>
         <ChevronDown className={cn("size-3 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
 

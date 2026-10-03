@@ -165,6 +165,11 @@ export type TicketRecord = {
   deadline: string | null;
   /** What the receiving department promised back. */
   committedDeadline: string | null;
+  /**
+   * Work has started: stored as In Progress, even when it is shown as
+   * Overdue. Its due date can then only be brought forward.
+   */
+  underWay?: boolean;
   /** `designation` is their title in the department working the ticket. */
   committedBy: { id: string; name?: string; designation?: string } | null;
   committedAt: string | null;

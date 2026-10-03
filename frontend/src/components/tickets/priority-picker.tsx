@@ -133,7 +133,7 @@ export function PriorityPicker({
             aria-label="Priority"
             data-priority-list
             style={{ left: at.left, width: at.width, top: at.top, bottom: at.bottom }}
-            className="fixed z-50 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
+            className="fixed z-50 min-w-32 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
           >
             {PRIORITIES.map((level) => {
               const current = level === value;

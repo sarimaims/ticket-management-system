@@ -3,15 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlarmClock,
   AlertCircle,
   ArrowRight,
   CalendarClock,
   CircleCheckBig,
-  CircleDashed,
   CirclePlus,
   CircleSlash,
-  Hourglass,
   type LucideIcon,
   MessageSquareText,
   PencilLine,
@@ -19,7 +16,6 @@ import {
   Send,
   ShieldAlert,
   ShieldCheck,
-  Timer,
   Undo2,
   Users,
 } from "lucide-react";
@@ -50,8 +46,6 @@ type Kind =
 type Lens = "all" | "status" | "people" | "dates" | "other";
 
 const KIND: Record<Kind, { icon: LucideIcon; node: string; lens: Exclude<Lens, "all"> }> = {
-  // The same blue, green and sky as the Raised, Completed and Approval tiles
-  // above the story, so a tile and its step read as one thing.
   raised: { icon: CirclePlus, node: "bg-blue-600 text-white", lens: "status" },
   handover: { icon: Users, node: "bg-sky-100 text-sky-700", lens: "people" },
   status: { icon: RefreshCw, node: "bg-status-progress-bg text-status-progress-fg", lens: "status" },
@@ -67,38 +61,25 @@ const KIND: Record<Kind, { icon: LucideIcon; node: string; lens: Exclude<Lens, "
 };
 
 const LENSES: { value: Lens; label: string }[] = [
-  { value: "all", label: "Everything" },
-  { value: "status", label: "Status & approvals" },
+  { value: "all", label: "All" },
+  { value: "status", label: "Status" },
   { value: "people", label: "Handovers" },
   { value: "dates", label: "Dates" },
-  { value: "other", label: "Edits & other" },
+  { value: "other", label: "Edits" },
 ];
 
-type Hue = "blue" | "green" | "violet" | "sky" | "orange" | "rose" | "slate";
-
-/** A pastel wash and rim for a tile, and a deeper ink for its label and icon. */
-const HUE: Record<Hue, { tile: string; ink: string }> = {
-  blue: { tile: "bg-blue-50 ring-blue-100", ink: "text-blue-700" },
-  green: { tile: "bg-emerald-50 ring-emerald-100", ink: "text-emerald-700" },
-  violet: { tile: "bg-violet-50 ring-violet-100", ink: "text-violet-700" },
-  sky: { tile: "bg-sky-50 ring-sky-100", ink: "text-sky-700" },
-  orange: { tile: "bg-orange-50 ring-orange-100", ink: "text-orange-700" },
-  rose: { tile: "bg-rose-50 ring-rose-100", ink: "text-rose-700" },
-  slate: { tile: "bg-ink-50 ring-ink-200/70", ink: "text-ink-600" },
+/** Where the ticket stands, as a dot beside its name in the summary. */
+const STATUS_DOT: Record<TicketStatus, string> = {
+  New: "bg-ink-400",
+  "In Progress": "bg-violet-500",
+  Resolved: "bg-sky-500",
+  Overdue: "bg-rose-500",
+  Completed: "bg-emerald-500",
+  Cancelled: "bg-ink-400",
 };
 
-/** Where the ticket stands, in the colours the dashboard gives the same states. */
-const STANDING: Record<TicketStatus, { hue: Hue; icon: LucideIcon }> = {
-  New: { hue: "slate", icon: CircleDashed },
-  "In Progress": { hue: "violet", icon: RefreshCw },
-  Resolved: { hue: "sky", icon: Hourglass },
-  Overdue: { hue: "rose", icon: AlarmClock },
-  Completed: { hue: "green", icon: CircleCheckBig },
-  Cancelled: { hue: "slate", icon: CircleSlash },
-};
-
-/** The time column, the line and the story: every row lines up on these. */
-const ROW = "grid grid-cols-[4.5rem_2rem_1fr] gap-x-3";
+/** The filters earn their row only once the story is long enough to need them. */
+const FILTER_FROM = 6;
 
 type Step = {
   id: string;
@@ -149,35 +130,23 @@ const ordinal = (n: number) => {
   return `${n}${tail}`;
 };
 
-/**
- * "3:22" and "PM", apart, in the reader's own clock: the figure is read
- * first, the half of the day after. No leading zero to read past.
- */
-function clock(iso: string) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return { figure: "", period: "" };
-  const parts = new Intl.DateTimeFormat([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).formatToParts(date);
-  return {
-    figure: parts
-      .filter((part) => part.type !== "dayPeriod")
-      .map((part) => part.value)
-      .join("")
-      .trim(),
-    period: parts.find((part) => part.type === "dayPeriod")?.value.toUpperCase() ?? "",
-  };
-}
+/** "3:22 PM", in the reader's own clock, without a leading zero to read past. */
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
 
 const weekday = (iso: string, width: "short" | "long") =>
   new Date(iso).toLocaleDateString("en-GB", { weekday: width });
 
-/** "Fri · 3:22 PM": the day and the time, under a tile's date. */
-function dayAndTime(iso: string) {
-  const { figure, period } = clock(iso);
-  return `${weekday(iso, "short")} · ${figure} ${period}`.trim();
+/** "29 Sep, 7:18 AM" - the year only when it is not this one. */
+function shortWhen(iso: string) {
+  const date = new Date(iso);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  const day = date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  return `${day}, ${clock(iso)}`;
 }
 
 /**
@@ -443,11 +412,11 @@ export function TicketTimeline({
   const took = (endAt ? Date.parse(endAt) : (loaded?.now ?? Date.parse(ticket.createdAt))) - Date.parse(ticket.createdAt);
   const asked = steps?.filter((step) => step.kind === "approval").length ?? 0;
   const sentBack = steps?.filter((step) => step.kind === "sent-back").length ?? 0;
-  const standing = STANDING[ticket.status] ?? STANDING.New;
   const last = shown.at(-1);
 
   const counts = (value: Lens) =>
     value === "all" ? (steps?.length ?? 0) : (steps ?? []).filter((step) => KIND[step.kind].lens === value).length;
+  const lenses = LENSES.filter((item) => item.value === "all" || counts(item.value) > 0);
 
   return createPortal(
     <Modal
@@ -455,45 +424,38 @@ export function TicketTimeline({
       onClose={onClose}
       title={`Timeline · ${ticket.number}`}
       description={ticket.subject}
-      className="max-w-2xl"
+      className="max-w-xl"
     >
-      {/* The whole story in four numbers, before the detail. */}
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile
-          label="Raised"
-          hue="blue"
-          icon={CirclePlus}
-          value={formatDateOf(ticket.createdAt)}
-          note={dayAndTime(ticket.createdAt)}
-        />
-        <Tile
-          label={closed ? (ticket.status === "Completed" ? "Completed" : "Cancelled") : "Status now"}
-          hue={standing.hue}
-          icon={standing.icon}
-          value={endAt ? formatDateOf(endAt) : statusName(ticket.status)}
-          note={endAt ? dayAndTime(endAt) : "Still open"}
-        />
-        <Tile
-          label={closed ? "Took" : "Open for"}
-          hue="orange"
-          icon={Timer}
-          value={span(took)}
-          note={closed ? `Raised to ${ticket.status === "Completed" ? "completed" : "cancelled"}` : "So far"}
-        />
-        <Tile
-          label="Approvals"
-          hue="sky"
-          icon={Send}
-          value={asked === 0 ? "None yet" : `${asked} ${asked === 1 ? "request" : "requests"}`}
-          note={sentBack > 0 ? `Sent back ${sentBack} time${sentBack === 1 ? "" : "s"}` : asked > 0 ? "None sent back" : "Not sent for approval"}
-          warn={sentBack > 0}
-        />
+      {/* The whole story in one strip of four facts. */}
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
+        <Fact label="Raised">{shortWhen(ticket.createdAt)}</Fact>
+        <Fact label={closed ? (ticket.status === "Completed" ? "Completed" : "Cancelled") : "Status"}>
+          {endAt ? (
+            shortWhen(endAt)
+          ) : (
+            <span className="inline-flex max-w-full items-center gap-1.5">
+              <span className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT[ticket.status] ?? "bg-ink-400")} />
+              <span className="truncate">{statusName(ticket.status)}</span>
+            </span>
+          )}
+        </Fact>
+        <Fact label={closed ? "Took" : "Open for"}>{span(took)}</Fact>
+        <Fact label="Approvals">
+          {asked === 0 ? (
+            <span className="font-medium text-ink-400">None</span>
+          ) : (
+            <>
+              {asked} sent
+              {sentBack > 0 && <span className="text-rose-600"> · {sentBack} back</span>}
+            </>
+          )}
+        </Fact>
       </dl>
 
-      {/* Narrowing the story to one thread of it. */}
-      {steps && steps.length > 0 && (
-        <div role="tablist" aria-label="Show" className="mt-4 flex flex-wrap gap-1.5">
-          {LENSES.filter((item) => item.value === "all" || counts(item.value) > 0).map((item) => (
+      {/* Narrowing a long story to one thread of it. */}
+      {steps && steps.length >= FILTER_FROM && lenses.length > 2 && (
+        <div role="tablist" aria-label="Show" className="mt-3 inline-flex rounded-lg bg-ink-100/70 p-0.5">
+          {lenses.map((item) => (
             <button
               key={item.value}
               type="button"
@@ -501,27 +463,18 @@ export function TicketTimeline({
               aria-selected={lens === item.value}
               onClick={() => setLens(item.value)}
               className={cn(
-                "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold transition-colors",
-                lens === item.value
-                  ? "border-ink-900 bg-ink-900 text-white"
-                  : "border-line-strong bg-surface text-ink-600 hover:bg-ink-50",
+                "inline-flex h-6 cursor-pointer items-center gap-1 rounded-md px-2 text-[11.5px] font-semibold transition-colors",
+                lens === item.value ? "bg-surface text-ink-900 shadow-sm" : "text-ink-500 hover:text-ink-800",
               )}
             >
               {item.label}
-              <span
-                className={cn(
-                  "rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums",
-                  lens === item.value ? "bg-white/20" : "bg-ink-100 text-ink-500",
-                )}
-              >
-                {counts(item.value)}
-              </span>
+              <span className="text-[10.5px] font-medium text-ink-400 tabular-nums">{counts(item.value)}</span>
             </button>
           ))}
         </div>
       )}
 
-      <div className="mt-3 -mr-2 max-h-[min(58vh,560px)] overflow-y-auto overscroll-contain pr-2">
+      <div className="mt-4 -mr-2 max-h-[min(60vh,560px)] overflow-y-auto overscroll-contain pr-2">
         {error && (
           <p role="alert" className="flex items-start gap-2 rounded-field bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700">
             <AlertCircle className="mt-px size-4 shrink-0" />
@@ -530,34 +483,27 @@ export function TicketTimeline({
         )}
 
         {steps === null && (
-          <ul aria-hidden className="space-y-4 py-2">
-            {[0, 1, 2, 3].map((row) => (
-              <li key={row} className={cn(ROW, "items-start")}>
-                <span className="mt-2 ml-auto h-3.5 w-12 animate-pulse rounded bg-ink-100" />
-                <span className="mx-auto size-8 animate-pulse rounded-full bg-ink-100" />
-                <span className="space-y-1.5 pt-1.5">
-                  <span className="block h-3.5 w-2/5 animate-pulse rounded bg-ink-100" />
-                  <span className="block h-3 w-3/5 animate-pulse rounded bg-ink-100" />
-                </span>
+          <ul aria-hidden className="space-y-3 py-1">
+            {[0, 1, 2].map((row) => (
+              <li key={row} className="flex items-center gap-3">
+                <span className="size-5 shrink-0 animate-pulse rounded-full bg-ink-100" />
+                <span className="h-3 flex-1 animate-pulse rounded bg-ink-100" />
+                <span className="h-3 w-12 animate-pulse rounded bg-ink-100" />
               </li>
             ))}
           </ul>
         )}
 
         {steps && shown.length > 0 && (
-          <ol className="relative py-1 before:absolute before:top-4 before:bottom-4 before:left-[calc(6.25rem-0.5px)] before:w-px before:bg-line">
-            {days.map((group) => (
+          // One thin line down the icons; everything else hangs off it.
+          <ol className="relative before:absolute before:top-3 before:bottom-3 before:left-[9.5px] before:w-px before:bg-line">
+            {days.map((group, index) => (
               <li key={group.key}>
-                {group.lead !== null && <Gap ms={group.lead} />}
-                {/* The day, on the line itself. */}
-                <div className={cn(ROW, "items-center py-2")}>
-                  <span />
-                  <span className="relative mx-auto size-2.5 rounded-full bg-ink-300 ring-4 ring-surface" />
-                  <p className="justify-self-start rounded-full bg-ink-100 px-2.5 py-0.5 text-[12px] leading-5">
-                    <span className="font-bold text-ink-800">{group.label.name}</span>
-                    <span className="font-medium text-ink-500"> · {group.label.date}</span>
-                  </p>
-                </div>
+                <p className={cn("flex items-center gap-2 pb-2 pl-8 text-[11px]", index > 0 && "pt-1")}>
+                  <span className="font-semibold text-ink-700">{group.label.name}</span>
+                  <span className="text-ink-400">{group.label.date}</span>
+                  {group.lead !== null && <Gap ms={group.lead} />}
+                </p>
                 <ol>
                   {group.items.map(({ step, gap }) => (
                     <StepRow key={step.id} step={step} gap={gap} />
@@ -566,20 +512,16 @@ export function TicketTimeline({
               </li>
             ))}
 
-            {/* Still going: where the story stands now, and how long since the last step. */}
+            {/* Still going: where it stands now. */}
             {!closed && lens === "all" && (
-              <li>
+              <li className="flex items-center gap-3">
+                <span className="relative grid size-5 shrink-0 place-items-center rounded-full border border-dashed border-ink-300 bg-surface">
+                  <span className="size-1.5 animate-pulse rounded-full bg-ink-400" />
+                </span>
+                <p className="min-w-0 flex-1 truncate text-[12.5px] text-ink-500">
+                  <span className="font-semibold text-ink-700">Now</span> · {statusName(ticket.status)}
+                </p>
                 {last && <Gap ms={now - last.time} />}
-                <div className={cn(ROW, "items-start")}>
-                  <span className="pt-1.5 text-right text-[13px] font-semibold text-ink-500">Now</span>
-                  <span className="relative mx-auto grid size-8 place-items-center rounded-full border-2 border-dashed border-line-strong bg-surface text-ink-400">
-                    <Hourglass className="size-3.5" />
-                  </span>
-                  <p className="pt-1.5 text-[13.5px] font-semibold text-ink-800">
-                    {statusName(ticket.status)}
-                    <span className="font-normal text-ink-500"> · open for {span(took)}</span>
-                  </p>
-                </div>
               </li>
             )}
           </ol>
@@ -594,126 +536,75 @@ export function TicketTimeline({
   );
 }
 
-/**
- * One of the four numbers: a pastel tile with its icon on a white chip - the
- * dashboard's cards, in small - the figure, and a line saying what is behind it.
- */
-function Tile({
-  label,
-  hue,
-  icon: Icon,
-  value,
-  note,
-  warn,
-}: {
-  label: string;
-  hue: Hue;
-  icon: LucideIcon;
-  value: string;
-  note: string;
-  /** The note is something to notice: it went back at least once. */
-  warn?: boolean;
-}) {
-  const tone = HUE[hue];
-
+/** One of the four facts: a quiet label over its value. */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className={cn("min-w-0 rounded-xl px-3 py-2.5 ring-1 ring-inset", tone.tile)}>
-      <dt className={cn("flex items-center gap-1.5 text-[11.5px] font-semibold", tone.ink)}>
-        <span className="grid size-5.5 shrink-0 place-items-center rounded-md bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08)]">
-          <Icon className="size-3.5" strokeWidth={2.25} />
-        </span>
-        <span className="truncate">{label}</span>
-      </dt>
-      <dd className="mt-1.5 text-[15px] leading-5 font-bold tracking-[-0.01em] text-ink-900 tabular-nums">
-        {value}
-      </dd>
-      <dd className={cn("mt-0.5 truncate text-[12px] font-medium", warn ? "text-rose-700" : "text-ink-600")}>
-        {note}
-      </dd>
+    <div className="min-w-0 bg-surface px-3 py-2">
+      <dt className="text-[10px] font-semibold tracking-wider text-ink-400 uppercase">{label}</dt>
+      <dd className="mt-0.5 truncate text-[12.5px] font-semibold text-ink-900 tabular-nums">{children}</dd>
     </div>
   );
 }
 
-/**
- * How long passed between two steps, as a chip sitting on the line between
- * them. A wait of a day or more is tinted, so the slow stretches stand out.
- */
+/** How long passed since the step before, said quietly - a day or more in amber. */
 function Gap({ ms }: { ms: number }) {
   if (ms < 60_000) return null;
-  const long = ms >= 86_400_000;
-
   return (
-    <div className="relative h-7">
-      <span
-        className={cn(
-          "absolute top-1/2 left-25 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap tabular-nums ring-1",
-          long ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-surface text-ink-600 ring-line-strong",
-        )}
-      >
-        <Timer className="size-3" />
-        {span(ms)} later
-      </span>
-    </div>
+    <span
+      className={cn(
+        "shrink-0 text-[10.5px] font-medium whitespace-nowrap tabular-nums",
+        ms >= 86_400_000 ? "text-amber-600" : "text-ink-400",
+      )}
+    >
+      +{span(ms)}
+    </span>
   );
 }
 
 function StepRow({ step, gap }: { step: Step; gap: number | null }) {
   const meta = KIND[step.kind];
   const Icon = meta.icon;
-  const { figure, period } = clock(step.at);
 
   return (
-    <li>
-      {gap !== null && <Gap ms={gap} />}
-      <div className={cn(ROW, "items-start")}>
-        {/* When: the figure large, the half of the day small beside it. */}
-        <p
-          className="pt-1.5 text-right whitespace-nowrap"
-          title={`${formatDateOf(step.at)}, ${formatTime(step.at)}`}
-        >
-          <time dateTime={step.at} className="text-[14px] font-semibold text-ink-900 tabular-nums">
-            {figure}
+    <li className="flex gap-3 pb-3.5">
+      <span className={cn("relative grid size-5 shrink-0 place-items-center rounded-full ring-[3px] ring-surface", meta.node)}>
+        <Icon className="size-3" strokeWidth={2.5} />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        {/* What happened and who did it, with the time at the end. */}
+        <p className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-500">
+            <span className="font-semibold text-ink-900">{step.title}</span>
+            {step.tag && <span className="ml-1.5 text-[10.5px] font-semibold text-status-resolved-fg">{step.tag}</span>}
+            <span> · {step.by.name}</span>
+          </span>
+          <OriginTag role={step.by.role} />
+          {gap !== null && <Gap ms={gap} />}
+          <time
+            dateTime={step.at}
+            title={`${formatDateOf(step.at)}, ${formatTime(step.at)}`}
+            className="shrink-0 text-[11px] font-medium text-ink-500 tabular-nums"
+          >
+            {clock(step.at)}
           </time>
-          {period && <span className="ml-1 text-[10.5px] font-semibold text-ink-500">{period}</span>}
         </p>
 
-        <span className={cn("relative mx-auto grid size-8 place-items-center rounded-full ring-4 ring-surface", meta.node)}>
-          <Icon className="size-4" strokeWidth={2.25} />
-        </span>
-
-        <div className="min-w-0 pt-1.5 pb-3">
-          <p className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[13.5px] font-bold text-ink-900">{step.title}</span>
-            {step.tag && (
-              <span className="rounded bg-status-resolved-bg px-1.5 py-px text-[10px] font-bold tracking-wide text-status-resolved-fg uppercase">
-                {step.tag}
-              </span>
+        {step.move && (
+          <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[11.5px]">
+            {step.move.from && (
+              <>
+                <span className="text-ink-400">{step.move.from}</span>
+                <ArrowRight className="size-3 shrink-0 text-ink-300" />
+              </>
             )}
+            <span className="font-semibold text-ink-700">{step.move.to}</span>
           </p>
+        )}
 
-          {step.move && (
-            <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px]">
-              {step.move.from && (
-                <>
-                  <span className="rounded-md bg-ink-100 px-1.5 py-0.5 font-medium text-ink-500">{step.move.from}</span>
-                  <ArrowRight className="size-3.5 shrink-0 text-ink-300" />
-                </>
-              )}
-              <span className="rounded-md bg-ink-900/6 px-1.5 py-0.5 font-semibold text-ink-900">{step.move.to}</span>
-            </p>
-          )}
-
-          {step.detail && (
-            <p className="mt-1 rounded-md border-l-2 border-line-strong bg-ink-50 px-2 py-1 text-[12px] leading-snug whitespace-pre-wrap text-ink-700">
-              {step.detail}
-            </p>
-          )}
-
-          <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-500">
-            by <span className="font-semibold text-ink-700">{step.by.name}</span>
-            <OriginTag role={step.by.role} />
-          </p>
-        </div>
+        {step.detail && (
+          <p className="mt-0.5 text-[11.5px] leading-snug whitespace-pre-wrap text-ink-500">{step.detail}</p>
+        )}
       </div>
     </li>
   );
