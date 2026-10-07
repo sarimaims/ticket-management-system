@@ -2053,6 +2053,13 @@ export async function updateTicket(req, res) {
       throw ApiError.badRequest(`Status must be one of: ${TICKET_STATUSES.join(', ')}.`);
     }
 
+    // Started work does not go back to not started - for everybody. (It also
+    // kept a way round the In Progress rule on dates: back to New, push the
+    // date, In Progress again.)
+    if (status === 'New' && ticket.status === 'In Progress') {
+      throw ApiError.badRequest('This ticket is already In Progress, so it cannot go back to New.');
+    }
+
     // Calling a ticket off always says why: the person who asked is told, and
     // "cancelled" on its own answers nothing.
     if (status === 'Cancelled' && ticket.status !== 'Cancelled') {

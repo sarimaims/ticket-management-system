@@ -416,8 +416,14 @@ async function superAdminIds() {
  */
 export async function notifyEscalated({ ticket, actor, reason }) {
   try {
+    // The people it is on hear too - it is their work being escalated, and
+    // they are the ones who can act on it now. Nobody on it yet: the
+    // receiving department's heads, who would hand it out.
+    const holders = (ticket.assignees ?? []).map((person) => person?._id ?? person).filter(Boolean);
+    const onIt = holders.length > 0 ? holders : await audienceFor(ticket);
+
     return await deliver({
-      recipients: await superAdminIds(),
+      recipients: [...(await superAdminIds()), ...onIt],
       exclude: actor._id,
       type: 'ticket.escalated',
       event: 'escalated',

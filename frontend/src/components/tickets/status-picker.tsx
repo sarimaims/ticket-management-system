@@ -44,6 +44,7 @@ export function StatusPicker({
   className,
   needsApproval,
   short,
+  started,
 }: {
   value: TicketStatus;
   /**
@@ -59,6 +60,8 @@ export function StatusPicker({
   className?: string;
   /** In a crowded table: "Approval" rather than "Awaiting Approval". */
   short?: boolean;
+  /** Work has started (stored In Progress): it cannot go back to New. */
+  started?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   /** Where the list is pinned, in viewport coordinates. */
@@ -154,7 +157,7 @@ export function StatusPicker({
           style={{ right: at.right, top: at.top, bottom: at.bottom }}
           className="fixed z-50 w-44 overflow-hidden rounded-md border border-line bg-surface p-1 shadow-xl shadow-ink-900/10"
         >
-          {SETTABLE_STATUSES.map((status) => {
+          {SETTABLE_STATUSES.filter((status) => !(started && status === "New")).map((status) => {
             const current = status === value;
             return (
               <li key={status}>
