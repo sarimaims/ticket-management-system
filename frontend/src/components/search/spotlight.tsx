@@ -1783,10 +1783,6 @@ export function SpotlightTrigger() {
     >
       <Search className="size-3.5 shrink-0" strokeWidth={2.25} />
       <span className="hidden flex-1 truncate text-left text-[12px] sm:block">Search tickets, people, files…</span>
-      {/* New, and still being shaped by how people use it. */}
-      <span className="hidden shrink-0 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-1.5 py-px text-[9px] leading-[14px] font-bold tracking-wide text-white uppercase shadow-sm shadow-fuchsia-500/30 sm:inline-block">
-        Beta
-      </span>
       <kbd className="hidden h-[18px] items-center gap-0.5 rounded-[5px] border border-line bg-surface px-1.5 font-sans text-[10px] font-semibold text-ink-500 shadow-[0_1px_0_rgba(15,23,42,0.06)] sm:inline-flex">
         {mod === "⌘" ? "⌥" : "Ctrl"} Space
       </kbd>

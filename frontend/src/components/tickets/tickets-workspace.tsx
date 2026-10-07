@@ -806,6 +806,8 @@ const TicketRow = memo(function TicketRow({
               onChange={(next) => onStatus(ticket, next)}
               label={`Status of ${ticket.number}`}
               needsApproval={!byMe}
+              // Overdue too: a late ticket is never put back to "not started".
+              started={ticket.underWay || ticket.status === "Overdue"}
               className="w-auto gap-1 rounded-full px-2"
               short
             />

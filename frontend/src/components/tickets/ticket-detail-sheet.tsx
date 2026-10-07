@@ -1030,7 +1030,13 @@ function SheetBody({
             cancelReason
             ? { status: "Cancelled" as const, cancelReason }
             : {}),
-        ...(direct
+        // Only when the list was actually changed. Sent on every save, an
+        // untouched list was a reassignment in the API's eyes - so a head the
+        // API could not match to the ticket's department lost the whole save,
+        // promised date and all, over a field they never touched.
+        ...(direct &&
+        [...assignees].sort().join(",") !==
+          ticket.assignees.map((person) => person.id).sort().join(",")
           ? {
               assignees: isAdmin(session)
                 ? assignees
@@ -1402,6 +1408,8 @@ function SheetBody({
                     }
                     label={`Status for #${ticket.number}`}
                     needsApproval={ticket.raisedBy.id !== meId}
+                    // Overdue too: a late ticket is never put back to "not started".
+                    started={ticket.underWay || ticket.status === "Overdue"}
                     className="h-8 w-full justify-between px-2.5 text-[13px]"
                   />
                 </div>
