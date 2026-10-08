@@ -397,11 +397,14 @@ export type Draft = {
 export function DraftPreview({
   draft,
   percent,
+  locked = false,
   onRemove,
 }: {
   draft: Draft;
   /** 0-100 while uploading, null when idle. */
   percent: number | null;
+  /** True while a batch is going out, so none of it can be pulled mid-send. */
+  locked?: boolean;
   onRemove: () => void;
 }) {
   const fallback = { image: "Photo", video: "Video", file: "Document", voice: "Voice note" }[
@@ -409,7 +412,7 @@ export function DraftPreview({
   ];
 
   return (
-    <div className="mb-2 flex items-center gap-3 rounded-field border border-line bg-ink-50 p-2">
+    <div className="flex items-center gap-3 rounded-field border border-line bg-ink-50 p-2">
       {draft.kind === "image" ? (
         // eslint-disable-next-line @next/next/no-img-element -- a local blob URL
         <img src={draft.previewUrl} alt="" className="size-12 shrink-0 rounded-lg object-cover" />
@@ -453,7 +456,7 @@ export function DraftPreview({
       <button
         type="button"
         onClick={onRemove}
-        disabled={percent !== null}
+        disabled={locked || percent !== null}
         aria-label="Remove attachment"
         className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-200 hover:text-ink-700 disabled:opacity-40"
       >

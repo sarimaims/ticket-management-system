@@ -77,6 +77,12 @@ const REFRESH_MS = 5000;
 /** With fewer than this many characters left, the counter appears. */
 const COUNTER_FROM = 200;
 
+/** How many files can be picked and sent together, each as its own message. */
+const MAX_DRAFT_FILES = 10;
+
+/** A file waiting to be sent, with an id to remove it or track its upload by. */
+type QueuedDraft = Draft & { id: number };
+
 /** One blip is not worth a red line; two in a row is. */
 const FAILURES_BEFORE_ERROR = 2;
 
@@ -943,57 +949,82 @@ export function TicketChat({
     }
   };
 
-  // What is attached to the line being written, and how far it has uploaded.
-  const [draftFile, setDraftFile] = useState<Draft | null>(null);
-  const [percent, setPercent] = useState<number | null>(null);
+  // What is attached to the line being written, and how far the one going up
+  // right now has uploaded. Each file is sent as its own message.
+  const [draftFiles, setDraftFiles] = useState<QueuedDraft[]>([]);
+  const [uploading, setUploading] = useState<{ id: number; percent: number } | null>(null);
+  const nextDraftId = useRef(0);
   const filePicker = useRef<HTMLInputElement>(null);
   const recorder = useVoiceRecorder();
 
   const attachmentsAllowed = features.attachments;
 
-  const dropDraftFile = useCallback(() => {
-    setDraftFile((current) => {
-      if (current) URL.revokeObjectURL(current.previewUrl);
-      return null;
-    });
-    setPercent(null);
+  const queueDraft = (draft: Draft) => {
+    nextDraftId.current += 1;
+    return { ...draft, id: nextDraftId.current };
+  };
+
+  const dropDraftFile = useCallback((id: number) => {
+    setDraftFiles((current) =>
+      current.filter((item) => {
+        if (item.id !== id) return true;
+        URL.revokeObjectURL(item.previewUrl);
+        return false;
+      }),
+    );
   }, []);
 
   /**
-   * One file from either picker, sorted into what it is.
+   * Files from either picker, each sorted into what it is. The ones this chat
+   * cannot take are left out and named; the rest are queued.
    *
    * The name travels with it unchanged: "aims-digital-salary-list.xlsx" is
    * what the API keeps, and what anyone searching the thread will type.
    */
-  const chooseFile = (file: File | undefined, picker: "media" | "document") => {
-    if (!file) return;
+  const chooseFiles = (list: FileList | null, picker: "media" | "document") => {
+    const files = Array.from(list ?? []);
+    if (files.length === 0) return;
 
-    const kind = chatKindOf(file, picker);
-    if (!kind) {
-      setError(
-        picker === "media"
-          ? "That is not a photo or a video this chat can take."
-          : "That is not a document this chat can take. Try PDF, Word, Excel, PowerPoint, text or zip.",
+    const problems: string[] = [];
+    const accepted: QueuedDraft[] = [];
+    const room = MAX_DRAFT_FILES - draftFiles.length;
+
+    for (const file of files) {
+      const kind = chatKindOf(file, picker);
+      if (!kind) {
+        problems.push(
+          picker === "media"
+            ? `${file.name} is not a photo or a video this chat can take.`
+            : `${file.name} is not a document this chat can take. Try PDF, Word, Excel, PowerPoint, text or zip.`,
+        );
+        continue;
+      }
+
+      const limit = ATTACHMENT_LIMITS[kind].maxBytes;
+      if (file.size > limit) {
+        problems.push(
+          `${file.name} is ${formatBytes(file.size)}; the limit is ${formatBytes(limit)}.`,
+        );
+        continue;
+      }
+
+      if (accepted.length >= room) {
+        problems.push(`Up to ${MAX_DRAFT_FILES} files can be sent at once.`);
+        break;
+      }
+
+      accepted.push(
+        queueDraft({
+          kind,
+          file,
+          filename: file.name,
+          previewUrl: URL.createObjectURL(file),
+        }),
       );
-      return;
     }
 
-    const limit = ATTACHMENT_LIMITS[kind].maxBytes;
-    if (file.size > limit) {
-      setError(
-        `That file is ${formatBytes(file.size)}; the limit is ${formatBytes(limit)}.`,
-      );
-      return;
-    }
-
-    setError("");
-    dropDraftFile();
-    setDraftFile({
-      kind,
-      file,
-      filename: file.name,
-      previewUrl: URL.createObjectURL(file),
-    });
+    setError(problems.join(" "));
+    if (accepted.length) setDraftFiles((current) => [...current, ...accepted]);
   };
 
   /** The menu the paperclip opens: photos and videos, or a document. */
@@ -1008,9 +1039,13 @@ export function TicketChat({
       setError("That was too short to send.");
       return;
     }
+    if (draftFiles.length >= MAX_DRAFT_FILES) {
+      URL.revokeObjectURL(recorded.previewUrl);
+      setError(`Up to ${MAX_DRAFT_FILES} files can be sent at once.`);
+      return;
+    }
     setError("");
-    dropDraftFile();
-    setDraftFile(recorded);
+    setDraftFiles((current) => [...current, queueDraft(recorded)]);
   };
 
   const thread = useMemo(() => [...messages, ...pending], [messages, pending]);
@@ -1036,15 +1071,103 @@ export function TicketChat({
 
   const send = async () => {
     const body = draft.trim();
-    const file = draftFile;
+    const files = draftFiles;
     const answering = replyTo;
     // Only the names still written count - one picked and then deleted is not a mention.
     const named = mentionsIn(body, mentions);
-    if ((!body && !file) || sending) return;
+    if ((!body && files.length === 0) || sending) return;
 
-    // On screen immediately, greyed until the server has it.
+    // One message per file, the way a messaging app sends a batch: the text,
+    // the reply and the mentions ride on the first, so they read above the rest.
+    const outgoing = (files.length ? files : [null]).map((file, index) => ({
+      file,
+      body: index === 0 ? body : "",
+      answering: index === 0 ? answering : null,
+      named: index === 0 ? named : [],
+    }));
+    const placeholders = outgoing.map((item) =>
+      placeholderFor(item.body, item.file, item.answering, item.named),
+    );
+
+    setPending((current) => [...current, ...placeholders]);
+    setDraft("");
+    setMentions([]);
+    setReplyTo(null);
+    setSending(true);
+    following.current = true;
+
+    let sent = 0;
+    try {
+      for (const [index, item] of outgoing.entries()) {
+        const { file } = item;
+        // The file goes straight to storage; only its key passes through the API.
+        let stored:
+          | {
+              kind: Draft["kind"];
+              key: string;
+              durationMs?: number;
+              filename?: string;
+            }
+          | undefined;
+        if (file) {
+          setUploading({ id: file.id, percent: 0 });
+          const key = await uploadAttachment(ticketId, file.file, {
+            kind: file.kind,
+            filename: file.filename,
+            onProgress: (percent) => setUploading({ id: file.id, percent }),
+          });
+          stored = {
+            kind: file.kind,
+            key,
+            durationMs: file.durationMs,
+            filename: file.filename,
+          };
+        }
+
+        const saved = await sendMessage(
+          ticketId,
+          item.body,
+          stored,
+          item.answering?.id ?? null,
+          item.named.map((mention) => mention.id),
+        );
+        if (!alive.current) return;
+        setMessages((current) => merge(current, [saved]));
+        setPending((current) =>
+          current.filter((entry) => entry.id !== placeholders[index].id),
+        );
+        if (file) dropDraftFile(file.id);
+        sent += 1;
+      }
+    } catch (caught) {
+      if (!alive.current) return;
+      // Nothing unsent is left on screen pretending it was: what did not go
+      // stays in the box, and the files still queued stay attached.
+      const unsent = new Set(placeholders.slice(sent).map((entry) => entry.id));
+      setPending((current) => current.filter((entry) => !unsent.has(entry.id)));
+      if (sent === 0) {
+        setDraft((current) => current || body);
+        setMentions((current) => (current.length ? current : named));
+        setReplyTo((current) => current ?? answering);
+      }
+      setError(errorMessage(caught));
+    } finally {
+      if (alive.current) {
+        setSending(false);
+        setUploading(null);
+      }
+    }
+  };
+
+  /** On screen immediately, greyed until the server has it. */
+  const placeholderFor = (
+    body: string,
+    file: QueuedDraft | null,
+    answering: MessageRecord | null,
+    named: typeof mentions,
+  ): MessageRecord => {
     nextPendingId.current += 1;
-    const placeholder: MessageRecord = {
+    return {
       id: `${PENDING}${nextPendingId.current}`,
       ticket: ticketId,
       kind: "text",
@@ -1089,69 +1212,6 @@ export function TicketChat({
         : null,
       createdAt: new Date().toISOString(),
     };
-
-    setPending((current) => [...current, placeholder]);
-    setDraft("");
-    setMentions([]);
-    setReplyTo(null);
-    setSending(true);
-    following.current = true;
-
-    try {
-      // The file goes straight to storage; only its key passes through the API.
-      let stored:
-        | {
-            kind: Draft["kind"];
-            key: string;
-            durationMs?: number;
-            filename?: string;
-          }
-        | undefined;
-      if (file) {
-        setPercent(0);
-        const key = await uploadAttachment(ticketId, file.file, {
-          kind: file.kind,
-          filename: file.filename,
-          onProgress: setPercent,
-        });
-        stored = {
-          kind: file.kind,
-          key,
-          durationMs: file.durationMs,
-          filename: file.filename,
-        };
-      }
-
-      const saved = await sendMessage(
-        ticketId,
-        body,
-        stored,
-        answering?.id ?? null,
-        named.map((mention) => mention.id),
-      );
-      if (!alive.current) return;
-      setMessages((current) => merge(current, [saved]));
-      setPending((current) =>
-        current.filter((item) => item.id !== placeholder.id),
-      );
-      dropDraftFile();
-    } catch (caught) {
-      if (!alive.current) return;
-      // Nothing was said, so nothing is left on screen pretending it was: the
-      // text goes back in the box to be sent again.
-      setPending((current) =>
-        current.filter((item) => item.id !== placeholder.id),
-      );
-      setDraft((current) => current || body);
-      setMentions((current) => (current.length ? current : named));
-      setReplyTo((current) => current ?? answering);
-      setError(errorMessage(caught));
-    } finally {
-      if (alive.current) {
-        setSending(false);
-        setPercent(null);
-      }
-    }
   };
 
   const startReply = (message: MessageRecord) => {
@@ -1181,7 +1241,8 @@ export function TicketChat({
 
   // With something written or attached, the round button sends; until then it
   // records, the way a messaging app does it.
-  const canSend = Boolean(draft.trim() || draftFile) && !recorder.recording;
+  const canSend =
+    Boolean(draft.trim() || draftFiles.length) && !recorder.recording;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1335,12 +1396,24 @@ export function TicketChat({
           </div>
         )}
 
-        {draftFile && (
-          <DraftPreview
-            draft={draftFile}
-            percent={percent}
-            onRemove={dropDraftFile}
-          />
+        {draftFiles.length > 0 && (
+          // Capped and scrolled, so a batch of ten does not push the box off screen.
+          <div className="mb-2 max-h-56 space-y-1.5 overflow-y-auto">
+            {draftFiles.length > 1 && (
+              <p className="text-[11px] font-semibold text-ink-500">
+                {draftFiles.length} files · sent as separate messages
+              </p>
+            )}
+            {draftFiles.map((item) => (
+              <DraftPreview
+                key={item.id}
+                draft={item}
+                percent={uploading?.id === item.id ? uploading.percent : null}
+                locked={sending}
+                onRemove={() => dropDraftFile(item.id)}
+              />
+            ))}
+          </div>
         )}
 
         {recorder.recording && (
@@ -1375,9 +1448,10 @@ export function TicketChat({
             ref={filePicker}
             type="file"
             accept={`${ATTACHMENT_LIMITS.image.accept},${ATTACHMENT_LIMITS.video.accept}`}
+            multiple
             className="hidden"
             onChange={(event) => {
-              chooseFile(event.target.files?.[0], "media");
+              chooseFiles(event.target.files, "media");
               event.target.value = "";
             }}
           />
@@ -1385,9 +1459,10 @@ export function TicketChat({
             ref={documentPicker}
             type="file"
             accept={ATTACHMENT_LIMITS.file.accept}
+            multiple
             className="hidden"
             onChange={(event) => {
-              chooseFile(event.target.files?.[0], "document");
+              chooseFiles(event.target.files, "document");
               event.target.value = "";
             }}
           />
